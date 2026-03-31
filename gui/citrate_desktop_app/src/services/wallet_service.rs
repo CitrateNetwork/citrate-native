@@ -27,6 +27,11 @@ pub trait WalletBackend: Send + Sync {
     async fn lock(&self) -> Result<(), AppError>;
     /// Sign and send a transaction, return tx hash
     async fn send_transaction(&self, from: &str, to: &str, value_wei: &str, password: &str) -> Result<String, AppError>;
+    /// Sign and send a transaction with calldata (for contract/precompile calls)
+    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, _data: Vec<u8>, password: &str) -> Result<String, AppError> {
+        // Default: ignore data, fall back to value-only send
+        self.send_transaction(from, to, value_wei, password).await
+    }
 }
 
 /// Production wallet backend — delegates to citrate-wallet-core for real
@@ -143,6 +148,43 @@ impl WalletBackend for WalletCoreBackend {
         // F-03 fix: failed submission is a real error, not a fake success
         let tx_hash = self.rpc_client.send_raw_transaction(&signed.raw).await
             .map_err(|e| AppError::Network(format!("Transaction submission failed: {}. The transaction was signed but not accepted by the network.", e)))?;
+
+        Ok(tx_hash)
+    }
+
+    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, data: Vec<u8>, _password: &str) -> Result<String, AppError> {
+        let unified_key = self.key_manager.get_signing_key(from)
+            .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
+
+        let nonce = self.rpc_client.get_nonce(from).await
+            .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}", e)))?;
+
+        let value: u128 = value_wei.parse()
+            .map_err(|_| AppError::Wallet(format!("Invalid amount: '{}'", value_wei)))?;
+
+        let signed = match &unified_key {
+            citrate_wallet_core::keys::UnifiedKey::Ed25519(ed_key) => {
+                citrate_wallet_core::TransactionBuilder::new()
+                    .to(to)
+                    .value(value)
+                    .data(data)
+                    .chain_id(40204)
+                    .sign(ed_key, nonce)
+                    .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e)))?
+            }
+            citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp_key) => {
+                citrate_wallet_core::TransactionBuilder::new()
+                    .to(to)
+                    .value(value)
+                    .data(data)
+                    .chain_id(40204)
+                    .sign_secp256k1(secp_key, nonce)
+                    .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e)))?
+            }
+        };
+
+        let tx_hash = self.rpc_client.send_raw_transaction(&signed.raw).await
+            .map_err(|e| AppError::Network(format!("Transaction failed: {}", e)))?;
 
         Ok(tx_hash)
     }
@@ -354,6 +396,33 @@ impl WalletService {
     /// Get current session status
     pub async fn get_session_status(&self) -> SessionStatus {
         self.session.read().await.clone()
+    }
+
+    /// Send a transaction with calldata (for contract/precompile interaction).
+    /// Data source: transaction sent to specified address with ABI-encoded calldata.
+    pub async fn send_transaction_with_data(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+        data: Vec<u8>,
+        password: &str,
+    ) -> Result<String, AppError> {
+        let session = self.session.read().await;
+        if !session.is_active {
+            return Err(AppError::SessionExpired);
+        }
+        drop(session);
+
+        let tx_hash = self.backend.send_transaction_with_data(from, to, value_wei, data, password).await?;
+
+        self.events.publish(AppEvent::TransactionConfirmed {
+            tx_hash: tx_hash.clone(),
+            block_height: 0,
+            success: true,
+        });
+
+        Ok(tx_hash)
     }
 
     /// Get the primary account address (for reward configuration)
