@@ -584,9 +584,57 @@ fn main() {
 
     // --- Tab Switching ---
     let ui_w = ui.as_weak();
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
     ui.on_tab_changed(move |tab| {
+        let tab_str = tab.to_string();
         if let Some(ui) = ui_w.upgrade() {
-            ui.set_active_tab(tab);
+            ui.set_active_tab(tab.clone());
+        }
+        // Initialize Studio/Contracts services on first visit
+        if tab_str == "studio" || tab_str == "contracts" {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                // Initialize file tree from project root
+                let project_root = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let root_str = project_root.to_string_lossy().to_string();
+                if let Err(e) = core.file_explorer.set_root(&project_root).await {
+                    tracing::warn!("Studio: file tree root set failed: {}", e);
+                } else {
+                    let nodes = core.file_explorer.get_tree().await;
+                    tracing::info!("Studio: loaded {} file tree nodes from {}", nodes.len(), root_str);
+                    let ui_w2 = ui_w.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w2.upgrade() {
+                            ui.set_ide_explorer_root(root_str.into());
+                        }
+                    });
+                }
+
+                // Terminal initialization
+                match core.terminal.create_default_session().await {
+                    Ok(session_id) => {
+                        tracing::info!("Studio: terminal session created: {}", session_id);
+                    }
+                    Err(e) => tracing::warn!("Studio: terminal init failed: {}", e),
+                }
+
+                // Git status
+                if let Err(e) = core.git.open_repo(&std::path::PathBuf::from(".")).await {
+                    tracing::debug!("Studio: git repo open: {}", e);
+                }
+                let branch = core.git.current_branch().await;
+                if !branch.is_empty() {
+                    tracing::info!("Studio: git branch={}", branch);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_ide_git_branch(branch.into());
+                        }
+                    });
+                }
+            });
         }
     });
 

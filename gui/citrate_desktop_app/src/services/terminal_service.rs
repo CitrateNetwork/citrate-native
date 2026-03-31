@@ -917,6 +917,11 @@ impl TerminalService {
         Ok(session_id)
     }
 
+    /// Create a terminal session with default config (80x24, /bin/sh).
+    pub async fn create_default_session(&self) -> Result<String, AppError> {
+        self.create_session(&TerminalConfig::default()).await
+    }
+
     /// Write input bytes to a session's PTY stdin.
     pub async fn write_input(
         &self,
