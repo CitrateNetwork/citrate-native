@@ -54,6 +54,10 @@ notify = "7"
 # IDE — Utilities
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Agent substrate
+citrate-agent-core = { path = "../../agent-core" }
 
 [dev-dependencies]
 tokio-test = "0.4"

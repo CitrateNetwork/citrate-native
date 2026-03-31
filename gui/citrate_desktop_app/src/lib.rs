@@ -13,6 +13,7 @@ pub mod error;
 pub mod event_bus;
 pub mod ports;
 pub mod services;
+pub mod trail;
 pub mod view_models;
 
 use std::sync::Arc;
