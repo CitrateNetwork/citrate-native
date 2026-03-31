@@ -39,6 +39,8 @@ pub trait WalletBackend: Send + Sync {
 pub struct WalletCoreBackend {
     key_manager: Arc<citrate_wallet_core::KeyManager>,
     rpc_client: Arc<citrate_wallet_core::RpcClient>,
+    /// Chain ID for transaction signing — derived from AppConfig, not hardcoded.
+    chain_id: std::sync::atomic::AtomicU64,
 }
 
 impl WalletCoreBackend {
@@ -48,7 +50,17 @@ impl WalletCoreBackend {
         Self {
             key_manager: Arc::new(citrate_wallet_core::KeyManager::new(&keystore_path)),
             rpc_client: Arc::new(citrate_wallet_core::RpcClient::new(&config.rpc_url)),
+            chain_id: std::sync::atomic::AtomicU64::new(40204), // default testnet
         }
+    }
+
+    /// Update the signing chain ID (called when environment switches).
+    pub fn set_chain_id(&self, id: u64) {
+        self.chain_id.store(id, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get_chain_id(&self) -> u64 {
+        self.chain_id.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -130,7 +142,7 @@ impl WalletBackend for WalletCoreBackend {
                 citrate_wallet_core::TransactionBuilder::new()
                     .to(to)
                     .value(value)
-                    .chain_id(40204)
+                    .chain_id(self.get_chain_id())
                     .sign(ed_key, nonce)
                     .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e)))?
             }
@@ -138,7 +150,7 @@ impl WalletBackend for WalletCoreBackend {
                 citrate_wallet_core::TransactionBuilder::new()
                     .to(to)
                     .value(value)
-                    .chain_id(40204)
+                    .chain_id(self.get_chain_id())
                     .sign_secp256k1(secp_key, nonce)
                     .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e)))?
             }
@@ -168,7 +180,7 @@ impl WalletBackend for WalletCoreBackend {
                     .to(to)
                     .value(value)
                     .data(data)
-                    .chain_id(40204)
+                    .chain_id(self.get_chain_id())
                     .sign(ed_key, nonce)
                     .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e)))?
             }
@@ -177,7 +189,7 @@ impl WalletBackend for WalletCoreBackend {
                     .to(to)
                     .value(value)
                     .data(data)
-                    .chain_id(40204)
+                    .chain_id(self.get_chain_id())
                     .sign_secp256k1(secp_key, nonce)
                     .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e)))?
             }

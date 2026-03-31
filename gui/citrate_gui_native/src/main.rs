@@ -231,10 +231,13 @@ fn main() {
 
     let ui = App::new().expect("Failed to create Slint window");
 
-    // Initial state
+    // Initial state — derive environment label from loaded config, not hardcoded
     ui.set_show_onboarding(is_first_run);
     ui.set_active_tab("dashboard".into());
-    ui.set_environment("DEVNET".into());
+    {
+        let config = rt.block_on(app_core.config.read());
+        ui.set_environment(config.network.to_uppercase().into());
+    }
 
     // Push bootnode and wallet data to UI
     {
