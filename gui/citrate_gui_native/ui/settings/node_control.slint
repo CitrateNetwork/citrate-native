@@ -1,6 +1,7 @@
 // Section 1: Node Control — start/stop/restart + live stats
 import { Theme } from "../theme.slint";
 import { SettingsRow, SectionHeader } from "settings_primitives.slint";
+import { LoadingButton } from "../shared/feedback.slint";
 
 export component NodeControlSection inherits VerticalLayout {
     in property <bool> node-running: false;
@@ -20,43 +21,29 @@ export component NodeControlSection inherits VerticalLayout {
 
     SectionHeader { text: "Node Control"; }
 
-    // Buttons
+    // Buttons — with loading/success/error feedback
     HorizontalLayout {
         spacing: Theme.space-sm;
 
-        Rectangle {
-            height: 36px; horizontal-stretch: 1;
-            border-radius: Theme.radius-md;
-            background: root.node-running ? Theme.bg-tertiary : Theme.success;
-            Text {
-                text: root.node-running ? "Running" : "Start";
-                color: root.node-running ? Theme.text-muted : #000000;
-                font-size: 12px; font-weight: 600;
-                horizontal-alignment: center; vertical-alignment: center;
-            }
-            TouchArea { clicked => { if !root.node-running { root.start-node(); } } }
+        LoadingButton {
+            horizontal-stretch: 1;
+            label: root.node-running ? "Running" : "Start Node";
+            state: root.node-running ? "success" : "idle";
+            disabled: root.node-running;
+            clicked => { root.start-node(); }
         }
 
-        Rectangle {
-            height: 36px; horizontal-stretch: 1;
-            border-radius: Theme.radius-md;
-            background: root.node-running ? Theme.error : Theme.bg-tertiary;
-            opacity: root.node-running ? 1.0 : 0.5;
-            Text {
-                text: "Stop";
-                color: root.node-running ? #ffffff : Theme.text-muted;
-                font-size: 12px; font-weight: 600;
-                horizontal-alignment: center; vertical-alignment: center;
-            }
-            TouchArea { clicked => { if root.node-running { root.stop-node(); } } }
+        LoadingButton {
+            horizontal-stretch: 1;
+            label: "Stop";
+            disabled: !root.node-running;
+            clicked => { root.stop-node(); }
         }
 
-        Rectangle {
-            height: 36px; horizontal-stretch: 1;
-            border-radius: Theme.radius-md;
-            border-width: 1px; border-color: Theme.border;
-            Text { text: "Restart"; color: Theme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { root.restart-node(); } }
+        LoadingButton {
+            horizontal-stretch: 1;
+            label: "Restart";
+            clicked => { root.restart-node(); }
         }
     }
 

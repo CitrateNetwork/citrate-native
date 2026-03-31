@@ -50,11 +50,13 @@ export component NavGroup inherits VerticalLayout {
 
 export component Sidebar inherits Rectangle {
     in property <string> active-tab: "dashboard";
+    in property <bool> compact: false;
     callback tab-changed(string);
 
-    width: Theme.sidebar-width;
+    width: root.compact ? Theme.sidebar-collapsed : Theme.sidebar-width;
     background: Theme.bg-secondary;
     border-width: 0px;
+    animate width { duration: 200ms; easing: ease-in-out; }
 
     VerticalLayout {
         padding: Theme.space-sm;

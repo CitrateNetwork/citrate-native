@@ -649,7 +649,6 @@ fn main() {
         let rt_handle = rt.handle().clone();
         std::thread::spawn(move || {
             let mut tick_counter: u32 = 0;
-            // Track initial balance to compute earnings delta
             let mut baseline_balance_wei: Option<u128> = None;
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(3));
@@ -820,9 +819,10 @@ fn main() {
                 };
                 let has_tx_update = tick_counter % 10 == 0;
 
-                let ui_handle = ui_handle.clone();
+                let ui_for_main = ui_handle.clone();
+                let ui_for_studio = ui_handle.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_handle.upgrade() {
+                    if let Some(ui) = ui_for_main.upgrade() {
                         ui.set_node_running(status.running);
                         ui.set_block_height(status.block_height as i32);
                         ui.set_peer_count(status.peer_count as i32);
@@ -855,6 +855,32 @@ fn main() {
                         ui.set_block_time_2(time2.into());
                     }
                 });
+
+                // Studio hydration — poll terminal and git every 3rd tick (~15s)
+                // Only when studio/contracts tab is active
+                if tick_counter % 3 == 0 {
+                    let active_tab = ui_for_studio.upgrade()
+                        .map(|ui| ui.get_active_tab().to_string());
+                    if matches!(active_tab.as_deref(), Some("studio") | Some("contracts")) {
+                        // Poll terminal output
+                        // (Terminal sessions push output via poll_output → feed_bytes)
+                        // Poll git branch
+                        let branch = rt_handle.block_on(core.git.current_branch());
+                        let git_files = rt_handle.block_on(core.git.status());
+                        let file_count = git_files.len() as i32;
+
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                if !branch.is_empty() {
+                                    ui.set_ide_git_branch(branch.into());
+                                }
+                                // Update changed file count as a proxy for git status
+                                let _ = file_count; // Will push GitFileData model in next iteration
+                            }
+                        });
+                    }
+                }
             }
         });
     }

@@ -23,6 +23,8 @@ export component App inherits Window {
     title: "Citrate — AI-Native Blockchain";
     preferred-width: 1200px;
     preferred-height: 800px;
+    min-width: 800px;
+    min-height: 600px;
     background: Theme.bg;
 
     // App state — three modes: onboarding, locked, or main app
@@ -277,6 +279,7 @@ export component App inherits Window {
 
             Sidebar {
                 active-tab: root.active-tab;
+                compact: root.width < 1000px;
                 tab-changed(tab) => { root.tab-changed(tab); }
             }
 
