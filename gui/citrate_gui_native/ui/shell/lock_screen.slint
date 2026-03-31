@@ -1,0 +1,138 @@
+// Lock screen — returning user password entry
+import { Theme } from "../theme.slint";
+
+export component LockScreen inherits Rectangle {
+    in-out property <string> password: "";
+    in property <string> error-message: "";
+    in property <bool> unlocking: false;
+    in property <bool> locked-out: false;
+    in property <string> lockout-message: "";
+
+    callback unlock(string);
+    callback sign-out;
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.space-xl;
+        padding: Theme.space-2xl;
+
+        // Logo
+        Text {
+            text: "Citrate";
+            color: Theme.accent;
+            font-size: 36px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Welcome Back";
+            color: Theme.text;
+            font-size: 22px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+
+        // Password input
+        Rectangle {
+            max-width: 360px;
+            horizontal-stretch: 0;
+
+            VerticalLayout {
+                spacing: Theme.space-md;
+
+                // Label
+                Text {
+                    text: "PASSWORD";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    font-weight: 500;
+                    letter-spacing: 0.5px;
+                }
+
+                // Input field
+                Rectangle {
+                    height: 44px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: root.error-message != "" ? Theme.error : Theme.border;
+                    background: Theme.bg-secondary;
+
+                    TextInput {
+                        text <=> root.password;
+                        font-size: 14px;
+                        color: Theme.text;
+                        input-type: InputType.password;
+                        x: Theme.space-md;
+                        width: parent.width - Theme.space-2xl;
+                        vertical-alignment: center;
+                        accepted => { if !root.unlocking && !root.locked-out { root.unlock(root.password); } }
+                    }
+                }
+
+                // Error
+                if root.error-message != "" : Text {
+                    text: root.error-message;
+                    color: Theme.error;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+
+                // Lockout warning
+                if root.locked-out : Text {
+                    text: root.lockout-message;
+                    color: Theme.warning;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+
+                // Unlock button
+                Rectangle {
+                    height: 42px;
+                    border-radius: Theme.radius-md;
+                    background: root.locked-out ? Theme.bg-tertiary :
+                                root.unlocking ? Theme.bg-tertiary : Theme.accent;
+                    opacity: root.locked-out || root.unlocking ? 0.5 : 1.0;
+
+                    Text {
+                        text: root.unlocking ? "Unlocking..." :
+                              root.locked-out ? "Locked Out" : "Unlock";
+                        color: root.locked-out || root.unlocking ? Theme.text-muted : #000000;
+                        font-size: 14px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            if !root.unlocking && !root.locked-out {
+                                root.unlock(root.password);
+                            }
+                        }
+                    }
+                }
+
+                // Sign out link
+                Rectangle {
+                    height: 32px;
+
+                    Text {
+                        text: "Sign Out";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.sign-out(); }
+                    }
+                }
+            }
+        }
+    }
+}

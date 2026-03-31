@@ -1,0 +1,151 @@
+// Settings view — composable 10-section layout.
+// Each section is a separate file that can be ripped and replaced independently.
+import { Theme } from "../theme.slint";
+import { SectionDivider } from "settings_primitives.slint";
+import { NodeControlSection } from "node_control.slint";
+import { EnvironmentSection } from "environment.slint";
+import { PeerConnectionsSection } from "peer_connections.slint";
+import { AIConfigSection } from "ai_config.slint";
+import { IntegrationsSection } from "integrations.slint";
+import { KnowledgeGraphSection } from "knowledge_graph.slint";
+import { AppearanceSection } from "appearance.slint";
+import { DangerZoneSection } from "danger_zone.slint";
+
+export component SettingsView inherits Rectangle {
+    // Node state (passed through to sections)
+    in property <bool> node-running: false;
+    in property <string> network: "devnet";
+    in property <int> chain-id: 40204;
+    in property <int> rpc-port: 18545;
+    in property <int> p2p-port: 30304;
+    in property <int> max-peers: 50;
+    in property <string> theme-mode: "dark";
+    in property <int> peer-count: 0;
+    in property <int> block-height: 0;
+    in property <string> connection-status: "Disconnected";
+    in property <string> bootnode-list: "";
+    in property <string> noise-identity: "";
+    in property <string> uptime: "--";
+    in property <int> dag-tips: 0;
+    in property <bool> syncing: false;
+
+    // AI state
+    in property <string> active-ai-provider: "None configured";
+    in property <bool> has-local-model: false;
+    in property <string> local-model-name: "";
+
+    // Node control callbacks
+    callback start-node;
+    callback stop-node;
+    callback restart-node;
+    callback add-bootnode(string);
+    callback remove-bootnode(string);
+    callback set-theme(string);
+    callback factory-reset;
+
+    // AI callbacks
+    callback save-ai-key(string, string);
+    callback scan-models;
+    callback download-model;
+
+    // Integration callbacks
+    callback connect-github;
+    callback connect-huggingface;
+    callback save-integration-token(string, string);
+
+    // Environment callback
+    callback set-environment(string);
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-xl;
+            max-width: 680px;
+
+            Text { text: "Settings"; color: Theme.text; font-size: 24px; font-weight: 600; }
+
+            // 1. Node Control
+            NodeControlSection {
+                node-running: root.node-running;
+                network: root.network;
+                block-height: root.block-height;
+                peer-count: root.peer-count;
+                dag-tips: root.dag-tips;
+                syncing: root.syncing;
+                uptime: root.uptime;
+                connection-status: root.connection-status;
+                start-node => { root.start-node(); }
+                stop-node => { root.stop-node(); }
+                restart-node => { root.restart-node(); }
+            }
+
+            SectionDivider {}
+
+            // 2. Environment
+            EnvironmentSection {
+                network: root.network;
+                chain-id: root.chain-id;
+                rpc-port: root.rpc-port;
+                p2p-port: root.p2p-port;
+                max-peers: root.max-peers;
+                set-environment(env) => { root.set-environment(env); }
+            }
+
+            SectionDivider {}
+
+            // 3. Peer Connections
+            PeerConnectionsSection {
+                bootnode-list: root.bootnode-list;
+                noise-identity: root.noise-identity;
+                add-bootnode(addr) => { root.add-bootnode(addr); }
+                remove-bootnode(addr) => { root.remove-bootnode(addr); }
+            }
+
+            SectionDivider {}
+
+            // 4. AI Configuration
+            AIConfigSection {
+                active-provider: root.active-ai-provider;
+                has-local-model: root.has-local-model;
+                local-model-name: root.local-model-name;
+                save-ai-key(provider, key) => { root.save-ai-key(provider, key); }
+                scan-models => { root.scan-models(); }
+                download-model => { root.download-model(); }
+            }
+
+            SectionDivider {}
+
+            // 7. Integrations
+            IntegrationsSection {
+                connect-github => { root.connect-github(); }
+                connect-huggingface => { root.connect-huggingface(); }
+                save-integration-token(name, token) => { root.save-integration-token(name, token); }
+            }
+
+            SectionDivider {}
+
+            // 8. Knowledge Graph
+            KnowledgeGraphSection {}
+
+            SectionDivider {}
+
+            // 9. Appearance
+            AppearanceSection {
+                theme-mode: root.theme-mode;
+                set-theme(mode) => { root.set-theme(mode); }
+            }
+
+            SectionDivider {}
+
+            // 10. Danger Zone
+            DangerZoneSection {
+                factory-reset => { root.factory-reset(); }
+            }
+
+            // Bottom spacer
+            Rectangle { height: Theme.space-2xl; }
+        }
+    }
+}

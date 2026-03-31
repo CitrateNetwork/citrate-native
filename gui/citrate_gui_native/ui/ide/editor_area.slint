@@ -1,0 +1,104 @@
+// Editor area — syntax-highlighted code display with line numbers
+import { Theme } from "../theme.slint";
+import { StyledSpanData, StyledLineData } from "ide_structs.slint";
+
+component CodeLine inherits Rectangle {
+    in property <int> line-num;
+    in property <[StyledSpanData]> spans: [];
+    in property <bool> is-cursor-line: false;
+
+    height: 20px;
+    background: root.is-cursor-line ? Theme.bg-tertiary : transparent;
+
+    HorizontalLayout {
+        Rectangle {
+            width: 56px;
+            Text {
+                text: root.line-num;
+                color: root.is-cursor-line ? Theme.text-secondary : Theme.text-muted;
+                font-size: 13px;
+                font-weight: root.is-cursor-line ? 600 : 400;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                x: 0px;
+                width: 44px;
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            background: Theme.border-subtle;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+
+            HorizontalLayout {
+                padding-left: Theme.space-sm;
+
+                for span in root.spans : Text {
+                    text: span.text;
+                    color: span.fg-color;
+                    font-size: 13px;
+                    font-weight: span.bold ? 700 : 400;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+export component EditorArea inherits Rectangle {
+    in property <[StyledLineData]> visible-lines: [];
+    in property <int> total-lines: 0;
+    in property <int> scroll-offset: 0;
+    in property <int> cursor-line: 0;
+    in property <int> cursor-col: 0;
+
+    callback key-pressed(string);
+    callback scroll-changed(int);
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                for line in root.visible-lines : CodeLine {
+                    line-num: line.line-number;
+                    spans: line.spans;
+                    is-cursor-line: line.line-number == root.cursor-line;
+                }
+            }
+        }
+
+        if root.total-lines == 0 : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: Theme.space-md;
+                Text {
+                    text: "No file open";
+                    color: Theme.text-muted;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Open a file from the explorer";
+                    color: Theme.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    FocusScope {
+        key-pressed(event) => {
+            root.key-pressed(event.text);
+            accept
+        }
+    }
+}

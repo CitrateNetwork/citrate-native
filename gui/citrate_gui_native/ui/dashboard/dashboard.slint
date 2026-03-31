@@ -1,0 +1,185 @@
+// Dashboard — stat cards + wallet summary + recent blocks
+import { Theme } from "../theme.slint";
+
+component StatCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> ok: true;
+    in property <color> accent-color: Theme.success;
+
+    min-height: 88px;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.border : Theme.border-subtle;
+    clip: true;
+    animate border-color { duration: 150ms; easing: ease-in-out; }
+
+    touch := TouchArea {}
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            alignment: space-between;
+            Text { text: root.label; color: Theme.text-muted; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
+            Rectangle {
+                width: 8px; height: 8px; border-radius: 4px;
+                background: root.ok ? root.accent-color : Theme.text-muted;
+            }
+        }
+
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 22px;
+            font-weight: 600;
+            overflow: elide;
+        }
+    }
+}
+
+component BlockRow inherits Rectangle {
+    in property <string> height-text;
+    in property <string> tx-count;
+    in property <string> time-text;
+    in property <string> hash-text;
+
+    height: 36px;
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-xl;
+
+        Text { text: root.height-text; color: Theme.text; font-size: 12px; font-weight: 600; min-width: 80px; vertical-alignment: center; }
+        Text { text: root.tx-count; color: Theme.text-muted; font-size: 12px; min-width: 60px; vertical-alignment: center; }
+        Text { text: root.time-text; color: Theme.text-muted; font-size: 12px; min-width: 80px; vertical-alignment: center; }
+        Text { text: root.hash-text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+    }
+}
+
+export component Dashboard inherits Rectangle {
+    in property <bool> node-running: false;
+    in property <int> block-height: 0;
+    in property <int> peer-count: 0;
+    in property <int> mempool-size: 0;
+    in property <string> balance: "0";
+    in property <string> earned: "0.0000";
+    // Recent block data (pushed from Rust background thread — real RocksDB reads)
+    in property <string> block-hash-0: "";
+    in property <string> block-hash-1: "";
+    in property <string> block-hash-2: "";
+    in property <string> block-txcount-0: "0 txns";
+    in property <string> block-txcount-1: "0 txns";
+    in property <string> block-txcount-2: "0 txns";
+    in property <string> block-time-0: "";
+    in property <string> block-time-1: "";
+    in property <string> block-time-2: "";
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding-top: Theme.space-lg;
+            padding-bottom: Theme.space-lg;
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+                Text {
+                    text: "Dashboard";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+
+                // Stat cards — 3 top, 2 bottom
+                VerticalLayout {
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        StatCard { label: "NODE STATUS"; value: root.node-running ? "Running" : "Stopped"; ok: root.node-running; accent-color: Theme.success; horizontal-stretch: 1; }
+                        StatCard { label: "BLOCK HEIGHT"; value: root.block-height > 0 ? root.block-height : "--"; accent-color: Theme.periwinkle; horizontal-stretch: 1; }
+                        StatCard { label: "PEERS"; value: root.peer-count; ok: root.peer-count > 0; accent-color: Theme.periwinkle; horizontal-stretch: 1; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        StatCard { label: "MEMPOOL"; value: root.mempool-size + " txns"; accent-color: Theme.aquamarine; horizontal-stretch: 1; }
+                        StatCard { label: "SALT EARNED"; value: root.earned; accent-color: Theme.chamois; horizontal-stretch: 1; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+
+                // Balance card
+                Rectangle {
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    min-height: 80px;
+                    clip: true;
+
+                    VerticalLayout {
+                        padding: Theme.space-xl;
+                        spacing: Theme.space-sm;
+
+                        Text { text: "TOTAL BALANCE"; color: Theme.text-muted; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
+                        Text { text: root.balance + " SALT"; color: Theme.text; font-size: 32px; font-weight: 600; overflow: elide; }
+                    }
+                }
+
+                // Recent blocks
+                VerticalLayout {
+                    spacing: Theme.space-md;
+
+                    Text { text: "Recent Blocks"; color: Theme.text; font-size: 16px; font-weight: 500; }
+
+                    Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        min-height: 60px;
+                        vertical-stretch: 1;
+                        clip: true;
+
+                        if !root.node-running : Text {
+                            text: "Start node to see blocks";
+                            color: Theme.text-muted; font-size: 13px;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+
+                        if root.node-running && root.block-height == 0 : Text {
+                            text: "Waiting for blocks...";
+                            color: Theme.text-muted; font-size: 13px;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+
+                        if root.node-running && root.block-height > 0 : VerticalLayout {
+                            padding: Theme.space-md;
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-lg;
+                                padding-right: Theme.space-lg;
+                                spacing: Theme.space-xl;
+                                height: 28px;
+
+                                Text { text: "Height"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 80px; vertical-alignment: center; }
+                                Text { text: "Txns"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 60px; vertical-alignment: center; }
+                                Text { text: "Time"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 80px; vertical-alignment: center; }
+                                Text { text: "Hash"; color: Theme.text-muted; font-size: 11px; font-weight: 500; vertical-alignment: center; }
+                            }
+
+                            BlockRow { height-text: "#" + (root.block-height); tx-count: root.block-txcount-0; time-text: root.block-time-0 != "" ? root.block-time-0 : "just now"; hash-text: root.block-hash-0 != "" ? root.block-hash-0 : "syncing..."; }
+                            if root.block-height > 1 : BlockRow { height-text: "#" + (root.block-height - 1); tx-count: root.block-txcount-1; time-text: root.block-time-1 != "" ? root.block-time-1 : ""; hash-text: root.block-hash-1; }
+                            if root.block-height > 2 : BlockRow { height-text: "#" + (root.block-height - 2); tx-count: root.block-txcount-2; time-text: root.block-time-2 != "" ? root.block-time-2 : ""; hash-text: root.block-hash-2; }
+                        }
+                    }
+                }
+            }
+        }
+    }

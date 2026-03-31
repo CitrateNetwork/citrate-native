@@ -1,0 +1,62 @@
+// Section 8: Knowledge Graph — Logseq integration, anchoring, journaling
+import { Theme } from "../theme.slint";
+import { SectionHeader, ToggleRow, ActionButton } from "settings_primitives.slint";
+
+export component KnowledgeGraphSection inherits VerticalLayout {
+    in-out property <bool> logseq-enabled: false;
+    in-out property <bool> auto-journal: false;
+    in-out property <bool> on-chain-anchoring: false;
+    in-out property <string> graph-path: "~/.citrate/logseq/graphs/default";
+
+    callback open-graph-window;
+    callback save-graph-path(string);
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "Knowledge Graph"; }
+
+    ToggleRow {
+        label: "Logseq Integration";
+        description: "Enable knowledge-graph integration with on-chain anchoring";
+        enabled <=> root.logseq-enabled;
+        toggled => { root.logseq-enabled = !root.logseq-enabled; }
+    }
+
+    ToggleRow {
+        label: "Auto-Journal";
+        description: "Automatically log blockchain events to daily journal";
+        enabled <=> root.auto-journal;
+        toggled => { root.auto-journal = !root.auto-journal; }
+    }
+
+    ToggleRow {
+        label: "On-Chain Anchoring";
+        description: "Anchor page content hashes to the blockchain for provenance";
+        enabled <=> root.on-chain-anchoring;
+        toggled => { root.on-chain-anchoring = !root.on-chain-anchoring; }
+    }
+
+    // Graph path — editable input field
+    VerticalLayout {
+        spacing: 4px;
+        Text { text: "Graph Path"; color: Theme.text-secondary; font-size: 10px; }
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle {
+                height: 28px; horizontal-stretch: 1;
+                border-radius: Theme.radius-sm;
+                border-width: 1px; border-color: Theme.border;
+                background: Theme.bg;
+                TextInput {
+                    text <=> root.graph-path;
+                    font-size: 11px; color: Theme.text;
+                    x: Theme.space-sm;
+                    width: parent.width - Theme.space-lg;
+                    vertical-alignment: center;
+                }
+            }
+            ActionButton { width: 40px; label: "Save"; clicked => { root.save-graph-path(root.graph-path); } }
+        }
+    }
+}

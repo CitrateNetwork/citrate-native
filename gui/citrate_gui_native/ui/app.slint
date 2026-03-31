@@ -1,0 +1,575 @@
+// Citrate Desktop — Main application shell
+import { Theme } from "theme.slint";
+import { Sidebar } from "shell/sidebar.slint";
+import { StatusBar } from "shell/status_bar.slint";
+import { Onboarding } from "onboarding/onboarding.slint";
+import { LockScreen } from "shell/lock_screen.slint";
+import { Dashboard } from "dashboard/dashboard.slint";
+import { WalletView, AccountData, TxData } from "wallet/wallet.slint";
+import { SettingsView } from "settings/settings.slint";
+import { DagExplorer } from "dag/dag_explorer.slint";
+import { SendDialog } from "wallet/send_dialog.slint";
+import { ChatView, ChatMessageData } from "chat/chat.slint";
+import { ModelsView } from "models/models.slint";
+import { IdePanel } from "ide/ide_panel.slint";
+import { LearningView } from "learning/learning.slint";
+import { ComputeView } from "compute/compute.slint";
+import { ContractsPanel } from "contracts/contracts_panel.slint";
+import { StorageView } from "storage/storage.slint";
+import { FileTreeNodeData, EditorTabData, StyledLineData, StyledSpanData,
+         TerminalRowData, TerminalCellData, GitFileData, DiagnosticData } from "ide/ide_structs.slint";
+
+export component App inherits Window {
+    title: "Citrate — AI-Native Blockchain";
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    background: Theme.bg;
+
+    // App state — three modes: onboarding, locked, or main app
+    in property <bool> show-onboarding: true;
+    in property <bool> show-lock-screen: false;
+    in property <string> lock-error: "";
+    in property <bool> lock-unlocking: false;
+    in property <bool> lock-locked-out: false;
+    in property <string> lock-lockout-message: "";
+    callback unlock-wallet(string);
+    callback sign-out;
+    in property <string> active-tab: "dashboard";
+    in property <bool> node-running: false;
+    in property <string> environment: "DEVNET";
+    in property <int> block-height: 0;
+    in property <int> peer-count: 0;
+    in property <int> mempool-size: 0;
+    in property <string> wallet-balance: "0";
+    in property <string> salt-earned: "0.0000";
+    in property <string> block-hash-0: "";
+    in property <string> block-hash-1: "";
+    in property <string> block-hash-2: "";
+    in property <string> block-txcount-0: "0 txns";
+    in property <string> block-txcount-1: "0 txns";
+    in property <string> block-txcount-2: "0 txns";
+    in property <string> block-time-0: "";
+    in property <string> block-time-1: "";
+    in property <string> block-time-2: "";
+    in property <string> connection-status: "Disconnected";
+    in property <string> bootnode-list: "";
+    in property <string> noise-identity: "";
+
+    // Storage (IPFS daemon) state — independent of node running
+    in property <bool> storage-daemon-online: false;
+    in property <int> storage-peer-count: 0;
+    in property <int> storage-pin-count: 0;
+    in property <string> storage-repo-size: "0 B";
+
+    // DAG Explorer detail state
+    in-out property <bool> dag-show-detail: false;
+    in property <string> dag-detail-hash: "";
+    in property <int> dag-detail-height: 0;
+    in property <string> dag-detail-timestamp: "";
+    in property <int> dag-detail-tx-count: 0;
+    in property <string> dag-detail-parent: "";
+    in property <int> dag-detail-blue-score: 0;
+    in property <string> dag-detail-proposer: "";
+    in property <string> wallet-selected-address: "";
+    in property <string> wallet-selected-label: "";
+    in property <string> wallet-selected-balance: "0";
+    in property <int> wallet-nonce: 0;
+    in property <bool> wallet-session-active: false;
+    in property <string> wallet-session-remaining: "";
+    in property <int> wallet-account-count: 0;
+
+    // Learning state
+    in property <string> learning-staked: "0";
+    in property <string> learning-earnings: "0";
+    in property <int> learning-pool-count: 0;
+    in property <string> learning-pool-status: "No pool joined";
+    in property <int> learning-epoch: 0;
+
+    // Compute state
+    in property <int> compute-active-jobs: 0;
+    in property <int> compute-providers: 0;
+    in property <string> compute-earned: "0";
+    in property <string> compute-provider-status: "Not registered";
+
+    // Chat tool approval state
+    in property <bool> chat-tool-pending: false;
+    in property <string> chat-tool-name: "";
+    in property <string> chat-tool-description: "";
+
+    // App version
+    in property <string> app-version: "0.1.0";
+    in-out property <bool> show-send-dialog: false;
+    in property <string> send-tx-hash: "";
+    in property <string> send-error: "";
+    in property <bool> send-sending: false;
+    callback wallet-send(/* to */ string, /* amount */ string, /* password */ string);
+    callback wallet-send-close;
+    callback wallet-lock-clicked;
+    callback wallet-unlock-clicked;
+    callback wallet-copy-address;
+    callback wallet-create-account(string, string);
+    callback wallet-import-mnemonic(string, string);
+    callback wallet-select-account(int);
+    callback wallet-export-key(/* password */ string);
+    callback wallet-copy-exported-key;
+    callback wallet-request-faucet;
+    in property <string> wallet-faucet-status: "";
+
+    // Wallet model data
+    in property <[AccountData]> wallet-accounts: [];
+    in property <[TxData]> wallet-transactions: [];
+    in property <string> wallet-create-error: "";
+    in property <string> wallet-import-error: "";
+    in property <string> wallet-export-error: "";
+    in property <string> wallet-exported-key: "";
+    callback settings-start-node;
+    callback settings-stop-node;
+    callback settings-restart-node;
+    callback settings-add-bootnode(string);
+    callback settings-set-theme(string);
+    callback settings-factory-reset;
+    callback settings-connect-github;
+    callback settings-connect-huggingface;
+    callback settings-save-integration-token(string, string);
+    callback settings-set-environment(string);
+
+    // DAG Explorer callbacks
+    callback dag-search(string);
+    callback dag-select-block(int);
+    callback dag-back-to-list;
+
+    // Models callbacks
+    callback models-load-model;
+    callback models-deploy-model;
+    callback models-run-inference;
+    callback models-browse-huggingface;
+    callback models-pin-to-ipfs;
+
+    // Learning callbacks
+    callback learning-join-pool;
+    callback learning-stake;
+    callback learning-claim-earnings;
+
+    // Compute callbacks
+    callback compute-post-job;
+    callback compute-register-provider;
+    callback compute-refresh;
+
+    // Chat tool approval
+    callback chat-approve-tool;
+    callback chat-reject-tool;
+
+    // AI config callbacks
+    callback settings-save-ai-key(string, string);
+    callback settings-scan-models;
+    callback settings-download-model;
+
+    // Storage (IPFS) callbacks
+    callback storage-start-daemon;
+    callback storage-stop-daemon;
+    callback storage-upload-file;
+    callback storage-pin-cid(string);
+    callback storage-refresh;
+
+    // Onboarding state (set from Rust)
+    in-out property <int> onboarding-step: 0;
+    in property <string> onboarding-mnemonic: "";
+    in property <string> onboarding-wallet-address: "";
+    in property <string> onboarding-error: "";
+    in property <bool> onboarding-creating: false;
+    in property <float> onboarding-node-progress: 0.0;
+    in property <string> onboarding-node-status: "";
+    in property <bool> onboarding-node-ready: false;
+    in property <bool> onboarding-model-ready: false;
+    in property <string> onboarding-model-status: "Checking...";
+    in property <int> onboarding-verify-word: 3;
+    callback copy-mnemonic;
+    callback verify-mnemonic-word(/* input */ string);
+
+    // === IDE State ===
+    in property <string> ide-explorer-root: "";
+    in property <[FileTreeNodeData]> ide-file-tree: [];
+    in property <string> ide-selected-file: "";
+    in property <[EditorTabData]> ide-tabs: [];
+    in property <[StyledLineData]> ide-visible-lines: [];
+    in property <int> ide-total-lines: 0;
+    in property <int> ide-cursor-line: 0;
+    in property <int> ide-cursor-col: 0;
+    in property <[TerminalRowData]> ide-terminal-rows: [];
+    in property <int> ide-terminal-cursor-row: 0;
+    in property <int> ide-terminal-cursor-col: 0;
+    in property <string> ide-git-branch: "";
+    in property <[GitFileData]> ide-git-changed-files: [];
+    in property <[DiagnosticData]> ide-diagnostics: [];
+    in property <string> ide-language: "";
+    in property <int> ide-error-count: 0;
+    in property <int> ide-warning-count: 0;
+
+    // === Chat State ===
+    in property <bool> chat-model-loaded: false;
+    in property <string> chat-model-name: "No model";
+    in property <bool> chat-thinking: false;
+    in property <string> chat-last-response: "";
+    in property <string> chat-error: "";
+    in property <[ChatMessageData]> chat-messages: [];  // Structured message list for individual bubbles
+    callback chat-send(string);
+
+    // === Models State ===
+    in property <int> models-count: 0;
+    in property <string> models-ipfs-cid: "";
+    in property <bool> models-pinning: false;
+
+    // IDE callbacks
+    callback ide-file-opened(string);
+    callback ide-dir-toggled(string);
+    callback ide-tab-clicked(string);
+    callback ide-tab-closed(string);
+    callback ide-editor-key(string);
+    callback ide-terminal-input(string);
+    callback ide-git-stage(string);
+    callback ide-git-unstage(string);
+    callback ide-git-commit(string);
+    callback ide-git-push;
+    callback ide-git-pull;
+    callback ide-save-file;
+    callback ide-pop-out;
+
+    // Callbacks to Rust
+    callback tab-changed(string);
+    callback create-wallet(/* password */ string, /* label */ string);
+    callback start-node(/* environment */ string);
+    callback check-model();
+    callback onboarding-complete;
+
+    if root.show-onboarding : Onboarding {
+        current-step <=> root.onboarding-step;
+        mnemonic: root.onboarding-mnemonic;
+        wallet-address: root.onboarding-wallet-address;
+        error-message: root.onboarding-error;
+        creating: root.onboarding-creating;
+        node-progress: root.onboarding-node-progress;
+        node-status: root.onboarding-node-status;
+        node-ready: root.onboarding-node-ready;
+        model-ready: root.onboarding-model-ready;
+        model-status: root.onboarding-model-status;
+        verify-word-number: root.onboarding-verify-word;
+        create-wallet(password, label) => { root.create-wallet(password, label); }
+        start-node(env) => { root.start-node(env); }
+        check-model => { root.check-model(); }
+        complete => { root.onboarding-complete(); }
+        copy-mnemonic => { root.copy-mnemonic(); }
+        verify-mnemonic-word => { root.verify-mnemonic-word(self.verify-input); }
+    }
+
+    if !root.show-onboarding && root.show-lock-screen : LockScreen {
+        error-message: root.lock-error;
+        unlocking: root.lock-unlocking;
+        locked-out: root.lock-locked-out;
+        lockout-message: root.lock-lockout-message;
+        unlock(password) => { root.unlock-wallet(password); }
+        sign-out => { root.sign-out(); }
+    }
+
+    if !root.show-onboarding && !root.show-lock-screen : VerticalLayout {
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            Sidebar {
+                active-tab: root.active-tab;
+                tab-changed(tab) => { root.tab-changed(tab); }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Theme.border-subtle;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.bg;
+
+                // Dashboard
+                if root.active-tab == "dashboard" : Dashboard {
+                    node-running: root.node-running;
+                    block-height: root.block-height;
+                    peer-count: root.peer-count;
+                    mempool-size: root.mempool-size;
+                    balance: root.wallet-balance;
+                    earned: root.salt-earned;
+                    block-hash-0: root.block-hash-0;
+                    block-hash-1: root.block-hash-1;
+                    block-hash-2: root.block-hash-2;
+                    block-txcount-0: root.block-txcount-0;
+                    block-txcount-1: root.block-txcount-1;
+                    block-txcount-2: root.block-txcount-2;
+                    block-time-0: root.block-time-0;
+                    block-time-1: root.block-time-1;
+                    block-time-2: root.block-time-2;
+                }
+
+                // Wallet
+                if root.active-tab == "wallet" : WalletView {
+                    selected-address: root.wallet-selected-address;
+                    selected-label: root.wallet-selected-label;
+                    selected-balance: root.wallet-selected-balance;
+                    selected-nonce: root.wallet-nonce;
+                    session-active: root.wallet-session-active;
+                    session-remaining: root.wallet-session-remaining;
+                    account-count: root.wallet-account-count;
+                    accounts: root.wallet-accounts;
+                    transactions: root.wallet-transactions;
+                    create-error: root.wallet-create-error;
+                    import-error: root.wallet-import-error;
+                    export-error: root.wallet-export-error;
+                    exported-key: root.wallet-exported-key;
+                    send-clicked => { root.show-send-dialog = true; }
+                    lock-clicked => { root.wallet-lock-clicked(); }
+                    unlock-clicked => { root.wallet-unlock-clicked(); }
+                    copy-address => { root.wallet-copy-address(); }
+                    create-account(pwd, label) => { root.wallet-create-account(pwd, label); }
+                    import-from-mnemonic(mnemonic, pwd) => { root.wallet-import-mnemonic(mnemonic, pwd); }
+                    import-from-key(key, pwd) => { root.wallet-import-mnemonic(key, pwd); }
+                    select-account(index) => { root.wallet-select-account(index); }
+                    export-private-key(password) => { root.wallet-export-key(password); }
+                    copy-exported-key => { root.wallet-copy-exported-key(); }
+                    faucet-status: root.wallet-faucet-status;
+                    request-faucet => { root.wallet-request-faucet(); }
+                }
+
+                // DAG Explorer
+                if root.active-tab == "dag" : DagExplorer {
+                    current-height: root.block-height;
+                    show-detail: root.dag-show-detail;
+                    detail-hash: root.dag-detail-hash;
+                    detail-height: root.dag-detail-height;
+                    detail-timestamp: root.dag-detail-timestamp;
+                    detail-tx-count: root.dag-detail-tx-count;
+                    detail-parent: root.dag-detail-parent;
+                    detail-blue-score: root.dag-detail-blue-score;
+                    detail-proposer: root.dag-detail-proposer;
+                    search(query) => { root.dag-search(query); }
+                    select-block(height) => { root.dag-select-block(height); }
+                    back-to-list => { root.dag-back-to-list(); }
+                }
+
+                // Settings
+                if root.active-tab == "settings" : SettingsView {
+                    node-running: root.node-running;
+                    network: root.environment;
+                    chain-id: 40204;
+                    rpc-port: 18545;
+                    p2p-port: 30304;
+                    peer-count: root.peer-count;
+                    block-height: root.block-height;
+                    connection-status: root.connection-status;
+                    bootnode-list: root.bootnode-list;
+                    noise-identity: root.noise-identity;
+                    has-local-model: root.chat-model-loaded;
+                    local-model-name: root.chat-model-name;
+                    start-node => { root.settings-start-node(); }
+                    stop-node => { root.settings-stop-node(); }
+                    restart-node => { root.settings-restart-node(); }
+                    add-bootnode(addr) => { root.settings-add-bootnode(addr); }
+                    set-theme(mode) => { root.settings-set-theme(mode); }
+                    factory-reset => { root.settings-factory-reset(); }
+                    connect-github => { root.settings-connect-github(); }
+                    connect-huggingface => { root.settings-connect-huggingface(); }
+                    save-integration-token(name, token) => { root.settings-save-integration-token(name, token); }
+                    set-environment(env) => { root.settings-set-environment(env); }
+                    save-ai-key(provider, key) => { root.settings-save-ai-key(provider, key); }
+                    scan-models => { root.settings-scan-models(); }
+                    download-model => { root.settings-download-model(); }
+                }
+
+                // Chat
+                if root.active-tab == "chat" : ChatView {
+                    model-loaded: root.chat-model-loaded;
+                    model-name: root.chat-model-name;
+                    thinking: root.chat-thinking;
+                    last-response: root.chat-last-response;
+                    error: root.chat-error;
+                    messages: root.chat-messages;
+                    tool-pending: root.chat-tool-pending;
+                    tool-name: root.chat-tool-name;
+                    tool-description: root.chat-tool-description;
+                    send-message(msg) => { root.chat-send(msg); }
+                    approve-tool => { root.chat-approve-tool(); }
+                    reject-tool => { root.chat-reject-tool(); }
+                }
+
+                // Models
+                if root.active-tab == "models" : ModelsView {
+                    has-local-model: root.chat-model-loaded;
+                    local-model-name: root.chat-model-name;
+                    model-loaded: root.chat-model-loaded;
+                    on-chain-model-count: root.models-count;
+                    model-ipfs-cid: root.models-ipfs-cid;
+                    model-pinning: root.models-pinning;
+                    load-model => { root.models-load-model(); }
+                    deploy-model => { root.models-deploy-model(); }
+                    run-inference => { root.models-run-inference(); }
+                    browse-huggingface => { root.models-browse-huggingface(); }
+                    pin-model-to-ipfs => { root.models-pin-to-ipfs(); }
+                }
+
+                // Contracts IDE — editor + deploy panel
+                if root.active-tab == "contracts" : HorizontalLayout {
+                    IdePanel {
+                        horizontal-stretch: 1;
+                        explorer-root: root.ide-explorer-root;
+                        file-tree-nodes: root.ide-file-tree;
+                        selected-file-path: root.ide-selected-file;
+                        tabs: root.ide-tabs;
+                        visible-lines: root.ide-visible-lines;
+                        total-lines: root.ide-total-lines;
+                        cursor-line: root.ide-cursor-line;
+                        cursor-col: root.ide-cursor-col;
+                        terminal-rows: root.ide-terminal-rows;
+                        terminal-cursor-row: root.ide-terminal-cursor-row;
+                        terminal-cursor-col: root.ide-terminal-cursor-col;
+                        git-branch: root.ide-git-branch;
+                        git-changed-files: root.ide-git-changed-files;
+                        diagnostics: root.ide-diagnostics;
+                        active-language: root.ide-language;
+                        error-count: root.ide-error-count;
+                        warning-count: root.ide-warning-count;
+                        file-opened(path) => { root.ide-file-opened(path); }
+                        dir-toggled(path) => { root.ide-dir-toggled(path); }
+                        tab-clicked(id) => { root.ide-tab-clicked(id); }
+                        tab-closed(id) => { root.ide-tab-closed(id); }
+                        editor-key-pressed(key) => { root.ide-editor-key(key); }
+                        terminal-input(key) => { root.ide-terminal-input(key); }
+                        git-stage(path) => { root.ide-git-stage(path); }
+                        git-unstage(path) => { root.ide-git-unstage(path); }
+                        git-commit(msg) => { root.ide-git-commit(msg); }
+                        git-push => { root.ide-git-push(); }
+                        git-pull => { root.ide-git-pull(); }
+                        save-file => { root.ide-save-file(); }
+                        pop-out => { root.ide-pop-out(); }
+                    }
+
+                    ContractsPanel {
+                        environment: root.environment;
+                    }
+                }
+
+                // Studio / IDE (standalone, no deploy panel)
+                if root.active-tab == "studio" : IdePanel {
+                    explorer-root: root.ide-explorer-root;
+                    file-tree-nodes: root.ide-file-tree;
+                    selected-file-path: root.ide-selected-file;
+                    tabs: root.ide-tabs;
+                    visible-lines: root.ide-visible-lines;
+                    total-lines: root.ide-total-lines;
+                    cursor-line: root.ide-cursor-line;
+                    cursor-col: root.ide-cursor-col;
+                    terminal-rows: root.ide-terminal-rows;
+                    terminal-cursor-row: root.ide-terminal-cursor-row;
+                    terminal-cursor-col: root.ide-terminal-cursor-col;
+                    git-branch: root.ide-git-branch;
+                    git-changed-files: root.ide-git-changed-files;
+                    diagnostics: root.ide-diagnostics;
+                    active-language: root.ide-language;
+                    error-count: root.ide-error-count;
+                    warning-count: root.ide-warning-count;
+                    file-opened(path) => { root.ide-file-opened(path); }
+                    dir-toggled(path) => { root.ide-dir-toggled(path); }
+                    tab-clicked(id) => { root.ide-tab-clicked(id); }
+                    tab-closed(id) => { root.ide-tab-closed(id); }
+                    editor-key-pressed(key) => { root.ide-editor-key(key); }
+                    terminal-input(key) => { root.ide-terminal-input(key); }
+                    git-stage(path) => { root.ide-git-stage(path); }
+                    git-unstage(path) => { root.ide-git-unstage(path); }
+                    git-commit(msg) => { root.ide-git-commit(msg); }
+                    git-push => { root.ide-git-push(); }
+                    git-pull => { root.ide-git-pull(); }
+                    save-file => { root.ide-save-file(); }
+                    pop-out => { root.ide-pop-out(); }
+                }
+
+                // Learning Center
+                if root.active-tab == "learning" : LearningView {
+                    staked-amount: root.learning-staked;
+                    total-earnings: root.learning-earnings;
+                    pool-count: root.learning-pool-count;
+                    pool-status: root.learning-pool-status;
+                    current-epoch: root.learning-epoch;
+                    peer-count: root.peer-count;
+                    join-pool => { root.learning-join-pool(); }
+                    stake => { root.learning-stake(); }
+                    claim-earnings => { root.learning-claim-earnings(); }
+                }
+
+                // Compute Marketplace
+                if root.active-tab == "compute" : ComputeView {
+                    active-jobs: root.compute-active-jobs;
+                    available-providers: root.compute-providers;
+                    total-compute-earned: root.compute-earned;
+                    provider-status: root.compute-provider-status;
+                    post-job => { root.compute-post-job(); }
+                    register-provider => { root.compute-register-provider(); }
+                    refresh => { root.compute-refresh(); }
+                }
+
+                // Storage (IPFS)
+                if root.active-tab == "storage" : StorageView {
+                    daemon-running: root.storage-daemon-online;
+                    peer-count: root.storage-peer-count;
+                    pin-count: root.storage-pin-count;
+                    repo-size: root.storage-repo-size;
+                    start-daemon => { root.storage-start-daemon(); }
+                    stop-daemon => { root.storage-stop-daemon(); }
+                    upload-file => { root.storage-upload-file(); }
+                    pin-cid(cid) => { root.storage-pin-cid(cid); }
+                    refresh => { root.storage-refresh(); }
+                }
+
+                // Placeholder for any remaining tabs
+                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "studio" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" : VerticalLayout {
+                    padding: Theme.space-lg;
+
+                    Text {
+                        text: root.active-tab;
+                        color: Theme.text;
+                        font-size: 24px;
+                        font-weight: 600;
+                    }
+
+                    Rectangle {
+                        vertical-stretch: 1;
+
+                        Text {
+                            text: "Content for: " + root.active-tab;
+                            color: Theme.text-muted;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        StatusBar {
+            node-running: root.node-running;
+            environment: root.environment;
+            block-height: root.block-height;
+            peer-count: root.peer-count;
+            version: root.app-version;
+        }
+    }
+
+    // Send dialog overlay (above everything)
+    if root.show-send-dialog : SendDialog {
+        from-address: root.wallet-selected-address;
+        balance: root.wallet-selected-balance;
+        tx-hash: root.send-tx-hash;
+        error-message: root.send-error;
+        sending: root.send-sending;
+        send(to, amount, password) => { root.wallet-send(to, amount, password); }
+        close => {
+            root.show-send-dialog = false;
+            root.wallet-send-close();
+        }
+    }
+}

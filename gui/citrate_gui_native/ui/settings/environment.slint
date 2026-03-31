@@ -1,0 +1,40 @@
+// Section 2: Environment — network selector + chain params
+import { Theme } from "../theme.slint";
+import { SettingsRow, SectionHeader } from "settings_primitives.slint";
+
+export component EnvironmentSection inherits VerticalLayout {
+    in property <string> network: "devnet";
+    in property <int> chain-id: 40204;
+    in property <int> rpc-port: 18545;
+    in property <int> p2p-port: 30304;
+    in property <int> max-peers: 50;
+
+    callback set-environment(string);
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "Environment"; }
+
+    HorizontalLayout {
+        spacing: Theme.space-xs;
+        for env in ["Devnet", "Testnet", "Mainnet"] : Rectangle {
+            height: 32px; min-width: 80px;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: root.network == env ? Theme.accent : Theme.border;
+            background: root.network == env ? Theme.accent : transparent;
+            Text {
+                text: env;
+                color: root.network == env ? #000000 : Theme.text-secondary;
+                font-size: 12px; font-weight: 500;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { root.set-environment(env); } }
+        }
+    }
+
+    SettingsRow { label: "Chain ID"; value: root.chain-id; }
+    SettingsRow { label: "RPC Port"; value: root.rpc-port; }
+    SettingsRow { label: "P2P Port"; value: root.p2p-port; }
+    SettingsRow { label: "Max Peers"; value: root.max-peers; }
+}

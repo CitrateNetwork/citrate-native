@@ -1,0 +1,31 @@
+// Section 9: Appearance — theme selection
+import { Theme } from "../theme.slint";
+import { SectionHeader } from "settings_primitives.slint";
+
+export component AppearanceSection inherits VerticalLayout {
+    in property <string> theme-mode: "dark";
+    callback set-theme(string);
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "Appearance"; }
+
+    HorizontalLayout {
+        spacing: Theme.space-xs;
+
+        for mode in ["dark", "light", "system"] : Rectangle {
+            height: 32px; min-width: 70px;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: root.theme-mode == mode ? Theme.accent : Theme.border;
+            background: root.theme-mode == mode ? Theme.accent : transparent;
+            Text {
+                text: mode == "dark" ? "Dark" : (mode == "light" ? "Light" : "System");
+                color: root.theme-mode == mode ? #000000 : Theme.text-secondary;
+                font-size: 12px; font-weight: 500;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { root.set-theme(mode); } }
+        }
+    }
+}
