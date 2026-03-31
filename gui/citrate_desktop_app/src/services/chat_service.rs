@@ -35,6 +35,17 @@ pub struct ChatRequest {
     pub messages: Vec<(String, String)>,   // (role, content) pairs
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Structured tool definitions (OpenAI format). When present, the backend
+    /// includes them in the request so the LLM can generate tool_calls.
+    pub tools: Option<Vec<serde_json::Value>>,
+}
+
+/// A normalized tool call parsed from the LLM response.
+#[derive(Debug, Clone)]
+pub struct NormalizedToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Chat completion response from the node.
@@ -45,6 +56,8 @@ pub struct ChatResponse {
     pub finish_reason: String,
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
+    /// Structured tool calls from the LLM (OpenAI format).
+    pub tool_calls: Vec<NormalizedToolCall>,
 }
 
 /// Backend trait for chat completion.
@@ -147,6 +160,7 @@ impl ChatBackend for RpcChatBackend {
             finish_reason,
             prompt_tokens,
             completion_tokens,
+            tool_calls: Vec::new(),
         })
     }
 
@@ -202,12 +216,18 @@ impl ChatBackend for OpenAICompatibleBackend {
             .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
             .collect();
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
         });
+        // Include structured tools if provided (OpenAI format)
+        if let Some(ref tools) = request.tools {
+            if !tools.is_empty() {
+                body["tools"] = serde_json::json!(tools);
+            }
+        }
 
         let response = self.client
             .post(&self.api_url)
@@ -239,12 +259,33 @@ impl ChatBackend for OpenAICompatibleBackend {
             .unwrap_or(&request.model)
             .to_string();
 
+        // Parse structured tool_calls from OpenAI response
+        let finish_reason = json
+            .pointer("/choices/0/finish_reason")
+            .and_then(|f| f.as_str())
+            .unwrap_or("stop")
+            .to_string();
+        let tool_calls = json
+            .pointer("/choices/0/message/tool_calls")
+            .and_then(|tc| tc.as_array())
+            .map(|calls| {
+                calls.iter().filter_map(|call| {
+                    let id = call.get("id")?.as_str()?.to_string();
+                    let name = call.pointer("/function/name")?.as_str()?.to_string();
+                    let args_str = call.pointer("/function/arguments")?.as_str()?;
+                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                    Some(NormalizedToolCall { id, name, arguments })
+                }).collect()
+            })
+            .unwrap_or_default();
+
         Ok(ChatResponse {
             content,
             model,
-            finish_reason: "stop".to_string(),
+            finish_reason,
             prompt_tokens: 0,
             completion_tokens: 0,
+            tool_calls,
         })
     }
 
@@ -333,6 +374,7 @@ impl ChatBackend for TestChatBackend {
             finish_reason: "stop".to_string(),
             prompt_tokens: 10,
             completion_tokens: 20,
+            tool_calls: Vec::new(),
         })
     }
 
@@ -584,6 +626,7 @@ impl ChatService {
             messages: request_messages,
             max_tokens: self.max_tokens,
             temperature: self.temperature,
+            tools: None,
         };
 
         drop(messages);
