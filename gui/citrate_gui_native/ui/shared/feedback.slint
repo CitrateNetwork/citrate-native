@@ -1,0 +1,113 @@
+// Shared feedback components — LoadingButton, StatusBadge, PrivacyIndicator
+import { Theme } from "../theme.slint";
+
+/// A button that shows a spinner while working, then success/error.
+/// States: idle → working → success/error → idle (auto-reset after 2s)
+export component LoadingButton inherits Rectangle {
+    in property <string> label;
+    in property <string> state: "idle"; // "idle", "working", "success", "error"
+    in property <bool> disabled: false;
+    callback clicked;
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.state == "success" ? Theme.success :
+                  root.state == "error" ? Theme.error :
+                  (btn-touch.has-hover && !root.disabled ? Theme.accent : Theme.border);
+    background: root.state == "working" ? Theme.bg-tertiary :
+                root.state == "success" ? Theme.success :
+                root.state == "error" ? Theme.error :
+                (btn-touch.has-hover && !root.disabled ? Theme.bg-tertiary : transparent);
+    opacity: root.disabled ? 0.5 : 1.0;
+    animate background { duration: 200ms; easing: ease-in-out; }
+    animate border-color { duration: 200ms; easing: ease-in-out; }
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: Theme.space-sm;
+
+        if root.state == "working" : Text {
+            text: "●";
+            color: Theme.accent;
+            font-size: 14px;
+            animate color { duration: 600ms; easing: ease-in-out; }
+        }
+
+        Text {
+            text: root.state == "success" ? "Done" :
+                  root.state == "error" ? "Failed" :
+                  root.state == "working" ? "Working..." :
+                  root.label;
+            color: root.state == "success" || root.state == "error" ? #ffffff :
+                   root.state == "working" ? Theme.accent : Theme.text;
+            font-size: 12px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    btn-touch := TouchArea {
+        clicked => {
+            if !root.disabled && root.state == "idle" {
+                root.clicked();
+            }
+        }
+    }
+}
+
+/// Colored pill badge showing a status string.
+export component StatusBadge inherits Rectangle {
+    in property <string> text;
+    in property <string> variant: "info"; // "info", "success", "warning", "error", "muted"
+
+    height: 20px;
+    min-width: 40px;
+    border-radius: 10px;
+    background: root.variant == "success" ? Theme.success :
+                root.variant == "warning" ? Theme.warning :
+                root.variant == "error" ? Theme.error :
+                root.variant == "muted" ? Theme.bg-tertiary :
+                Theme.info;
+
+    Text {
+        text: root.text;
+        color: root.variant == "muted" ? Theme.text-muted : #ffffff;
+        font-size: 9px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+/// Shows where data is coming from — Local, Testnet, External API, etc.
+export component PrivacyIndicator inherits HorizontalLayout {
+    in property <string> source: "local"; // "local", "testnet", "api", "pool"
+
+    spacing: Theme.space-xs;
+    alignment: center;
+
+    Rectangle {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: root.source == "local" ? Theme.success :
+                    root.source == "testnet" ? Theme.periwinkle :
+                    root.source == "api" ? Theme.warning :
+                    root.source == "pool" ? Theme.wisteria :
+                    Theme.text-muted;
+    }
+
+    Text {
+        text: root.source == "local" ? "Local Only" :
+              root.source == "testnet" ? "Testnet" :
+              root.source == "api" ? "External API" :
+              root.source == "pool" ? "Shared Pool" :
+              "Unknown";
+        color: Theme.text-muted;
+        font-size: 9px;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
+}

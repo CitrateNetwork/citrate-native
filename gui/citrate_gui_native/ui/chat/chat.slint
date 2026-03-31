@@ -1,6 +1,7 @@
 // Chat view — traditional Q&A chatbot layout
 // Messages scroll in a thread as individual bubbles, input stays pinned at bottom
 import { Theme } from "../theme.slint";
+import { PrivacyIndicator } from "../shared/feedback.slint";
 
 export struct ChatMessageData {
     role: string,       // "user" or "assistant"
@@ -83,6 +84,7 @@ component ToolApprovalCard inherits Rectangle {
 export component ChatView inherits Rectangle {
     in property <bool> model-loaded: false;
     in property <string> model-name: "No model";
+    in property <string> backend-type: "local"; // "local", "api", "none"
     in property <bool> thinking: false;
     in property <string> last-response: "";
     in property <string> error: "";
@@ -112,8 +114,9 @@ export component ChatView inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
 
             HorizontalLayout {
-                spacing: Theme.space-xs;
+                spacing: Theme.space-sm;
                 alignment: center;
+                PrivacyIndicator { source: root.backend-type; }
                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.model-loaded ? Theme.success : Theme.text-muted; }
                 Text { text: root.model-name; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; overflow: elide; max-width: 200px; }
             }

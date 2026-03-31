@@ -1455,6 +1455,13 @@ fn main() {
                 if let Some(ui) = ui_w.upgrade() {
                     ui.set_chat_model_loaded(model_loaded);
                     ui.set_chat_model_name(display_name.into());
+                    // Set privacy indicator based on backend type
+                    let privacy = match backend_type.as_str() {
+                        "ollama" | "gguf" => "local",
+                        "none" => "none",
+                        _ => "api",
+                    };
+                    ui.set_chat_backend_type(privacy.into());
                 }
             });
         });

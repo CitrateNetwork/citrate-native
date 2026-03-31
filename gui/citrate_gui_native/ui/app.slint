@@ -208,6 +208,7 @@ export component App inherits Window {
     // === Chat State ===
     in property <bool> chat-model-loaded: false;
     in property <string> chat-model-name: "No model";
+    in property <string> chat-backend-type: "local"; // "local", "api", "none"
     in property <bool> chat-thinking: false;
     in property <string> chat-last-response: "";
     in property <string> chat-error: "";
@@ -385,6 +386,7 @@ export component App inherits Window {
                 if root.active-tab == "chat" : ChatView {
                     model-loaded: root.chat-model-loaded;
                     model-name: root.chat-model-name;
+                    backend-type: root.chat-backend-type;
                     thinking: root.chat-thinking;
                     last-response: root.chat-last-response;
                     error: root.chat-error;
