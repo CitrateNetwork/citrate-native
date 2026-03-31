@@ -158,7 +158,26 @@ impl AppConfig {
             match std::fs::read_to_string(&path) {
                 Ok(contents) => {
                     match serde_json::from_str::<AppConfig>(&contents) {
-                        Ok(config) => {
+                        Ok(mut config) => {
+                            // Migrate stale configs: if network/chain_id are mismatched, fix them
+                            let expected_chain_id = chain_id_for_network(&config.network);
+                            if config.chain_id != expected_chain_id {
+                                tracing::warn!(
+                                    "Config migration: network='{}' had chain_id={}, expected {}. Fixing.",
+                                    config.network, config.chain_id, expected_chain_id
+                                );
+                                // If chain_id is testnet but label says devnet, fix the label
+                                if config.chain_id == 40204 && config.network == "devnet" {
+                                    config.network = "testnet".to_string();
+                                    config.data_dir = data_dir_for_network("testnet");
+                                } else {
+                                    config.chain_id = expected_chain_id;
+                                }
+                                // Persist the fix
+                                if let Err(e) = config.save() {
+                                    tracing::warn!("Failed to save migrated config: {}", e);
+                                }
+                            }
                             tracing::info!("Loaded config from {:?}", path);
                             return config;
                         }
