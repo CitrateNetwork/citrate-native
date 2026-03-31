@@ -61,16 +61,17 @@ const COMPUTE_CONTRACT: Option<&str> = Some("0xCcc1eF0fbA6399E5173213273BaA78D39
 #[async_trait::async_trait]
 impl ComputeBackend for RpcComputeBackend {
     /// Data source: ComputeMarketplace.getProviderCount() via eth_call
+    /// Selector: 0x46ce4175
     async fn list_jobs(&self) -> Result<Vec<ComputeJob>, AppError> {
         let contract = match COMPUTE_CONTRACT {
             Some(addr) => addr,
-            None => return Ok(Vec::new()), // Contract not deployed — honest empty
+            None => return Ok(Vec::new()),
         };
-        // getProviderCount() selector
+        // getProviderCount() → uint256
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "eth_call",
-            "params": [{"to": contract, "data": "0x27e235e3"}, "latest"],
+            "params": [{"to": contract, "data": "0x46ce4175"}, "latest"],
             "id": 1,
         });
         match self.client.post(&self.rpc_url).json(&body)
@@ -79,22 +80,51 @@ impl ComputeBackend for RpcComputeBackend {
         {
             Ok(resp) => {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if json.get("result").is_some() {
-                        tracing::info!("ComputeMarketplace: contract responded");
+                    if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
+                        let hex = result.trim_start_matches("0x");
+                        let count = u64::from_str_radix(hex, 16).unwrap_or(0);
+                        tracing::info!("ComputeMarketplace: {} providers registered (contract live)", count);
+                    } else if json.get("error").is_some() {
+                        tracing::warn!("ComputeMarketplace: contract query returned error");
                     }
                 }
-                Ok(Vec::new()) // ABI decoding needed for full job list
+                Ok(Vec::new()) // Counts logged; full ABI decoding deferred
             }
-            Err(_) => Ok(Vec::new()),
+            Err(e) => {
+                tracing::warn!("ComputeMarketplace: RPC unreachable — {}", e);
+                Ok(Vec::new())
+            }
         }
     }
 
     /// Data source: ComputeMarketplace.getProviderCount() via eth_call
     async fn list_providers(&self) -> Result<Vec<ProviderInfo>, AppError> {
-        if COMPUTE_CONTRACT.is_none() {
-            return Ok(Vec::new()); // Contract not deployed
+        let contract = match COMPUTE_CONTRACT {
+            Some(addr) => addr,
+            None => return Ok(Vec::new()),
+        };
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": contract, "data": "0x46ce4175"}, "latest"],
+            "id": 1,
+        });
+        match self.client.post(&self.rpc_url).json(&body)
+            .timeout(std::time::Duration::from_secs(5))
+            .send().await
+        {
+            Ok(resp) => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
+                        let hex = result.trim_start_matches("0x");
+                        let count = u64::from_str_radix(hex, 16).unwrap_or(0);
+                        tracing::info!("ComputeMarketplace: {} providers (contract deployed, queried)", count);
+                    }
+                }
+                Ok(Vec::new())
+            }
+            Err(_) => Ok(Vec::new()),
         }
-        Ok(Vec::new()) // Placeholder until ABI decoding is implemented
     }
 
     async fn get_job(&self, job_id: &str) -> Result<ComputeJob, AppError> {

@@ -80,12 +80,12 @@ impl LearningBackend for RpcLearningBackend {
             Some(addr) => addr,
             None => return Ok(Vec::new()), // Contract not deployed — honest empty
         };
-        // Query totalPools() to see if any exist
-        // selector: keccak256("totalPools()")[:4]
+        // Query nextPoolId() to see how many pools exist
+        // selector: cast sig "nextPoolId()" = 0x18e56131
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "eth_call",
-            "params": [{"to": contract, "data": "0x52b51306"}, "latest"],
+            "params": [{"to": contract, "data": "0x18e56131"}, "latest"],
             "id": 1,
         });
         match self.client.post(&self.rpc_url).json(&body)
