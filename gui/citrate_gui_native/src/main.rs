@@ -1298,10 +1298,24 @@ fn main() {
         let ui_w = ui_w.clone();
         let msg = message.to_string();
 
-        // Show thinking state immediately and clear any previous error (doesn't block)
+        // Show thinking state and user's message immediately (doesn't block)
         if let Some(ui) = ui_w.upgrade() {
             ui.set_chat_thinking(true);
             ui.set_chat_error("".into());
+            // Push user message to bubbles immediately so they see it before AI responds
+            let current = ui.get_chat_messages();
+            let mut msgs: Vec<ChatMessageData> = {
+                use slint::Model;
+                (0..current.row_count())
+                    .filter_map(|i| current.row_data(i))
+                    .collect()
+            };
+            msgs.push(ChatMessageData {
+                role: "user".into(),
+                content: msg.clone().into(),
+            });
+            let model = std::rc::Rc::new(slint::VecModel::from(msgs));
+            ui.set_chat_messages(model.into());
         }
 
         // Send async — never block the UI thread
