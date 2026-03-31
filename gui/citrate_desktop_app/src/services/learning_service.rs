@@ -66,11 +66,11 @@ impl RpcLearningBackend {
     }
 }
 
-/// LearningPool contract address — set when deployed on testnet.
-/// Currently None until deployment via forge script.
-const LEARNING_CONTRACT: Option<&str> = None;
-/// ContributionAccounting contract address — set when deployed.
-const CONTRIBUTION_CONTRACT: Option<&str> = None;
+/// LearningPool contract address — deployed on testnet (chain 40204).
+/// Deployed 2026-03-31 via cast send.
+const LEARNING_CONTRACT: Option<&str> = Some("0x92bdb6dab351b53f71b86f5b829b8205a7b1ad3b");
+/// ContributionAccounting contract address — deployed on testnet (chain 40204).
+const CONTRIBUTION_CONTRACT: Option<&str> = Some("0x383AA8E45C84f73Cc0Ea4933B694B3E67ADfe6ea");
 
 #[async_trait::async_trait]
 impl LearningBackend for RpcLearningBackend {
