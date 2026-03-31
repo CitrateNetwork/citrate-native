@@ -109,7 +109,7 @@ export component Dashboard inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.space-md;
                         StatCard { label: "MEMPOOL"; value: root.mempool-size + " txns"; accent-color: Theme.aquamarine; horizontal-stretch: 1; }
-                        StatCard { label: "SESSION DELTA"; value: root.earned; accent-color: Theme.chamois; horizontal-stretch: 1; }
+                        StatCard { label: "NETWORK"; value: root.peer-count > 0 ? "Connected" : "Offline"; ok: root.peer-count > 0; accent-color: Theme.chamois; horizontal-stretch: 1; }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }

@@ -530,17 +530,19 @@ impl ChatService {
     }
 
     /// Set the system prompt with wallet context.
+    /// Set chat context with real environment values. Chain ID is derived from network name.
     pub async fn set_context(&self, address: &str, balance: &str, network: &str, block_height: u64) {
+        let chain_id = crate::chain_id_for_network(network);
         let prompt = format!(
             "You are a Citrate blockchain assistant running natively on the Citrate network.\n\
              Current context:\n\
-             - Network: {} (chain ID: 40204)\n\
+             - Network: {} (chain ID: {})\n\
              - User address: {}\n\
              - Balance: {} SALT\n\
              - Block height: {}\n\n\
              You can help with blockchain operations, checking balances, \
              explaining transactions, and drafting transactions for user approval.",
-            network, address, balance, block_height
+            network, chain_id, address, balance, block_height
         );
         *self.system_prompt.write().await = prompt;
     }
