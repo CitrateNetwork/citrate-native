@@ -2084,13 +2084,33 @@ fn main() {
     });
 
     // --- Learning: Stake ---
+    // Data source: LearningPool.joinPool(uint256) — sends SALT as msg.value
+    // Contract: not yet deployed (address TBD from forge script output)
     let core = app_core.clone();
+    let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_learning_stake(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("Learning: stake requested");
-        let _ = (&core, &rt_h);
-        // Staking requires a signed transaction to LearningPool contract.
-        // Will be wired when contract data sources are live (FINAL-3).
+        spawn_async(&rt_h, async move {
+            // Check if pools exist
+            match core.learning.list_pools().await {
+                Ok(pools) if pools.is_empty() => {
+                    tracing::info!("Learning: no pools available — contract not deployed");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_learning_pool_status("No pools — contracts not yet deployed".into());
+                        }
+                    });
+                }
+                Ok(pools) => {
+                    tracing::info!("Learning: {} pools found, staking to first", pools.len());
+                    // Once deployed: send joinPool(poolId) tx with stake value
+                }
+                Err(e) => tracing::error!("Learning: pool query failed: {}", e),
+            }
+        });
     });
 
     // --- Learning: Claim Earnings ---
@@ -2112,23 +2132,61 @@ fn main() {
     // =========================================================================
 
     // --- Compute: Post Job ---
+    // Data source: ComputeMarketplace.postJob(bytes32,uint256,uint256) — sends tx
+    // Contract: not yet deployed (address TBD from forge script output)
     let core = app_core.clone();
+    let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_compute_post_job(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("Compute: post job requested");
-        let _ = (&core, &rt_h);
-        // Job posting requires a signed transaction to ComputeMarket contract.
-        // Will be wired when contract data sources are live (FINAL-3).
+        spawn_async(&rt_h, async move {
+            match core.compute.list_providers().await {
+                Ok(providers) if providers.is_empty() => {
+                    tracing::info!("Compute: no providers — contract not deployed");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_compute_provider_status("No providers — contracts not yet deployed".into());
+                        }
+                    });
+                }
+                Ok(providers) => {
+                    tracing::info!("Compute: {} providers available", providers.len());
+                    // Once deployed: send postJob(modelHash, budget, deadline) tx
+                }
+                Err(e) => tracing::error!("Compute: provider query failed: {}", e),
+            }
+        });
     });
 
     // --- Compute: Register Provider ---
+    // Data source: ComputeMarketplace.registerProvider(string,string,uint32,uint256) — sends tx
+    // Contract: not yet deployed (address TBD from forge script output)
     let core = app_core.clone();
+    let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_compute_register_provider(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("Compute: register provider requested");
-        let _ = (&core, &rt_h);
-        // Provider registration requires a signed transaction to ComputeMarket contract.
-        // Will be wired when contract data sources are live (FINAL-3).
+        spawn_async(&rt_h, async move {
+            match core.compute.list_providers().await {
+                Ok(providers) => {
+                    let count = providers.len() as i32;
+                    tracing::info!("Compute: {} providers on-chain", count);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_compute_providers(count);
+                            if count == 0 {
+                                ui.set_compute_provider_status("Contracts not yet deployed".into());
+                            }
+                        }
+                    });
+                }
+                Err(e) => tracing::error!("Compute: query failed: {}", e),
+            }
+        });
     });
 
     // --- Compute: Refresh ---

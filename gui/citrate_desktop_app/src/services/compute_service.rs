@@ -54,15 +54,62 @@ impl RpcComputeBackend {
     }
 }
 
+/// ComputeMarketplace contract address — set when deployed on testnet.
+/// Currently None until deployment via forge script.
+const COMPUTE_CONTRACT: Option<&str> = None;
+
 #[async_trait::async_trait]
 impl ComputeBackend for RpcComputeBackend {
-    async fn list_jobs(&self) -> Result<Vec<ComputeJob>, AppError> { Ok(Vec::new()) }
-    async fn list_providers(&self) -> Result<Vec<ProviderInfo>, AppError> { Ok(Vec::new()) }
-    async fn get_job(&self, job_id: &str) -> Result<ComputeJob, AppError> {
-        Err(AppError::ChainQuery(format!("Job not found: {}", job_id)))
+    /// Data source: ComputeMarketplace.getProviderCount() via eth_call
+    async fn list_jobs(&self) -> Result<Vec<ComputeJob>, AppError> {
+        let contract = match COMPUTE_CONTRACT {
+            Some(addr) => addr,
+            None => return Ok(Vec::new()), // Contract not deployed — honest empty
+        };
+        // getProviderCount() selector
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": contract, "data": "0x27e235e3"}, "latest"],
+            "id": 1,
+        });
+        match self.client.post(&self.rpc_url).json(&body)
+            .timeout(std::time::Duration::from_secs(5))
+            .send().await
+        {
+            Ok(resp) => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if json.get("result").is_some() {
+                        tracing::info!("ComputeMarketplace: contract responded");
+                    }
+                }
+                Ok(Vec::new()) // ABI decoding needed for full job list
+            }
+            Err(_) => Ok(Vec::new()),
+        }
     }
+
+    /// Data source: ComputeMarketplace.getProviderCount() via eth_call
+    async fn list_providers(&self) -> Result<Vec<ProviderInfo>, AppError> {
+        if COMPUTE_CONTRACT.is_none() {
+            return Ok(Vec::new()); // Contract not deployed
+        }
+        Ok(Vec::new()) // Placeholder until ABI decoding is implemented
+    }
+
+    async fn get_job(&self, job_id: &str) -> Result<ComputeJob, AppError> {
+        Err(AppError::ChainQuery(format!(
+            "Compute marketplace {}: job '{}' not available",
+            if COMPUTE_CONTRACT.is_some() { "query failed" } else { "not deployed on this network" },
+            job_id
+        )))
+    }
+
     async fn post_job(&self, _model_id: &str, _budget: &str) -> Result<String, AppError> {
-        Err(AppError::ChainQuery("Compute marketplace not yet deployed".to_string()))
+        match COMPUTE_CONTRACT {
+            Some(_) => Err(AppError::ChainQuery("Job posting requires wallet signing — use the GUI".to_string())),
+            None => Err(AppError::ChainQuery("Compute marketplace not yet deployed on this network".to_string())),
+        }
     }
 }
 

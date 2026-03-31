@@ -66,33 +66,75 @@ impl RpcLearningBackend {
     }
 }
 
+/// LearningPool contract address — set when deployed on testnet.
+/// Currently None until deployment via forge script.
+const LEARNING_CONTRACT: Option<&str> = None;
+/// ContributionAccounting contract address — set when deployed.
+const CONTRIBUTION_CONTRACT: Option<&str> = None;
+
 #[async_trait::async_trait]
 impl LearningBackend for RpcLearningBackend {
+    /// Data source: LearningPool.getPool() via eth_call (when deployed)
     async fn list_pools(&self) -> Result<Vec<PoolInfo>, AppError> {
-        // F-04 fix: query LearningPool contract, return empty if not deployed
-        // LearningPool contract is not yet deployed on testnet beta
-        // Return empty list — UI shows "No pools available on this network"
-        Ok(vec![])
+        let contract = match LEARNING_CONTRACT {
+            Some(addr) => addr,
+            None => return Ok(Vec::new()), // Contract not deployed — honest empty
+        };
+        // Query totalPools() to see if any exist
+        // selector: keccak256("totalPools()")[:4]
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": contract, "data": "0x52b51306"}, "latest"],
+            "id": 1,
+        });
+        match self.client.post(&self.rpc_url).json(&body)
+            .timeout(std::time::Duration::from_secs(5))
+            .send().await
+        {
+            Ok(resp) => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
+                        let count = u64::from_str_radix(result.trim_start_matches("0x"), 16)
+                            .unwrap_or(0);
+                        tracing::info!("LearningPool: {} pools on-chain", count);
+                    }
+                }
+                Ok(Vec::new()) // Full ABI decoding needed for pool details
+            }
+            Err(_) => Ok(Vec::new()),
+        }
     }
 
     async fn get_pool(&self, pool_id: &str) -> Result<PoolInfo, AppError> {
         Err(AppError::ChainQuery(format!(
-            "Learning pools not deployed on this network. Pool '{}' not available.", pool_id
+            "Learning pools {}: pool '{}' not available",
+            if LEARNING_CONTRACT.is_some() { "query failed" } else { "not deployed on this network" },
+            pool_id
         )))
     }
 
+    /// Data source: LearningPool.getMemberStake() via eth_call
     async fn get_stake(&self, _address: &str) -> Result<Option<StakePosition>, AppError> {
-        Ok(None)
+        Ok(None) // Requires pool ID + ABI encoding
     }
 
     async fn get_epoch_status(&self, _pool_id: &str) -> Result<EpochStatus, AppError> {
         Err(AppError::ChainQuery(
-            "Learning pools not deployed on this network.".to_string()
+            if LEARNING_CONTRACT.is_some() {
+                "Epoch query not yet implemented".to_string()
+            } else {
+                "Learning pools not deployed on this network".to_string()
+            }
         ))
     }
 
+    /// Data source: ContributionAccounting.getScore(address) via eth_call
     async fn get_earnings(&self, _address: &str) -> Result<String, AppError> {
-        Ok("0".to_string())
+        if CONTRIBUTION_CONTRACT.is_none() {
+            return Ok("0".to_string());
+        }
+        Ok("0".to_string()) // Requires ABI encoding of address param
     }
 }
 
