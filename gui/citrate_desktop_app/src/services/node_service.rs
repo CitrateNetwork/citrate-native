@@ -613,10 +613,16 @@ impl NodeBackend for EmbeddedNodeBackend {
                 return format!("{}", account.balance);
             }
         }
-        // Fallback: query the testnet RPC server for balance.
-        // The embedded node stores blocks but doesn't re-execute state transitions,
-        // so faucet-funded balances only exist in the full node's state.
-        // Data source: eth_getBalance via https://rpc.citrate.ai (testnet)
+        // Fallback: query remote RPC for balance — only on testnet.
+        // On devnet (no bootnodes), there's no remote RPC to query.
+        // Data source: eth_getBalance via https://rpc.citrate.ai (testnet only)
+        let bootnodes = self.bootnodes.read().await;
+        if bootnodes.is_empty() {
+            // Devnet — no remote RPC, return local-only balance
+            return "0".to_string();
+        }
+        drop(bootnodes);
+
         let hex_addr = format!("0x{}", hex::encode(address));
         let body = serde_json::json!({
             "jsonrpc": "2.0",
@@ -633,16 +639,19 @@ impl NodeBackend for EmbeddedNodeBackend {
             Ok(resp) => {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
-                        // Result is hex wei — convert to SALT (divide by 10^18)
                         let hex = result.trim_start_matches("0x");
                         if let Ok(wei) = u128::from_str_radix(hex, 16) {
                             return format!("{}", wei);
                         }
                     }
                 }
+                tracing::warn!("Balance RPC returned unexpected format for {}", hex_addr);
                 "0".to_string()
             }
-            Err(_) => "0".to_string(),
+            Err(e) => {
+                tracing::warn!("Balance RPC failed for {}: {}", hex_addr, e);
+                "0".to_string()
+            }
         }
     }
 
@@ -719,9 +728,24 @@ impl NodeBackend for EmbeddedNodeBackend {
             if let Some(hash) = hash_opt {
                 if let Ok(Some(block)) = storage.blocks.get_block(&hash) {
                     for tx in &block.transactions {
-                        let from = format!("0x{}", hex::encode(&tx.from.as_bytes()[12..]));
+                        // Derive EVM address from public key using the same logic
+                        // as Address::from_public_key — embedded EVM (first 20 bytes
+                        // if last 12 are zero) or Keccak256 hash of full key.
+                        let derive_addr = |pk: &citrate_consensus::types::PublicKey| -> String {
+                            let bytes = pk.as_bytes();
+                            let is_evm = bytes[20..].iter().all(|&b| b == 0)
+                                && !bytes[..20].iter().all(|&b| b == 0);
+                            if is_evm {
+                                format!("0x{}", hex::encode(&bytes[..20]))
+                            } else {
+                                use sha3::{Digest, Keccak256};
+                                let hash = Keccak256::digest(bytes);
+                                format!("0x{}", hex::encode(&hash[12..]))
+                            }
+                        };
+                        let from = derive_addr(&tx.from);
                         let to = tx.to.as_ref()
-                            .map(|t| format!("0x{}", hex::encode(&t.as_bytes()[12..])))
+                            .map(derive_addr)
                             .unwrap_or_else(|| "contract creation".to_string());
                         let from_match = from.to_lowercase() == addr_lower;
                         let to_match = to.to_lowercase() == addr_lower;
