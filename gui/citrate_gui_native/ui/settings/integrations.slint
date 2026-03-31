@@ -1,0 +1,130 @@
+// Section 7: Integrations — GitHub, HuggingFace, productivity tools
+import { Theme } from "../theme.slint";
+import { SectionHeader, ActionButton } from "settings_primitives.slint";
+
+component IntegrationRow inherits Rectangle {
+    in property <string> name;
+    in property <string> category;
+    in property <string> url: "";
+    in-out property <string> token: "";
+    in-out property <bool> show-config: false;
+    in property <bool> connected: false;
+    callback connect-clicked;
+    callback save-token(string);
+
+    min-height: root.show-config ? 110px : 48px;
+    border-radius: Theme.radius-md;
+    background: Theme.bg-secondary;
+    border-width: 1px;
+    border-color: root.show-config ? Theme.accent : Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-sm;
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        HorizontalLayout {
+            VerticalLayout {
+                alignment: center; horizontal-stretch: 1;
+                Text { text: root.name; color: Theme.text; font-size: 12px; font-weight: 500; overflow: elide; }
+                Text { text: root.category; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+            }
+
+            Rectangle {
+                width: 70px; height: 28px;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: root.connected ? Theme.success : Theme.accent;
+                background: root.connected ? Theme.success : transparent;
+                Text {
+                    text: root.connected ? "Connected" : (root.show-config ? "Get Token" : "Connect");
+                    color: root.connected ? #000000 : Theme.accent;
+                    font-size: 10px; font-weight: 500;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                TouchArea {
+                    clicked => {
+                        if !root.show-config {
+                            root.show-config = true;
+                        }
+                        root.connect-clicked();
+                    }
+                }
+            }
+        }
+
+        // Token input row — shown after first click
+        if root.show-config : HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle {
+                height: 28px; horizontal-stretch: 1;
+                border-radius: Theme.radius-sm;
+                border-width: 1px; border-color: Theme.border;
+                background: Theme.bg;
+                TextInput {
+                    text <=> root.token;
+                    font-size: 11px; color: Theme.text;
+                    x: Theme.space-sm;
+                    width: parent.width - Theme.space-lg;
+                    vertical-alignment: center;
+                    input-type: password;
+                }
+            }
+            ActionButton { width: 40px; label: "Save"; clicked => { root.save-token(root.token); } }
+        }
+    }
+}
+
+export component IntegrationsSection inherits VerticalLayout {
+    callback connect-github;
+    callback connect-huggingface;
+    callback save-integration-token(/* integration-name */ string, /* token */ string);
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "Integrations"; }
+    Text { text: "0 of 8 connected"; color: Theme.text-muted; font-size: 11px; }
+
+    Text { text: "CODE & REPOS"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
+    IntegrationRow {
+        name: "GitHub"; category: "Repositories, issues, wiki";
+        url: "https://github.com/settings/tokens";
+        connect-clicked => { root.connect-github(); }
+        save-token(tok) => { root.save-integration-token("github", tok); }
+    }
+    IntegrationRow {
+        name: "HuggingFace"; category: "AI model hub";
+        url: "https://huggingface.co/settings/tokens";
+        connect-clicked => { root.connect-huggingface(); }
+        save-token(tok) => { root.save-integration-token("huggingface", tok); }
+    }
+
+    Text { text: "PRODUCTIVITY"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
+    IntegrationRow {
+        name: "Google Calendar"; category: "Events and scheduling";
+        save-token(tok) => { root.save-integration-token("google-calendar", tok); }
+    }
+    IntegrationRow {
+        name: "Notion"; category: "Pages, databases, and wikis";
+        save-token(tok) => { root.save-integration-token("notion", tok); }
+    }
+    IntegrationRow {
+        name: "Linear"; category: "Issues, projects, and cycles";
+        save-token(tok) => { root.save-integration-token("linear", tok); }
+    }
+
+    Text { text: "PROJECT MANAGEMENT"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
+    IntegrationRow {
+        name: "Microsoft Planner"; category: "Plans, tasks, and buckets";
+        save-token(tok) => { root.save-integration-token("microsoft-planner", tok); }
+    }
+    IntegrationRow {
+        name: "Trello"; category: "Boards, lists, and cards";
+        save-token(tok) => { root.save-integration-token("trello", tok); }
+    }
+    IntegrationRow {
+        name: "Microsoft Outlook"; category: "Mail and calendar";
+        save-token(tok) => { root.save-integration-token("microsoft-outlook", tok); }
+    }
+}

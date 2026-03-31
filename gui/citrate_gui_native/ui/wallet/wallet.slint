@@ -1,0 +1,750 @@
+// Wallet view — multi-account, balance, send/receive, tx history, create/import
+// Phase 1 rebuild: competitive with MetaMask/Phantom
+import { Theme } from "../theme.slint";
+
+export struct AccountData {
+    address: string,
+    label: string,
+    balance: string,
+    is-default: bool,
+}
+
+export struct TxData {
+    hash: string,
+    tx-type: string,
+    amount: string,
+    counterparty: string,
+    status: string,
+    timestamp: string,
+}
+
+// --- Account selector row (used in dropdown) ---
+component AccountRow inherits Rectangle {
+    in property <string> label;
+    in property <string> address;
+    in property <string> balance;
+    in property <bool> active: false;
+    callback clicked;
+
+    height: 52px;
+    background: root.active ? Theme.bg-tertiary : transparent;
+    border-radius: Theme.radius-md;
+    clip: true;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+
+        // Avatar circle — first letter only
+        Rectangle {
+            width: 28px; height: 28px; border-radius: 14px;
+            background: root.active ? Theme.accent : Theme.surface;
+            y: (parent.height - self.height) / 2;
+            clip: true;
+            Text {
+                text: "A";
+                color: root.active ? #000000 : Theme.text-muted;
+                font-size: 11px; font-weight: 600;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 1px;
+            Text { text: root.label; color: Theme.text; font-size: 12px; font-weight: 500; overflow: elide; }
+            Text { text: root.address; color: Theme.text-muted; font-size: 9px; overflow: elide; }
+        }
+
+        Text {
+            text: root.balance + " SALT";
+            color: Theme.text; font-size: 11px; font-weight: 500;
+            vertical-alignment: center;
+            min-width: 60px;
+            overflow: elide;
+        }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// --- Transaction row ---
+component TxRow inherits Rectangle {
+    in property <string> tx-type;
+    in property <string> amount;
+    in property <string> counterparty;
+    in property <string> status;
+    in property <string> timestamp;
+
+    height: 48px;
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // Type badge
+        Rectangle {
+            width: 50px; height: 22px; border-radius: 4px; y: 13px;
+            background: root.tx-type == "receive" ? Theme.success :
+                        (root.tx-type == "reward" ? Theme.chamois : Theme.info);
+            Text {
+                text: root.tx-type;
+                color: #000000; font-size: 9px; font-weight: 600;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+
+        // Amount
+        Text {
+            text: (root.tx-type == "send" ? "-" : "+") + root.amount + " SALT";
+            color: root.tx-type == "send" ? Theme.error : Theme.success;
+            font-size: 12px; font-weight: 500;
+            min-width: 100px; vertical-alignment: center; overflow: elide;
+        }
+
+        // Counterparty
+        Text {
+            text: root.counterparty;
+            color: Theme.text-muted; font-size: 10px;
+            overflow: elide; horizontal-stretch: 1; vertical-alignment: center;
+        }
+
+        // Status
+        Rectangle {
+            width: 8px; height: 8px; border-radius: 4px; y: 20px;
+            background: root.status == "confirmed" ? Theme.success :
+                        (root.status == "pending" ? Theme.warning : Theme.error);
+        }
+
+        // Time
+        Text {
+            text: root.timestamp;
+            color: Theme.text-muted; font-size: 10px;
+            min-width: 60px; vertical-alignment: center;
+        }
+    }
+}
+
+export component WalletView inherits Rectangle {
+    in property <string> selected-address: "";
+    in property <string> selected-label: "";
+    in property <string> selected-balance: "0";
+    in property <int> selected-nonce: 0;
+    in property <bool> session-active: false;
+    in property <string> session-remaining: "";
+    in property <int> account-count: 0;
+    in property <[AccountData]> accounts: [];
+    in property <[TxData]> transactions: [];
+    in property <string> faucet-status: "";
+
+    callback request-faucet;
+
+    in-out property <bool> show-account-dropdown: false;
+    in-out property <bool> show-create-dialog: false;
+    in-out property <bool> show-import-dialog: false;
+    in-out property <bool> show-export-dialog: false;
+    in property <string> create-error: "";
+    in property <string> import-error: "";
+    in property <string> export-error: "";
+    in property <string> exported-key: "";
+
+    callback send-clicked;
+    callback lock-clicked;
+    callback unlock-clicked;
+    callback copy-address;
+    callback select-account(int);
+    callback create-account(string, string);
+    callback import-from-key(string, string);
+    callback import-from-mnemonic(string, string);
+    callback export-private-key(/* password */ string);
+    callback copy-exported-key;
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // === ACCOUNT HEADER (clickable to expand dropdown) ===
+            if root.selected-address != "" : Rectangle {
+                height: 72px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: root.show-account-dropdown ? Theme.accent : Theme.border-subtle;
+                clip: true;
+
+                HorizontalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    // Avatar — shows first letter only
+                    Rectangle {
+                        width: 40px; height: 40px; border-radius: 20px;
+                        background: Theme.accent;
+                        y: (parent.height - self.height) / 2;
+                        clip: true;
+                        Text {
+                            text: "W";
+                            color: #000000; font-size: 16px; font-weight: 700;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: root.selected-label != "" ? root.selected-label : "Wallet"; color: Theme.text; font-size: 15px; font-weight: 600; }
+                            // Session indicator
+                            Rectangle {
+                                width: 8px; height: 8px; border-radius: 4px; y: 5px;
+                                background: root.session-active ? Theme.success : Theme.text-muted;
+                            }
+                        }
+
+                        Text { text: root.selected-address; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+                    }
+
+                    // Balance
+                    VerticalLayout {
+                        alignment: center;
+                        min-width: 80px;
+                        Text { text: root.selected-balance; color: Theme.text; font-size: 18px; font-weight: 700; horizontal-alignment: right; overflow: elide; }
+                        Text { text: "SALT"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: right; }
+                    }
+
+                    // Dropdown chevron
+                    Text {
+                        text: root.show-account-dropdown ? "▲" : "▼";
+                        color: Theme.text-muted; font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                TouchArea { clicked => { root.show-account-dropdown = !root.show-account-dropdown; } }
+            }
+
+            // === ACCOUNT DROPDOWN ===
+            if root.show-account-dropdown : Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 80px;
+
+                VerticalLayout {
+                    padding: Theme.space-sm;
+                    spacing: 2px;
+
+                    for account[index] in root.accounts : AccountRow {
+                        label: account.label;
+                        address: account.address;
+                        balance: account.balance;
+                        active: account.address == root.selected-address;
+                        clicked => {
+                            root.select-account(index);
+                            root.show-account-dropdown = false;
+                        }
+                    }
+
+                    // Divider
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                    // New + Import + Export buttons
+                    HorizontalLayout {
+                        padding: Theme.space-sm;
+                        spacing: Theme.space-sm;
+
+                        Rectangle {
+                            height: 36px; horizontal-stretch: 1;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px; border-color: Theme.accent;
+                            Text { text: "+ New Account"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.show-create-dialog = true; root.show-account-dropdown = false; } }
+                        }
+
+                        Rectangle {
+                            height: 36px; horizontal-stretch: 1;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px; border-color: Theme.border;
+                            Text { text: "Import"; color: Theme.text-muted; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.show-import-dialog = true; root.show-account-dropdown = false; } }
+                        }
+
+                        Rectangle {
+                            height: 36px; horizontal-stretch: 1;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px; border-color: Theme.border;
+                            Text { text: "Export Key"; color: Theme.text-muted; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.show-export-dialog = true; root.show-account-dropdown = false; } }
+                        }
+                    }
+                }
+            }
+
+            // === ACTION BUTTONS ===
+            if root.selected-address != "" && !root.show-account-dropdown : HorizontalLayout {
+                spacing: Theme.space-md;
+
+                Rectangle {
+                    height: 44px; horizontal-stretch: 1;
+                    border-radius: Theme.radius-lg;
+                    background: send-btn.has-hover ? Theme.accent-hover : Theme.accent;
+                    animate background { duration: 150ms; easing: ease-in-out; }
+                    Text { text: "Send"; color: #000000; font-size: 14px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    send-btn := TouchArea { clicked => { root.send-clicked(); } }
+                }
+
+                Rectangle {
+                    height: 44px; horizontal-stretch: 1;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px;
+                    border-color: recv-btn.has-hover ? Theme.accent : Theme.border;
+                    background: recv-btn.has-hover ? Theme.bg-tertiary : transparent;
+                    animate background { duration: 150ms; easing: ease-in-out; }
+                    animate border-color { duration: 150ms; easing: ease-in-out; }
+                    Text { text: "Receive"; color: Theme.text; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                    recv-btn := TouchArea { clicked => { root.copy-address(); } }
+                }
+
+                Rectangle {
+                    height: 44px; horizontal-stretch: 1;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px;
+                    border-color: faucet-btn.has-hover ? Theme.success : Theme.border;
+                    background: faucet-btn.has-hover ? Theme.bg-tertiary : transparent;
+                    animate background { duration: 150ms; easing: ease-in-out; }
+                    animate border-color { duration: 150ms; easing: ease-in-out; }
+                    Text {
+                        text: root.faucet-status != "" ? root.faucet-status : "Faucet";
+                        color: root.faucet-status == "Sent!" ? Theme.success : Theme.text;
+                        font-size: 14px; font-weight: 500;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    faucet-btn := TouchArea { clicked => { root.request-faucet(); } }
+                }
+
+                // Session timer display
+                if root.session-active && root.session-remaining != "" : Rectangle {
+                    height: 44px; width: 60px;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    background: Theme.bg-tertiary;
+                    Text {
+                        text: root.session-remaining;
+                        color: Theme.text-muted; font-size: 11px; font-weight: 500;
+                        font-family: "monospace";
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    height: 44px; width: 44px;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px; border-color: Theme.border;
+                    Text {
+                        text: root.session-active ? "🔓" : "🔒";
+                        font-size: 16px;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    TouchArea {
+                        clicked => {
+                            if root.session-active { root.lock-clicked(); }
+                            else { root.unlock-clicked(); }
+                        }
+                    }
+                }
+            }
+
+            // === RECEIVE SECTION (address + copy) ===
+            if root.selected-address != "" && !root.show-account-dropdown : Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px; border-color: Theme.border-subtle;
+                min-height: 60px;
+                clip: true;
+
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-sm;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "YOUR ADDRESS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Rectangle {
+                            width: 48px; height: 20px; border-radius: Theme.radius-sm;
+                            border-width: 1px; border-color: Theme.accent;
+                            Text { text: "Copy"; color: Theme.accent; font-size: 9px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.copy-address(); } }
+                        }
+                    }
+
+                    Text { text: root.selected-address; color: Theme.text; font-size: 12px; overflow: elide; }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-xl;
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "NONCE"; color: Theme.text-muted; font-size: 9px; font-weight: 600; }
+                            Text { text: root.selected-nonce; color: Theme.text; font-size: 12px; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "ACCOUNTS"; color: Theme.text-muted; font-size: 9px; font-weight: 600; }
+                            Text { text: root.account-count; color: Theme.text; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+
+            // === TRANSACTION HISTORY ===
+            if root.selected-address != "" && !root.show-account-dropdown : Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px; border-color: Theme.border-subtle;
+                min-height: 120px;
+                vertical-stretch: 1;
+                clip: true;
+
+                VerticalLayout {
+                    // Header
+                    Rectangle {
+                        height: 36px;
+                        HorizontalLayout {
+                            padding-left: Theme.space-lg;
+                            padding-right: Theme.space-lg;
+                            alignment: space-between;
+                            Text { text: "TRANSACTIONS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; vertical-alignment: center; }
+                            Text { text: root.transactions.length > 0 ? root.transactions.length + " total" : ""; color: Theme.text-muted; font-size: 10px; vertical-alignment: center; }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                    if root.transactions.length == 0 : VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.space-sm;
+                        padding: Theme.space-xl;
+                        vertical-stretch: 1;
+
+                        Text { text: "No transactions yet"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+                        Text { text: "Send or receive SALT to see activity"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+                    }
+
+                    if root.transactions.length > 0 : Flickable {
+                        VerticalLayout {
+                            for tx in root.transactions : TxRow {
+                                tx-type: tx.tx-type;
+                                amount: tx.amount;
+                                counterparty: tx.counterparty;
+                                status: tx.status;
+                                timestamp: tx.timestamp;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === EMPTY STATE ===
+            if root.selected-address == "" && root.account-count == 0 : Rectangle {
+                border-radius: Theme.radius-lg;
+                border-width: 2px; border-color: Theme.border;
+                min-height: 200px;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-lg;
+                    padding: Theme.space-2xl;
+
+                    Text { text: "Welcome to Citrate"; color: Theme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
+                    Text { text: "Create a new wallet or import an existing one to get started."; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Theme.space-md;
+
+                        Rectangle {
+                            height: 40px; width: 150px;
+                            border-radius: Theme.radius-lg;
+                            background: Theme.accent;
+                            Text { text: "Create Wallet"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.show-create-dialog = true; } }
+                        }
+
+                        Rectangle {
+                            height: 40px; width: 150px;
+                            border-radius: Theme.radius-lg;
+                            border-width: 1px; border-color: Theme.border;
+                            Text { text: "Import Wallet"; color: Theme.text; font-size: 13px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.show-import-dialog = true; } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // === CREATE ACCOUNT DIALOG ===
+    if root.show-create-dialog : Rectangle {
+        background: rgba(0, 0, 0, 0.6);
+        TouchArea { clicked => { root.show-create-dialog = false; } }
+
+        Rectangle {
+            width: min(420px, parent.width - 48px);
+            height: 320px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.surface;
+            border-width: 1px; border-color: Theme.border;
+            TouchArea {} // block click-through
+
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-lg;
+
+                Text { text: "Create New Account"; color: Theme.text; font-size: 18px; font-weight: 600; }
+
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Text { text: "Account Label"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 40px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border; background: Theme.bg;
+                        create-label := TextInput {
+                            text: "Account";
+                            font-size: 13px; color: Theme.text;
+                            x: Theme.space-md; width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Text { text: "Password"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 40px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border; background: Theme.bg;
+                        create-pwd := TextInput {
+                            font-size: 13px; color: Theme.text;
+                            x: Theme.space-md; width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                            input-type: password;
+                        }
+                    }
+                }
+
+                if root.create-error != "" : Text { text: root.create-error; color: Theme.error; font-size: 11px; }
+
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border;
+                        Text { text: "Cancel"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.show-create-dialog = false; } }
+                    }
+                    Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: Theme.accent;
+                        Text { text: "Create"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.create-account(create-pwd.text, create-label.text); root.show-create-dialog = false; } }
+                    }
+                }
+            }
+        }
+    }
+
+    // === IMPORT ACCOUNT DIALOG ===
+    if root.show-import-dialog : Rectangle {
+        background: rgba(0, 0, 0, 0.6);
+        TouchArea { clicked => { root.show-import-dialog = false; } }
+
+        Rectangle {
+            width: min(440px, parent.width - 48px);
+            height: 380px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.surface;
+            border-width: 1px; border-color: Theme.border;
+            TouchArea {}
+
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-lg;
+
+                Text { text: "Import Account"; color: Theme.text; font-size: 18px; font-weight: 600; }
+
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Text { text: "Private Key or Recovery Phrase"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 80px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border; background: Theme.bg;
+                        import-input := TextInput {
+                            font-size: 12px; color: Theme.text;
+                            x: Theme.space-md; y: Theme.space-sm;
+                            width: parent.width - Theme.space-2xl;
+                            wrap: word-wrap;
+                        }
+                    }
+                    Text { text: "Enter a hex private key or 12/24 word mnemonic"; color: Theme.text-muted; font-size: 10px; }
+                }
+
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Text { text: "Password"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 40px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border; background: Theme.bg;
+                        import-pwd := TextInput {
+                            font-size: 13px; color: Theme.text;
+                            x: Theme.space-md; width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                            input-type: password;
+                        }
+                    }
+                }
+
+                if root.import-error != "" : Text { text: root.import-error; color: Theme.error; font-size: 11px; }
+
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border;
+                        Text { text: "Cancel"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.show-import-dialog = false; } }
+                    }
+                    Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: Theme.accent;
+                        Text { text: "Import"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => {
+                            if import-input.text != "" {
+                                root.import-from-mnemonic(import-input.text, import-pwd.text);
+                                root.show-import-dialog = false;
+                            }
+                        } }
+                    }
+                }
+            }
+        }
+    }
+
+    // === EXPORT PRIVATE KEY DIALOG ===
+    if root.show-export-dialog : Rectangle {
+        background: rgba(0, 0, 0, 0.6);
+        TouchArea { clicked => { root.show-export-dialog = false; } }
+
+        Rectangle {
+            width: min(440px, parent.width - 48px);
+            height: root.exported-key != "" ? 400px : 300px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.surface;
+            border-width: 1px; border-color: Theme.border;
+            TouchArea {} // block click-through
+
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-lg;
+
+                Text { text: "Export Private Key"; color: Theme.text; font-size: 18px; font-weight: 600; }
+
+                Text {
+                    text: "WARNING: Never share your private key. Anyone with this key has full control of your account.";
+                    color: Theme.warning;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+
+                // Password input — always present but hidden when key is revealed
+                VerticalLayout {
+                    visible: root.exported-key == "";
+                    spacing: Theme.space-sm;
+                    Text { text: "Enter your password to reveal the private key"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 40px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border; background: Theme.bg;
+                        export-pwd := TextInput {
+                            font-size: 13px; color: Theme.text;
+                            x: Theme.space-md; width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                            input-type: password;
+                        }
+                    }
+                }
+
+                if root.export-error != "" : Text { text: root.export-error; color: Theme.error; font-size: 11px; }
+
+                if root.exported-key != "" : VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Text { text: "Private Key (hex)"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle {
+                        height: 60px; border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.warning; background: Theme.bg;
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            Text {
+                                text: root.exported-key;
+                                color: Theme.text;
+                                font-size: 11px;
+                                font-family: "monospace";
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 32px; width: 120px;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.accent;
+                        Text { text: "Copy to Clipboard"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.copy-exported-key(); } }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px; border-color: Theme.border;
+                        Text { text: "Close"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.show-export-dialog = false; } }
+                    }
+                    if root.exported-key == "" : Rectangle {
+                        height: 40px; horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: Theme.warning;
+                        Text { text: "Reveal Key"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => {
+                            if export-pwd.text != "" {
+                                root.export-private-key(export-pwd.text);
+                            }
+                        } }
+                    }
+                }
+            }
+        }
+    }
+}

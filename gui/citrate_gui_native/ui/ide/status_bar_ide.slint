@@ -1,0 +1,122 @@
+// IDE status bar — branch, cursor position, language, diagnostics
+import { Theme } from "../theme.slint";
+
+export component StatusBarIde inherits Rectangle {
+    in property <string> branch: "";
+    in property <int> cursor-line: 0;
+    in property <int> cursor-col: 0;
+    in property <string> language: "";
+    in property <string> encoding: "UTF-8";
+    in property <string> line-ending: "LF";
+    in property <int> error-count: 0;
+    in property <int> warning-count: 0;
+
+    height: Theme.status-bar-height;
+    background: Theme.bg-secondary;
+
+    // Top border
+    Rectangle {
+        height: 1px;
+        background: Theme.border-subtle;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-lg;
+        alignment: start;
+
+        // Branch indicator
+        if root.branch != "" : HorizontalLayout {
+            spacing: 4px;
+
+            Text {
+                text: "⎇";
+                color: Theme.accent;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.branch;
+                color: Theme.text-secondary;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Error/warning counts
+        if root.error-count > 0 || root.warning-count > 0 : HorizontalLayout {
+            spacing: Theme.space-sm;
+
+            if root.error-count > 0 : HorizontalLayout {
+                spacing: 3px;
+
+                Text {
+                    text: "✕";
+                    color: Theme.error;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.error-count;
+                    color: Theme.error;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            if root.warning-count > 0 : HorizontalLayout {
+                spacing: 3px;
+
+                Text {
+                    text: "⚠";
+                    color: Theme.warning;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.warning-count;
+                    color: Theme.warning;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Spacer
+        Rectangle { horizontal-stretch: 1; }
+
+        // Cursor position
+        if root.cursor-line > 0 : Text {
+            text: "Ln " + root.cursor-line + ", Col " + root.cursor-col;
+            color: Theme.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+
+        // Line ending
+        Text {
+            text: root.line-ending;
+            color: Theme.text-muted;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+
+        // Encoding
+        Text {
+            text: root.encoding;
+            color: Theme.text-muted;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+
+        // Language
+        if root.language != "" : Text {
+            text: root.language;
+            color: Theme.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+}

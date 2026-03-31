@@ -1,0 +1,61 @@
+[package]
+name = "citrate-desktop-app"
+version = "0.1.0"
+edition = "2021"
+description = "Headless desktop application core — typed services, view models, and event bus for Citrate GUI"
+
+[dependencies]
+# Domain crates (authoritative — never forked)
+citrate-consensus = { path = "../../core/consensus" }
+citrate-execution = { path = "../../core/execution" }
+citrate-storage = { path = "../../core/storage" }
+citrate-sequencer = { path = "../../core/sequencer" }
+citrate-network = { path = "../../core/network" }
+citrate-economics = { path = "../../core/economics" }
+citrate-api = { path = "../../core/api" }
+
+# Wallet core library
+citrate-wallet-core = { path = "../../wallet-core" }
+
+# Runtime
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+hex = "0.4"
+primitive-types = "0.12"
+anyhow = "1"
+thiserror = "1"
+dirs = "5"
+async-trait = "0.1"
+
+# Crypto
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+sha3 = "0.10"
+rand = "0.8"
+
+# IDE — Editor
+ropey = "1.6"
+syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+
+# IDE — Terminal
+vte = "0.13"
+portable-pty = "0.8"
+
+# IDE — Git
+git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
+
+# IDE — File Explorer
+walkdir = "2.5"
+ignore = "0.4"
+notify = "7"
+
+# IDE — Utilities
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+
+[dev-dependencies]
+tokio-test = "0.4"
+proptest = "1"
+async-trait = "0.1"

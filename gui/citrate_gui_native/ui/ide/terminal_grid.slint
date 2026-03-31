@@ -1,0 +1,56 @@
+// Terminal grid — fixed-width character cell renderer for PTY output
+import { Theme } from "../theme.slint";
+import { TerminalCellData, TerminalRowData } from "ide_structs.slint";
+
+component TermRow inherits Rectangle {
+    in property <[TerminalCellData]> cells: [];
+    in property <int> cursor-col: -1;
+
+    height: 18px;
+
+    HorizontalLayout {
+        for cell[col-idx] in root.cells : Rectangle {
+            width: 8.4px;
+            background: col-idx == root.cursor-col ? Theme.text : cell.bg-color;
+
+            Text {
+                text: cell.char;
+                color: col-idx == root.cursor-col ? Theme.bg : cell.fg-color;
+                font-size: 14px;
+                font-weight: cell.bold ? 700 : 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component TerminalGrid inherits Rectangle {
+    in property <[TerminalRowData]> rows: [];
+    in property <int> cursor-row: 0;
+    in property <int> cursor-col: 0;
+    in property <bool> cursor-visible: true;
+
+    callback input(string);
+
+    background: #0d1117;
+
+    VerticalLayout {
+        for row[row-idx] in root.rows : TermRow {
+            cells: row.cells;
+            cursor-col: root.cursor-visible && row-idx == root.cursor-row ? root.cursor-col : -1;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: #0d1117;
+        }
+    }
+
+    FocusScope {
+        key-pressed(event) => {
+            root.input(event.text);
+            accept
+        }
+    }
+}

@@ -1,0 +1,88 @@
+// Section 1: Node Control — start/stop/restart + live stats
+import { Theme } from "../theme.slint";
+import { SettingsRow, SectionHeader } from "settings_primitives.slint";
+
+export component NodeControlSection inherits VerticalLayout {
+    in property <bool> node-running: false;
+    in property <string> network: "devnet";
+    in property <int> block-height: 0;
+    in property <int> peer-count: 0;
+    in property <int> dag-tips: 0;
+    in property <bool> syncing: false;
+    in property <string> uptime: "--";
+    in property <string> connection-status: "Disconnected";
+
+    callback start-node;
+    callback stop-node;
+    callback restart-node;
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "Node Control"; }
+
+    // Buttons
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+
+        Rectangle {
+            height: 36px; horizontal-stretch: 1;
+            border-radius: Theme.radius-md;
+            background: root.node-running ? Theme.bg-tertiary : Theme.success;
+            Text {
+                text: root.node-running ? "Running" : "Start";
+                color: root.node-running ? Theme.text-muted : #000000;
+                font-size: 12px; font-weight: 600;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { if !root.node-running { root.start-node(); } } }
+        }
+
+        Rectangle {
+            height: 36px; horizontal-stretch: 1;
+            border-radius: Theme.radius-md;
+            background: root.node-running ? Theme.error : Theme.bg-tertiary;
+            opacity: root.node-running ? 1.0 : 0.5;
+            Text {
+                text: "Stop";
+                color: root.node-running ? #ffffff : Theme.text-muted;
+                font-size: 12px; font-weight: 600;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { if root.node-running { root.stop-node(); } } }
+        }
+
+        Rectangle {
+            height: 36px; horizontal-stretch: 1;
+            border-radius: Theme.radius-md;
+            border-width: 1px; border-color: Theme.border;
+            Text { text: "Restart"; color: Theme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.restart-node(); } }
+        }
+    }
+
+    // Stats
+    VerticalLayout {
+        spacing: Theme.space-xs;
+        SettingsRow { label: "Status"; value: root.node-running ? "Running" : "Stopped"; }
+        SettingsRow { label: "Network"; value: root.network; }
+        SettingsRow { label: "Block Height"; value: root.block-height; }
+        SettingsRow { label: "Peers"; value: root.peer-count; }
+        SettingsRow { label: "DAG Tips"; value: root.dag-tips; }
+        SettingsRow { label: "Syncing"; value: root.syncing ? "Yes" : "No"; }
+        SettingsRow { label: "Uptime"; value: root.uptime; }
+    }
+
+    // Connection dot
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        Rectangle {
+            width: 8px; height: 8px; border-radius: 4px; y: 5px;
+            background: root.peer-count > 0 ? Theme.success : (root.node-running ? Theme.warning : Theme.text-muted);
+        }
+        Text {
+            text: root.connection-status;
+            color: root.peer-count > 0 ? Theme.success : Theme.text-muted;
+            font-size: 11px; vertical-alignment: center; overflow: elide;
+        }
+    }
+}

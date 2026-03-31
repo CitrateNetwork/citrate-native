@@ -1,0 +1,249 @@
+// Send SALT dialog — address, amount, confirm, result
+import { Theme } from "../theme.slint";
+
+export component SendDialog inherits Rectangle {
+    in property <string> from-address: "";
+    in property <string> balance: "0";
+    in-out property <string> to-address: "";
+    in-out property <string> amount: "";
+    in-out property <string> password: "";
+    in property <string> error-message: "";
+    in property <bool> sending: false;
+    in property <string> tx-hash: "";
+    in-out property <bool> confirming: false;
+
+    callback send(/* to */ string, /* amount */ string, /* password */ string);
+    callback close;
+
+    // Overlay
+    background: rgba(0, 0, 0, 0.6);
+
+    TouchArea { clicked => { root.close(); } }
+
+    // Dialog
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 440px;
+        min-height: 300px;
+        border-radius: Theme.radius-lg;
+        background: Theme.bg;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        TouchArea {} // Block click-through
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+
+            // Success state
+            if root.tx-hash != "" : VerticalLayout {
+                spacing: Theme.space-lg;
+                alignment: center;
+
+                // Checkmark
+                Rectangle {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 24px;
+                    background: Theme.success;
+                    horizontal-stretch: 0;
+
+                    Text { text: "✓"; color: #ffffff; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+                }
+
+                Text { text: "Transaction Sent"; color: Theme.success; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
+                Text { text: root.amount + " SALT sent"; color: Theme.text-secondary; font-size: 13px; horizontal-alignment: center; }
+
+                Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface;
+                    min-height: 40px;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: 2px;
+                        Text { text: "Transaction Hash"; color: Theme.text-muted; font-size: 10px; }
+                        Text { text: root.tx-hash; color: Theme.text; font-size: 11px; overflow: elide; }
+                    }
+                }
+
+                Rectangle {
+                    height: 38px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.accent;
+                    Text { text: "Done"; color: #000000; font-size: 14px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.close(); } }
+                }
+            }
+
+            // Confirm state
+            if root.tx-hash == "" && root.confirming : VerticalLayout {
+                spacing: Theme.space-md;
+
+                Text { text: "Confirm Transaction"; color: Theme.text; font-size: 18px; font-weight: 600; }
+
+                Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface;
+                    min-height: 100px;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-sm;
+
+                        HorizontalLayout {
+                            Text { text: "To"; color: Theme.text-muted; font-size: 12px; min-width: 60px; }
+                            Text { text: root.to-address; color: Theme.text; font-size: 12px; overflow: elide; }
+                        }
+                        HorizontalLayout {
+                            Text { text: "Amount"; color: Theme.text-muted; font-size: 12px; min-width: 60px; }
+                            Text { text: root.amount + " SALT"; color: Theme.text; font-size: 12px; font-weight: 600; }
+                        }
+                        HorizontalLayout {
+                            Text { text: "Gas"; color: Theme.text-muted; font-size: 12px; min-width: 60px; }
+                            Text { text: "21,000"; color: Theme.text; font-size: 12px; }
+                        }
+                    }
+                }
+
+                if root.error-message != "" : Text { text: root.error-message; color: Theme.error; font-size: 12px; }
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+
+                    Rectangle {
+                        height: 38px;
+                        horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        Text { text: "Back"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.confirming = false; } }
+                    }
+
+                    Rectangle {
+                        height: 38px;
+                        horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: root.sending ? Theme.bg-tertiary : Theme.accent;
+                        opacity: root.sending ? 0.6 : 1.0;
+                        Text {
+                            text: root.sending ? "Sending..." : "Confirm & Send";
+                            color: root.sending ? Theme.text-muted : #000000;
+                            font-size: 13px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        TouchArea { clicked => { if !root.sending { root.send(root.to-address, root.amount, root.password); } } }
+                    }
+                }
+            }
+
+            // Input state
+            if root.tx-hash == "" && !root.confirming : VerticalLayout {
+                spacing: Theme.space-md;
+
+                Text { text: "Send SALT"; color: Theme.text; font-size: 18px; font-weight: 600; }
+
+                // From
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "FROM"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+                    Text { text: root.from-address; color: Theme.text-muted; font-size: 12px; overflow: elide; }
+                }
+
+                // To address
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "TO ADDRESS"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+                    Rectangle {
+                        height: 40px;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.bg-secondary;
+                        TextInput {
+                            text <=> root.to-address;
+                            font-size: 13px;
+                            color: Theme.text;
+                            x: Theme.space-md;
+                            width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Amount
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "AMOUNT (SALT)"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+                    Rectangle {
+                        height: 40px;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.bg-secondary;
+                        TextInput {
+                            text <=> root.amount;
+                            font-size: 13px;
+                            color: Theme.text;
+                            x: Theme.space-md;
+                            width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Password
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "PASSWORD"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+                    Rectangle {
+                        height: 40px;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.bg-secondary;
+                        TextInput {
+                            text <=> root.password;
+                            font-size: 13px;
+                            color: Theme.text;
+                            input-type: InputType.password;
+                            x: Theme.space-md;
+                            width: parent.width - Theme.space-2xl;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.error-message != "" : Text { text: root.error-message; color: Theme.error; font-size: 12px; }
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+
+                    Rectangle {
+                        height: 38px;
+                        horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        Text { text: "Cancel"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.close(); } }
+                    }
+
+                    Rectangle {
+                        height: 38px;
+                        horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: Theme.accent;
+                        Text { text: "Review"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.confirming = true; } }
+                    }
+                }
+            }
+        }
+    }
+}

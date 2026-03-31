@@ -1,0 +1,54 @@
+// Citrate Design System — Brand-aligned theme tokens
+// Colors from citrate.ai, fonts: Tilt Warp (display), Satoshi (body),
+// JetBrains Mono (code), Instrument Serif (accent)
+
+export global Theme {
+    // === DARK MODE (default) — Gunmetal black with warm brown undertone ===
+    out property <color> bg: #0A0E17;              // Abyss — primary background
+    out property <color> bg-secondary: #0D1117;    // Deep — section backgrounds
+    out property <color> bg-tertiary: #12161F;     // Surface — elevated panels
+    out property <color> surface: #161B25;         // Cards, modals
+    out property <color> text: #F9FAFB;            // Primary text
+    out property <color> text-secondary: #8B95A5;  // Descriptions, labels
+    out property <color> text-muted: #5A6070;      // Subdued/disabled
+    out property <color> border: rgba(139, 149, 165, 0.15); // Standard borders
+    out property <color> border-subtle: rgba(139, 149, 165, 0.08); // Subtle borders
+
+    // Brand accent — Gold/Chamois (from CTA gradient)
+    out property <color> accent: #D4A76A;          // Primary accent (gold)
+    out property <color> accent-hover: #E8A87C;    // Hover state (peach)
+
+    // Semantic colors
+    out property <color> success: #34D399;         // Emerald — connected, running
+    out property <color> warning: #FBBF24;         // Amber — syncing, pending
+    out property <color> error: #E88B8B;           // Rose — errors, danger
+    out property <color> info: #6B9AC4;            // Periwinkle — informational
+
+    // Spectral palette (feature-area colors from citrate.ai)
+    out property <color> sage: #7EC8A0;            // Contracts, deployments
+    out property <color> periwinkle: #6B9AC4;      // Nodes, networking
+    out property <color> aquamarine: #7EC4CF;       // Models, inference
+    out property <color> wisteria: #9B7FC4;        // Verification, TLA+
+    out property <color> mint: #6ABFA0;            // Performance, TPS
+    out property <color> chamois: #D4A76A;         // Economics, finality
+    out property <color> lavender: #B497D6;        // Specs, formal methods
+
+    // Spacing (4px base)
+    out property <length> space-xs: 4px;
+    out property <length> space-sm: 8px;
+    out property <length> space-md: 12px;
+    out property <length> space-lg: 16px;
+    out property <length> space-xl: 24px;
+    out property <length> space-2xl: 32px;
+
+    // Radii
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 6px;
+    out property <length> radius-lg: 8px;
+    out property <length> radius-xl: 12px;
+
+    // Layout
+    out property <length> sidebar-width: 220px;
+    out property <length> sidebar-collapsed: 52px;
+    out property <length> status-bar-height: 32px;
+}

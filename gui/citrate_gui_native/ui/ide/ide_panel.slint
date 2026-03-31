@@ -1,0 +1,209 @@
+// IDE Panel — VSCode-like layout with file explorer, editor, terminal, git
+// Can be used inline in a tab or popped out to a standalone window
+import { Theme } from "../theme.slint";
+import { FileTreeNodeData, EditorTabData, StyledLineData, TerminalRowData,
+         GitFileData, DiagnosticData } from "ide_structs.slint";
+import { FileExplorer } from "file_explorer.slint";
+import { TabBar } from "tab_bar.slint";
+import { EditorArea } from "editor_area.slint";
+import { BottomPanel } from "bottom_panel.slint";
+import { GitPanel } from "git_panel.slint";
+import { StatusBarIde } from "status_bar_ide.slint";
+
+export component IdePanel inherits Rectangle {
+    // === File Explorer State ===
+    in property <string> explorer-root: "";
+    in property <[FileTreeNodeData]> file-tree-nodes: [];
+    in property <string> selected-file-path: "";
+
+    // === Tab Bar State ===
+    in property <[EditorTabData]> tabs: [];
+
+    // === Editor State ===
+    in property <[StyledLineData]> visible-lines: [];
+    in property <int> total-lines: 0;
+    in property <int> scroll-offset: 0;
+    in property <int> cursor-line: 0;
+    in property <int> cursor-col: 0;
+
+    // === Terminal State ===
+    in property <[TerminalRowData]> terminal-rows: [];
+    in property <int> terminal-cursor-row: 0;
+    in property <int> terminal-cursor-col: 0;
+
+    // === Git State ===
+    in property <string> git-branch: "";
+    in property <[GitFileData]> git-changed-files: [];
+
+    // === Diagnostics ===
+    in property <[DiagnosticData]> diagnostics: [];
+
+    // === Panel Visibility ===
+    in-out property <bool> show-explorer: true;
+    in-out property <bool> show-git: false;
+    in-out property <bool> show-bottom-panel: true;
+
+    // === Language / Status ===
+    in property <string> active-language: "";
+    in property <int> error-count: 0;
+    in property <int> warning-count: 0;
+
+    // === Callbacks to Rust ===
+    callback file-opened(string);
+    callback dir-toggled(string);
+    callback tab-clicked(string);
+    callback tab-closed(string);
+    callback editor-key-pressed(string);
+    callback terminal-input(string);
+    callback terminal-resize(int, int);
+    callback git-stage(string);
+    callback git-unstage(string);
+    callback git-commit(string);
+    callback git-push;
+    callback git-pull;
+    callback save-file;
+    callback save-all;
+    callback pop-out;
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        // === Toolbar ===
+        Rectangle {
+            height: 32px;
+            background: Theme.bg-secondary;
+
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                padding-right: Theme.space-md;
+                spacing: Theme.space-sm;
+
+                // Toggle buttons
+                Rectangle {
+                    width: 28px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.show-explorer ? Theme.bg-tertiary : transparent;
+                    y: 4px;
+                    Text { text: "Files"; color: root.show-explorer ? Theme.text : Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-explorer = !root.show-explorer; } }
+                }
+
+                Rectangle {
+                    width: 24px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.show-git ? Theme.bg-tertiary : transparent;
+                    y: 4px;
+                    Text { text: "Git"; color: root.show-git ? Theme.text : Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-git = !root.show-git; } }
+                }
+
+                Rectangle {
+                    width: 40px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.show-bottom-panel ? Theme.bg-tertiary : transparent;
+                    y: 4px;
+                    Text { text: "Terminal"; color: root.show-bottom-panel ? Theme.text : Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-bottom-panel = !root.show-bottom-panel; } }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Pop-out button
+                Rectangle {
+                    width: 50px; height: 24px; border-radius: Theme.radius-sm;
+                    border-width: 1px; border-color: Theme.border;
+                    y: 4px;
+                    Text { text: "Pop Out"; color: Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.pop-out(); } }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+        // === Main Content ===
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            // === Left Sidebar: File Explorer + Git (200px) ===
+            if root.show-explorer : Rectangle {
+                width: 200px;
+                background: Theme.bg-secondary;
+
+                VerticalLayout {
+                    FileExplorer {
+                        root-path: root.explorer-root;
+                        nodes: root.file-tree-nodes;
+                        selected-path: root.selected-file-path;
+                        vertical-stretch: root.show-git ? 2 : 1;
+                        file-clicked(path) => { root.file-opened(path); }
+                        dir-toggled(path) => { root.dir-toggled(path); }
+                    }
+
+                    if root.show-git : Rectangle {
+                        height: 1px;
+                        background: Theme.border-subtle;
+                    }
+
+                    if root.show-git : GitPanel {
+                        branch: root.git-branch;
+                        changed-files: root.git-changed-files;
+                        vertical-stretch: 1;
+                        stage(path) => { root.git-stage(path); }
+                        unstage(path) => { root.git-unstage(path); }
+                        commit(msg) => { root.git-commit(msg); }
+                        push => { root.git-push(); }
+                        pull => { root.git-pull(); }
+                    }
+                }
+            }
+
+            if root.show-explorer : Rectangle {
+                width: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // === Center: Tabs + Editor + Bottom Panel ===
+            VerticalLayout {
+                horizontal-stretch: 1;
+
+                TabBar {
+                    tabs: root.tabs;
+                    tab-clicked(id) => { root.tab-clicked(id); }
+                    tab-closed(id) => { root.tab-closed(id); }
+                }
+
+                EditorArea {
+                    visible-lines: root.visible-lines;
+                    total-lines: root.total-lines;
+                    scroll-offset: root.scroll-offset;
+                    cursor-line: root.cursor-line;
+                    cursor-col: root.cursor-col;
+                    vertical-stretch: 3;  // Editor gets 3x the space of terminal
+                    key-pressed(key) => { root.editor-key-pressed(key); }
+                }
+
+                if root.show-bottom-panel : Rectangle {
+                    height: 1px;
+                    background: Theme.border-subtle;
+                }
+
+                if root.show-bottom-panel : BottomPanel {
+                    terminal-rows: root.terminal-rows;
+                    terminal-cursor-row: root.terminal-cursor-row;
+                    terminal-cursor-col: root.terminal-cursor-col;
+                    diagnostics: root.diagnostics;
+                    vertical-stretch: 1;
+                    terminal-input(key) => { root.terminal-input(key); }
+                    toggle-panel => { root.show-bottom-panel = false; }
+                }
+            }
+        }
+
+        StatusBarIde {
+            branch: root.git-branch;
+            cursor-line: root.cursor-line;
+            cursor-col: root.cursor-col;
+            language: root.active-language;
+            error-count: root.error-count;
+            warning-count: root.warning-count;
+        }
+    }
+}

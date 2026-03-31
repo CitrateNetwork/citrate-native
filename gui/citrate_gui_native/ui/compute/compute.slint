@@ -1,0 +1,182 @@
+// Compute Marketplace — browse jobs, register provider, GPU management
+import { Theme } from "../theme.slint";
+
+export component ComputeView inherits Rectangle {
+    in property <int> active-jobs: 0;
+    in property <int> available-providers: 0;
+    in property <string> provider-status: "Not registered";
+    in property <string> total-compute-earned: "0";
+
+    callback post-job;
+    callback register-provider;
+    callback refresh;
+
+    background: Theme.bg;
+
+    Flickable {
+    VerticalLayout {
+        padding-top: Theme.space-lg;
+        padding-bottom: Theme.space-lg;
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-lg;
+
+        // Header
+        HorizontalLayout {
+            Text {
+                text: "Compute Marketplace";
+                color: Theme.text;
+                font-size: 20px;
+                font-weight: 600;
+                horizontal-stretch: 1;
+            }
+        }
+
+        // Not-deployed banner
+        if root.active-jobs == 0 && root.available-providers == 0 : Rectangle {
+            height: 44px;
+            border-radius: Theme.radius-md;
+            background: Theme.bg-tertiary;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            HorizontalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                Text { text: "Compute marketplace contracts are not yet deployed on this network."; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; wrap: word-wrap; }
+            }
+        }
+
+        // Refresh button row (moved from header to avoid nesting issues)
+        HorizontalLayout {
+
+            Rectangle {
+                width: 80px;
+                height: 30px;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                Text { text: "Refresh"; color: Theme.text-secondary; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.refresh(); } }
+            }
+        }
+
+        // Stats
+        HorizontalLayout {
+            spacing: Theme.space-md;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                clip: true;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-xs;
+                    Text { text: "ACTIVE JOBS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
+                    Text { text: root.active-jobs; color: Theme.accent; font-size: 18px; font-weight: 600; }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                clip: true;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-xs;
+                    Text { text: "PROVIDERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
+                    Text { text: root.available-providers; color: Theme.info; font-size: 18px; font-weight: 600; }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                clip: true;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-xs;
+                    Text { text: "EARNED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
+                    Text { text: root.total-compute-earned + " SALT"; color: Theme.success; font-size: 18px; font-weight: 600; overflow: elide; }
+                }
+            }
+        }
+
+        // Provider status
+        Rectangle {
+            height: 48px;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            clip: true;
+
+            HorizontalLayout {
+                padding: Theme.space-md;
+                spacing: Theme.space-md;
+
+                Text { text: "Provider Status:"; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
+                Text { text: root.provider-status; color: Theme.text; font-size: 13px; font-weight: 500; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+
+                Rectangle {
+                    width: 120px;
+                    height: 30px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.accent;
+
+                    Text { text: "Register"; color: #000000; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.register-provider(); } }
+                }
+            }
+        }
+
+        // Actions
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 40px;
+                border-radius: Theme.radius-md;
+                background: Theme.accent;
+
+                Text { text: "Post Compute Job"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.post-job(); } }
+            }
+        }
+
+        // Job list placeholder
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-secondary;
+            border-width: 2px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: Theme.space-sm;
+
+                Text { text: "Job Browser"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                Text { text: "Active compute jobs will appear here"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+            }
+        }
+    }
+    }
+}

@@ -1,0 +1,74 @@
+// Status bar — bottom bar showing node status, peers, block height, environment
+import { Theme } from "../theme.slint";
+
+export component StatusDot inherits Rectangle {
+    in property <bool> active: false;
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: active ? Theme.success : Theme.text-muted;
+}
+
+export component StatusBar inherits Rectangle {
+    in property <bool> node-running: false;
+    in property <string> environment: "devnet";
+    in property <int> block-height: 0;
+    in property <int> peer-count: 0;
+    in property <string> version: "0.1.0";
+
+    height: Theme.status-bar-height;
+    background: Theme.bg-secondary;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-lg;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: Theme.space-lg;
+            alignment: start;
+
+            // Node status
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: center;
+                StatusDot { active: root.node-running; }
+                Text {
+                    text: root.environment;
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 80px;
+                }
+            }
+
+            // Block height
+            Text {
+                text: "Block #" + root.block-height;
+                color: Theme.text-muted;
+                font-size: 11px;
+                vertical-alignment: center;
+                visible: root.node-running;
+            }
+
+            // Peers
+            Text {
+                text: root.peer-count + " peers";
+                color: Theme.text-muted;
+                font-size: 11px;
+                vertical-alignment: center;
+                visible: root.node-running;
+            }
+        }
+
+        // Version
+        Text {
+            text: "Citrate v" + root.version;
+            color: Theme.text-muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}

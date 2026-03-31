@@ -1,0 +1,208 @@
+// Git panel — branch display, changed files, stage/unstage, commit
+import { Theme } from "../theme.slint";
+import { GitFileData } from "ide_structs.slint";
+
+component GitFileRow inherits Rectangle {
+    in property <string> path;
+    in property <string> change-type;
+    in property <bool> staged;
+    callback stage-clicked;
+    callback unstage-clicked;
+
+    height: 24px;
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-sm;
+        spacing: Theme.space-sm;
+        alignment: start;
+
+        Rectangle {
+            width: 18px;
+            height: 16px;
+            border-radius: 3px;
+            background: root.change-type == "Modified" ? #854d0e :
+                        root.change-type == "Added" ? #065f46 :
+                        root.change-type == "Deleted" ? #7f1d1d :
+                        #1e3a5f;
+
+            Text {
+                text: root.change-type == "Modified" ? "M" :
+                      root.change-type == "Added" ? "A" :
+                      root.change-type == "Deleted" ? "D" :
+                      root.change-type == "Untracked" ? "U" :
+                      root.change-type == "Renamed" ? "R" : "?";
+                color: root.change-type == "Modified" ? Theme.warning :
+                       root.change-type == "Added" ? Theme.success :
+                       root.change-type == "Deleted" ? Theme.error :
+                       Theme.info;
+                font-size: 10px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.path;
+            color: Theme.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        Rectangle {
+            width: 20px;
+            height: 18px;
+            border-radius: 3px;
+            Text {
+                text: root.staged ? "−" : "+";
+                color: root.staged ? Theme.error : Theme.success;
+                font-size: 14px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                clicked => {
+                    if root.staged { root.unstage-clicked(); }
+                    else { root.stage-clicked(); }
+                }
+            }
+        }
+    }
+
+    TouchArea {}
+}
+
+export component GitPanel inherits Rectangle {
+    in property <string> branch: "main";
+    in property <[GitFileData]> changed-files: [];
+    in-out property <string> commit-message: "";
+    in property <bool> is-pushing: false;
+    in property <bool> is-pulling: false;
+
+    callback stage(string);
+    callback unstage(string);
+    callback commit(string);
+    callback push;
+    callback pull;
+
+    background: Theme.bg-secondary;
+
+    VerticalLayout {
+        Rectangle {
+            height: 32px;
+            background: Theme.bg-tertiary;
+
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-sm;
+
+                Text {
+                    text: "SOURCE CONTROL";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Rectangle {
+                    height: 18px;
+                    border-radius: 9px;
+                    background: Theme.bg;
+                    min-width: 60px;
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-sm;
+                        padding-right: Theme.space-sm;
+                        spacing: 4px;
+                        Text { text: "⎇"; color: Theme.accent; font-size: 11px; vertical-alignment: center; }
+                        Text { text: root.branch; color: Theme.text; font-size: 11px; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 60px;
+            background: Theme.bg;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            TextInput {
+                text <=> root.commit-message;
+                font-size: 12px;
+                color: Theme.text;
+                x: Theme.space-sm;
+                y: Theme.space-sm;
+                width: parent.width - Theme.space-lg;
+                height: parent.height - Theme.space-lg;
+            }
+        }
+
+        HorizontalLayout {
+            height: 30px;
+            padding: 2px;
+            spacing: 2px;
+
+            Rectangle {
+                horizontal-stretch: 2;
+                border-radius: Theme.radius-sm;
+                background: Theme.accent;
+                opacity: root.commit-message == "" ? 0.4 : 1.0;
+                Text { text: "✓ Commit"; color: #000000; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { if root.commit-message != "" { root.commit(root.commit-message); } } }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-tertiary;
+                Text { text: root.is-pushing ? "↑..." : "↑ Push"; color: Theme.text-secondary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.push(); } }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-tertiary;
+                Text { text: root.is-pulling ? "↓..." : "↓ Pull"; color: Theme.text-secondary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.pull(); } }
+            }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                if root.changed-files.length > 0 : Text {
+                    text: "Changes";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    font-weight: 500;
+                    height: 22px;
+                    vertical-alignment: center;
+                    x: Theme.space-sm;
+                }
+
+                for file in root.changed-files : GitFileRow {
+                    path: file.path;
+                    change-type: file.change-type;
+                    staged: file.staged;
+                    stage-clicked => { root.stage(file.path); }
+                    unstage-clicked => { root.unstage(file.path); }
+                }
+
+                if root.changed-files.length == 0 : Rectangle {
+                    height: 60px;
+                    Text { text: "No changes"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+}

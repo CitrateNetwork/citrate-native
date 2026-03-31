@@ -1,0 +1,854 @@
+// Onboarding flow — matches Tauri V1 step-for-step
+//
+// Effective flow (no external auth):
+//   0: Welcome / Launch Check
+//   1: Identity Selection (traditional auth — password creation)
+//   2: Wallet Provisioning (create wallet, show mnemonic)
+//   3: Security Confirmation (acknowledge backup)
+//   4: Persona Selection (Home / Teacher / Developer)
+//   5: Environment Selection (Devnet / Testnet)
+//   6: Node Bootstrap (start node with progress)
+//   7: Core Model Readiness (check AI model)
+//   8: Interactive Lesson (developer only — skip for others)
+//   9: Session Active / Complete
+
+import { Theme } from "../theme.slint";
+
+// ---------------------------------------------------------------------------
+// Shared components
+// ---------------------------------------------------------------------------
+
+component OnboardingButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    height: 42px;
+    min-width: 140px;
+    border-radius: Theme.radius-md;
+    background: !root.enabled ? Theme.bg-tertiary :
+                root.primary ? (btn-touch.has-hover ? Theme.accent-hover : Theme.accent) :
+                (btn-touch.has-hover ? Theme.surface : Theme.bg-tertiary);
+    opacity: root.enabled ? 1.0 : 0.5;
+    animate background { duration: 150ms; easing: ease-in-out; }
+
+    Text {
+        text: root.label;
+        color: root.primary ? #000000 : Theme.text;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    btn-touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if root.enabled { root.clicked(); } }
+    }
+}
+
+component PersonaCard inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <string> icon-text;
+    in property <bool> selected: false;
+    callback clicked;
+
+    height: 90px;
+    border-radius: Theme.radius-lg;
+    background: selected ? Theme.bg-tertiary : Theme.surface;
+    border-width: selected ? 2px : 1px;
+    border-color: selected ? Theme.accent : Theme.border-subtle;
+
+    HorizontalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-lg;
+        alignment: start;
+
+        // Icon circle
+        Rectangle {
+            width: 48px;
+            height: 48px;
+            border-radius: 24px;
+            background: selected ? Theme.accent : Theme.bg-tertiary;
+            vertical-stretch: 0;
+
+            Text {
+                text: root.icon-text;
+                font-size: 20px;
+                color: selected ? #000000 : Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        VerticalLayout {
+            spacing: Theme.space-xs;
+            alignment: center;
+            Text {
+                text: root.title;
+                color: selected ? Theme.accent : Theme.text;
+                font-size: 16px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.description;
+                color: Theme.text-muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component LabeledInput inherits VerticalLayout {
+    in property <string> label;
+    in property <bool> is-password: false;
+    in-out property <string> value;
+
+    spacing: Theme.space-xs;
+
+    Text {
+        text: root.label;
+        color: Theme.text-muted;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+    }
+
+    Rectangle {
+        height: 42px;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.bg-secondary;
+
+        ti := TextInput {
+            text <=> root.value;
+            font-size: 14px;
+            color: Theme.text;
+            horizontal-alignment: left;
+            input-type: root.is-password ? InputType.password : InputType.text;
+            x: Theme.space-md;
+            width: parent.width - Theme.space-2xl;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ProgressBar inherits Rectangle {
+    in property <float> progress: 0.0;   // 0.0 to 1.0
+    in property <string> status-text: "";
+
+    height: 6px;
+    border-radius: 3px;
+    background: Theme.bg-tertiary;
+
+    Rectangle {
+        width: parent.width * clamp(root.progress, 0.0, 1.0);
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: Theme.accent;
+    }
+}
+
+component EnvironmentCard inherits Rectangle {
+    in property <string> name;
+    in property <string> description;
+    in property <bool> selected: false;
+    callback clicked;
+
+    height: 60px;
+    border-radius: Theme.radius-md;
+    background: selected ? Theme.bg-tertiary : Theme.surface;
+    border-width: selected ? 2px : 1px;
+    border-color: selected ? Theme.accent : Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: 2px;
+        Text {
+            text: root.name;
+            color: selected ? Theme.accent : Theme.text;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.description;
+            color: Theme.text-muted;
+            font-size: 11px;
+        }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// ---------------------------------------------------------------------------
+// Main onboarding component
+// ---------------------------------------------------------------------------
+
+export component Onboarding inherits Rectangle {
+    // State
+    in-out property <int> current-step: 0;
+    in-out property <string> persona: "";
+    in-out property <string> environment: "testnet";
+    in-out property <string> password: "";
+    in-out property <string> confirm-password: "";
+    in-out property <string> account-label: "Primary Account";
+
+    // From Rust
+    in property <string> mnemonic: "";
+    in property <string> wallet-address: "";
+    in property <string> error-message: "";
+    in property <bool> creating: false;
+    in property <float> node-progress: 0.0;
+    in property <string> node-status: "";
+    in property <bool> node-ready: false;
+    in property <bool> model-ready: false;
+    in property <string> model-status: "Checking...";
+
+    // Mnemonic verification state
+    in-out property <bool> mnemonic-copied: false;
+    in-out property <string> verify-input: "";
+    in-out property <string> verify-error: "";
+    in property <int> verify-word-number: 3;  // Which word to verify (set by Rust)
+
+    // Callbacks to Rust
+    callback create-wallet(/* password */ string, /* label */ string);
+    callback start-node(/* environment */ string);
+    callback check-model;
+    callback complete;
+    callback copy-mnemonic;
+    callback verify-mnemonic-word;
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        alignment: center;
+        padding: Theme.space-2xl;
+
+        // Centered content container
+        Rectangle {
+            max-width: 480px;
+            horizontal-stretch: 0;
+
+            VerticalLayout {
+                spacing: Theme.space-xl;
+                alignment: center;
+
+                // Logo
+                Text {
+                    text: "Citrate";
+                    color: Theme.accent;
+                    font-size: 36px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                // -------------------------------------------------------
+                // Step 0: Welcome
+                // -------------------------------------------------------
+                if current-step == 0 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Welcome to Citrate";
+                        color: Theme.text;
+                        font-size: 24px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "AI-Native Layer-1 BlockDAG\n\nYour node runs locally. Your AI runs locally.\nEverything stays on your device.";
+                        color: Theme.text-secondary;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { height: Theme.space-md; }
+
+                    OnboardingButton {
+                        label: "Get Started";
+                        primary: true;
+                        clicked => { root.current-step = 1; }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 1: Create password (Identity / Traditional Auth)
+                // -------------------------------------------------------
+                if current-step == 1 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Secure Your Wallet";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Choose a strong password to encrypt your wallet.\nThis password never leaves your device.";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    LabeledInput {
+                        label: "ACCOUNT NAME";
+                        value <=> root.account-label;
+                    }
+
+                    LabeledInput {
+                        label: "PASSWORD";
+                        is-password: true;
+                        value <=> root.password;
+                    }
+
+                    LabeledInput {
+                        label: "CONFIRM PASSWORD";
+                        is-password: true;
+                        value <=> root.confirm-password;
+                    }
+
+                    // Validation feedback
+                    Text {
+                        text: root.password.character-count < 8 ?
+                                "Password must be at least 8 characters" :
+                              root.password != root.confirm-password ?
+                                "Passwords don't match" :
+                                "Ready";
+                        color: root.password.character-count >= 8 &&
+                               root.password == root.confirm-password ?
+                               Theme.success : Theme.text-muted;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                    }
+
+                    if root.error-message != "" : Text {
+                        text: root.error-message;
+                        color: Theme.error;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+
+                    OnboardingButton {
+                        label: root.creating ? "Creating Wallet..." : "Create Wallet";
+                        primary: true;
+                        enabled: root.password.character-count >= 8 &&
+                                 root.password == root.confirm-password &&
+                                 !root.creating;
+                        clicked => { root.create-wallet(root.password, root.account-label); }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 2: Wallet created — show mnemonic
+                // -------------------------------------------------------
+                if current-step == 2 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Recovery Phrase";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Write down these words in order.\nThis is the ONLY way to recover your wallet.\nNever share them with anyone.";
+                        color: Theme.warning;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    // Mnemonic card
+                    Rectangle {
+                        min-height: 100px;
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+
+                        VerticalLayout {
+                            padding: Theme.space-lg;
+                            spacing: Theme.space-sm;
+
+                            TextInput {
+                                text: root.mnemonic;
+                                color: Theme.text;
+                                font-size: 15px;
+                                font-weight: 500;
+                                wrap: word-wrap;
+                                horizontal-alignment: center;
+                                read-only: true;
+                            }
+                        }
+                    }
+
+                    // Copy + Address row
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+
+                        // Copy mnemonic button
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            border-radius: Theme.radius-md;
+                            background: Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: Theme.border;
+
+                            Text {
+                                text: root.mnemonic-copied ? "✓ Copied!" : "📋 Copy Recovery Phrase";
+                                color: root.mnemonic-copied ? Theme.success : Theme.text-secondary;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                clicked => { root.copy-mnemonic(); }
+                            }
+                        }
+                    }
+
+                    // Wallet address (selectable)
+                    if root.wallet-address != "" : Rectangle {
+                        height: 36px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.bg-secondary;
+
+                        TextInput {
+                            text: root.wallet-address;
+                            color: Theme.text-muted;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            read-only: true;
+                            width: parent.width - 16px;
+                            x: 8px;
+                        }
+                    }
+
+                    // Verify mnemonic
+                    VerticalLayout {
+                        spacing: Theme.space-xs;
+
+                        Text {
+                            text: "Verify: Enter word #" + root.verify-word-number + " of your recovery phrase";
+                            color: Theme.text-secondary;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                        }
+
+                        Rectangle {
+                            height: 40px;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: root.verify-error != "" ? Theme.error : Theme.border;
+                            background: Theme.bg-secondary;
+
+                            TextInput {
+                                text <=> root.verify-input;
+                                font-size: 14px;
+                                color: Theme.text;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                width: parent.width - 24px;
+                                x: 12px;
+                            }
+                        }
+
+                        if root.verify-error != "" : Text {
+                            text: root.verify-error;
+                            color: Theme.error;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    OnboardingButton {
+                        label: "Verify & Continue";
+                        primary: true;
+                        enabled: root.verify-input != "";
+                        clicked => { root.verify-mnemonic-word(); }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 3: Security confirmation
+                // -------------------------------------------------------
+                if current-step == 3 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Security Confirmation";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        min-height: 140px;
+
+                        VerticalLayout {
+                            padding: Theme.space-lg;
+                            spacing: Theme.space-md;
+
+                            for item in [
+                                "Your wallet is encrypted on this device",
+                                "Your recovery phrase is the only backup",
+                                "Never share your password or recovery phrase",
+                                "Citrate cannot recover your wallet for you"
+                            ] : HorizontalLayout {
+                                spacing: Theme.space-sm;
+                                Text {
+                                    text: "•";
+                                    color: Theme.accent;
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: item;
+                                    color: Theme.text-secondary;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+
+                    OnboardingButton {
+                        label: "I Understand";
+                        primary: true;
+                        clicked => { root.current-step = 4; }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 4: Persona selection
+                // -------------------------------------------------------
+                if current-step == 4 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "How will you use Citrate?";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "This helps us customize your experience.\nYou can change this later in Settings.";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    PersonaCard {
+                        title: "Home User";
+                        description: "Run a node, earn SALT, explore the blockchain";
+                        icon-text: "🏠";
+                        selected: root.persona == "home";
+                        clicked => { root.persona = "home"; }
+                    }
+
+                    PersonaCard {
+                        title: "Teacher / Institution";
+                        description: "Create classrooms, manage learning pools, train AI models";
+                        icon-text: "🎓";
+                        selected: root.persona == "teacher";
+                        clicked => { root.persona = "teacher"; }
+                    }
+
+                    PersonaCard {
+                        title: "Developer";
+                        description: "Deploy smart contracts, build dApps, integrate SDKs";
+                        icon-text: "⚡";
+                        selected: root.persona == "developer";
+                        clicked => { root.persona = "developer"; }
+                    }
+
+                    OnboardingButton {
+                        label: "Continue";
+                        primary: true;
+                        enabled: root.persona != "";
+                        clicked => { root.current-step = 5; }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 5: Environment selection
+                // -------------------------------------------------------
+                if current-step == 5 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Select Network";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Choose which network to connect to.";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+
+                    EnvironmentCard {
+                        name: "Testnet";
+                        description: "Public test network — earn test SALT, connect to other nodes";
+                        selected: root.environment == "testnet";
+                        clicked => { root.environment = "testnet"; }
+                    }
+
+                    EnvironmentCard {
+                        name: "Devnet (Local)";
+                        description: "Local development — standalone node, fast blocks, no network";
+                        selected: root.environment == "devnet";
+                        clicked => { root.environment = "devnet"; }
+                    }
+
+                    OnboardingButton {
+                        label: "Start Node";
+                        primary: true;
+                        clicked => {
+                            root.start-node(root.environment);
+                            root.current-step = 6;
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 6: Node bootstrap
+                // -------------------------------------------------------
+                if current-step == 6 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Starting Your Node";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: root.node-status != "" ? root.node-status : "Initializing blockchain...";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+
+                    ProgressBar {
+                        progress: root.node-progress;
+                    }
+
+                    if root.node-ready : OnboardingButton {
+                        label: "Continue";
+                        primary: true;
+                        clicked => {
+                            root.check-model();
+                            root.current-step = 7;
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 7: Model readiness
+                // -------------------------------------------------------
+                if current-step == 7 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "AI Assistant";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: root.model-status;
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+
+                    if root.model-ready : VerticalLayout {
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: "AI model ready";
+                            color: Theme.success;
+                            font-size: 14px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    OnboardingButton {
+                        label: root.model-ready ? "Continue" : "Skip for Now";
+                        primary: root.model-ready;
+                        clicked => {
+                            // Developers get interactive lesson (step 8)
+                            // Others go straight to completion (step 9)
+                            if root.persona == "developer" {
+                                root.current-step = 8;
+                            } else {
+                                root.current-step = 9;
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 8: Interactive lesson (developer only)
+                // -------------------------------------------------------
+                if current-step == 8 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "Quick Start";
+                        color: Theme.text;
+                        font-size: 22px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "As a developer, you can deploy smart contracts,\nrun AI inference, and build dApps on Citrate.\n\nExplore the Contracts tab to get started.";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        min-height: 80px;
+
+                        VerticalLayout {
+                            padding: Theme.space-lg;
+                            spacing: Theme.space-sm;
+
+                            Text {
+                                text: "Available tools:";
+                                color: Theme.text;
+                                font-size: 13px;
+                                font-weight: 600;
+                            }
+
+                            for tool in [
+                                "Solidity IDE with syntax highlighting",
+                                "Contract deployment via Foundry",
+                                "AI chat with blockchain tools",
+                                "TypeScript & Python SDKs"
+                            ] : Text {
+                                text: "  → " + tool;
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                            }
+                        }
+                    }
+
+                    OnboardingButton {
+                        label: "Open Dashboard";
+                        primary: true;
+                        clicked => { root.current-step = 9; }
+                    }
+                }
+
+                // -------------------------------------------------------
+                // Step 9: Session active / Complete
+                // -------------------------------------------------------
+                if current-step == 9 : VerticalLayout {
+                    spacing: Theme.space-lg;
+
+                    Text {
+                        text: "You're All Set!";
+                        color: Theme.success;
+                        font-size: 28px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Your Citrate node is running.\nYou're earning 0.01 SALT per block.";
+                        color: Theme.text-secondary;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    if root.wallet-address != "" : Rectangle {
+                        height: 40px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        clip: true;
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            alignment: center;
+                            Text {
+                                text: "Wallet: " + root.wallet-address;
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+
+                    OnboardingButton {
+                        label: "Open Dashboard";
+                        primary: true;
+                        clicked => { root.complete(); }
+                    }
+                }
+
+                // Step indicator dots
+                Rectangle { height: Theme.space-lg; }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+
+                    for step-idx in 10 : Rectangle {
+                        width: step-idx == root.current-step ? 20px : 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: step-idx == root.current-step ? Theme.accent :
+                                    step-idx < root.current-step ? Theme.success : Theme.border;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,126 @@
+// Sidebar navigation — grouped nav items matching current GUI
+import { Theme } from "../theme.slint";
+
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked;
+
+    height: 36px;
+    background: active ? Theme.bg-tertiary : (touch.has-hover ? Theme.bg-tertiary : transparent);
+    border-radius: Theme.radius-md;
+    animate background { duration: 150ms; easing: ease-in-out; }
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        spacing: Theme.space-sm;
+        alignment: start;
+
+        Text {
+            text: root.label;
+            color: active ? Theme.accent : (touch.has-hover ? Theme.text : Theme.text-secondary);
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            animate color { duration: 150ms; easing: ease-in-out; }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component NavGroup inherits VerticalLayout {
+    in property <string> title;
+
+    spacing: 2px;
+    padding-top: Theme.space-md;
+
+    Text {
+        text: root.title;
+        color: Theme.text-muted;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+        horizontal-alignment: left;
+        x: Theme.space-lg;
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    in property <string> active-tab: "dashboard";
+    callback tab-changed(string);
+
+    width: Theme.sidebar-width;
+    background: Theme.bg-secondary;
+    border-width: 0px;
+
+    VerticalLayout {
+        padding: Theme.space-sm;
+        spacing: 0px;
+        alignment: start;
+
+        // Logo + brand
+        Rectangle {
+            height: 52px;
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                spacing: Theme.space-sm;
+                alignment: start;
+
+                Image {
+                    source: @image-url("../../assets/images/citrate-icon.png");
+                    width: 28px;
+                    height: 28px;
+                    image-fit: contain;
+                    y: 12px;
+                }
+
+                Text {
+                    text: "Citrate";
+                    color: Theme.accent;
+                    font-size: 18px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Blockchain group
+        NavGroup {
+            title: "BLOCKCHAIN";
+            NavItem { label: "Dashboard"; active: root.active-tab == "dashboard"; clicked => { root.tab-changed("dashboard"); } }
+            NavItem { label: "Wallet"; active: root.active-tab == "wallet"; clicked => { root.tab-changed("wallet"); } }
+            NavItem { label: "DAG Explorer"; active: root.active-tab == "dag"; clicked => { root.tab-changed("dag"); } }
+        }
+
+        // AI group
+        NavGroup {
+            title: "AI";
+            NavItem { label: "Chat"; active: root.active-tab == "chat"; clicked => { root.tab-changed("chat"); } }
+            NavItem { label: "Models"; active: root.active-tab == "models"; clicked => { root.tab-changed("models"); } }
+        }
+
+        // Developer group
+        NavGroup {
+            title: "DEVELOPER";
+            NavItem { label: "Contracts"; active: root.active-tab == "contracts"; clicked => { root.tab-changed("contracts"); } }
+            NavItem { label: "Compute"; active: root.active-tab == "compute"; clicked => { root.tab-changed("compute"); } }
+            NavItem { label: "Storage"; active: root.active-tab == "storage"; clicked => { root.tab-changed("storage"); } }
+            NavItem { label: "Studio"; active: root.active-tab == "studio"; clicked => { root.tab-changed("studio"); } }
+        }
+
+        // Learning group
+        NavGroup {
+            title: "LEARNING";
+            NavItem { label: "Learn"; active: root.active-tab == "learning"; clicked => { root.tab-changed("learning"); } }
+        }
+
+        // Spacer
+        Rectangle { vertical-stretch: 1; }
+
+        // Settings at bottom
+        NavItem { label: "Settings"; active: root.active-tab == "settings"; clicked => { root.tab-changed("settings"); } }
+    }
+}

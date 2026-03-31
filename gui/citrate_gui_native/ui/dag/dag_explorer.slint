@@ -1,0 +1,220 @@
+// DAG Explorer — block list + block detail + search
+import { Theme } from "../theme.slint";
+
+export struct BlockData {
+    hash: string,
+    height: int,
+    timestamp: string,
+    tx-count: int,
+    selected-parent: string,
+    blue-score: int,
+    proposer: string,
+}
+
+component BlockListRow inherits Rectangle {
+    in property <int> height-val;
+    in property <string> hash-short;
+    in property <string> time-text;
+    in property <int> tx-count;
+    in property <bool> selected: false;
+    callback clicked;
+
+    height: 36px;
+    background: selected ? Theme.bg-tertiary : transparent;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-lg;
+
+        Text { text: "#" + root.height-val; color: Theme.text; font-size: 12px; font-weight: 600; min-width: 80px; vertical-alignment: center; }
+        Text { text: root.hash-short; color: Theme.text-muted; font-size: 12px; min-width: 100px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.tx-count + " txns"; color: Theme.text-muted; font-size: 12px; min-width: 60px; vertical-alignment: center; }
+        Text { text: root.time-text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+export component DagExplorer inherits Rectangle {
+    in property <int> current-height: 0;
+    in property <bool> loading: false;
+    in property <string> error: "";
+
+    // Detail view
+    in property <bool> show-detail: false;
+    in property <string> detail-hash: "";
+    in property <int> detail-height: 0;
+    in property <string> detail-timestamp: "";
+    in property <int> detail-tx-count: 0;
+    in property <string> detail-parent: "";
+    in property <int> detail-blue-score: 0;
+    in property <string> detail-proposer: "";
+
+    in-out property <string> search-query: "";
+
+    callback search(string);
+    callback select-block(int);
+    callback back-to-list;
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-lg;
+
+        // Header + search
+        HorizontalLayout {
+            spacing: Theme.space-md;
+
+            Text {
+                text: "DAG Explorer";
+                color: Theme.text;
+                font-size: 24px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            // Search
+            Rectangle {
+                width: 280px;
+                height: 36px;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.bg-secondary;
+
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    TextInput {
+                        text <=> root.search-query;
+                        font-size: 12px;
+                        color: Theme.text;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        accepted => { root.search(root.search-query); }
+                    }
+
+                    Rectangle {
+                        width: 50px;
+                        Text { text: "Search"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.search(root.search-query); } }
+                    }
+                }
+            }
+        }
+
+        // Error state
+        if root.error != "" : Rectangle {
+            height: 40px;
+            border-radius: Theme.radius-md;
+            background: Theme.error;
+
+            Text { text: root.error; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+        }
+
+        // Block detail view
+        if root.show-detail : Rectangle {
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            vertical-stretch: 1;
+            clip: true;
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                // Back button
+                HorizontalLayout {
+                    Rectangle {
+                        width: 60px;
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        Text { text: "← Back"; color: Theme.text-secondary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.back-to-list(); } }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                Text { text: "Block #" + root.detail-height; color: Theme.text; font-size: 20px; font-weight: 600; }
+
+                // Fields
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+
+                    HorizontalLayout { Text { text: "Hash"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-hash; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Height"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-height; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Timestamp"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-timestamp; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Transactions"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-tx-count; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Selected Parent"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-parent; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Blue Score"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-blue-score; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
+                    HorizontalLayout { Text { text: "Proposer"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-proposer; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                }
+            }
+        }
+
+        // Block list view
+        if !root.show-detail : Rectangle {
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            vertical-stretch: 1;
+            clip: true;
+
+            VerticalLayout {
+                // Header
+                Rectangle {
+                    height: 32px;
+                    background: Theme.bg-secondary;
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-lg;
+
+                        Text { text: "Height"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 80px; vertical-alignment: center; }
+                        Text { text: "Hash"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 100px; vertical-alignment: center; }
+                        Text { text: "Txns"; color: Theme.text-muted; font-size: 11px; font-weight: 500; min-width: 60px; vertical-alignment: center; }
+                        Text { text: "Time"; color: Theme.text-muted; font-size: 11px; font-weight: 500; vertical-alignment: center; }
+                    }
+                }
+
+                if root.loading : Text {
+                    text: "Loading blocks...";
+                    color: Theme.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                if !root.loading && root.current-height == 0 : Text {
+                    text: "No blocks yet — start node to see blocks";
+                    color: Theme.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // Recent blocks (generated from current height)
+                if !root.loading && root.current-height > 0 : Flickable {
+                    VerticalLayout {
+                        for i in min(root.current-height, 20) : BlockListRow {
+                            height-val: root.current-height - i;
+                            hash-short: "block...";
+                            time-text: i * 5 + "s ago";
+                            tx-count: 0;
+                            clicked => { root.select-block(root.current-height - i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

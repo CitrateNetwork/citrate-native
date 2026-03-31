@@ -1,0 +1,130 @@
+// File explorer — tree view with expand/collapse, file type icons, git status
+import { Theme } from "../theme.slint";
+import { FileTreeNodeData } from "ide_structs.slint";
+
+component FileTreeRow inherits Rectangle {
+    in property <string> name;
+    in property <string> path;
+    in property <bool> is-directory;
+    in property <bool> is-expanded: false;
+    in property <int> depth: 0;
+    in property <string> file-type: "Unknown";
+    in property <string> git-status: "";
+    in property <bool> is-selected: false;
+    callback clicked;
+
+    height: 26px;
+    background: root.is-selected ? Theme.bg-tertiary : transparent;
+
+    HorizontalLayout {
+        padding-left: root.depth * 16px + 8px;
+        spacing: 6px;
+        alignment: start;
+
+        Text {
+            text: root.is-directory ? (root.is-expanded ? "▾" : "▸") : " ";
+            color: Theme.text-muted;
+            font-size: 10px;
+            width: 12px;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.is-directory ? "📁" :
+                  root.file-type == "Solidity" ? "◆" :
+                  root.file-type == "Rust" ? "⚙" :
+                  root.file-type == "TypeScript" || root.file-type == "JavaScript" ? "○" :
+                  root.file-type == "JSON" ? "■" :
+                  root.file-type == "Markdown" ? "□" :
+                  "○";
+            color: root.is-directory ? Theme.accent :
+                   root.file-type == "Solidity" ? #a78bfa :
+                   root.file-type == "Rust" ? #f97316 :
+                   Theme.text-muted;
+            font-size: 12px;
+            width: 16px;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.name;
+            color: root.is-selected ? Theme.text : Theme.text-secondary;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        if root.git-status != "" : Text {
+            text: root.git-status == "Modified" ? "M" :
+                  root.git-status == "Added" ? "A" :
+                  root.git-status == "Deleted" ? "D" :
+                  root.git-status == "Untracked" ? "U" : "?";
+            color: root.git-status == "Modified" ? Theme.warning :
+                   root.git-status == "Added" ? Theme.success :
+                   root.git-status == "Deleted" ? Theme.error :
+                   Theme.text-muted;
+            font-size: 11px;
+            font-weight: 600;
+            width: 16px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+export component FileExplorer inherits Rectangle {
+    in property <string> root-path: "";
+    in property <[FileTreeNodeData]> nodes: [];
+    in property <string> selected-path: "";
+
+    callback file-clicked(string);
+    callback dir-toggled(string);
+
+    background: Theme.bg-secondary;
+
+    VerticalLayout {
+        Rectangle {
+            height: 32px;
+            background: Theme.bg-tertiary;
+
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                Text {
+                    text: "EXPLORER";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                for node in root.nodes : FileTreeRow {
+                    name: node.name;
+                    path: node.path;
+                    is-directory: node.is-directory;
+                    is-expanded: node.is-expanded;
+                    depth: node.depth;
+                    file-type: node.file-type;
+                    git-status: node.git-status;
+                    is-selected: node.path == root.selected-path;
+                    clicked => {
+                        if node.is-directory {
+                            root.dir-toggled(node.path);
+                        } else {
+                            root.file-clicked(node.path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

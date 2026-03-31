@@ -1,0 +1,124 @@
+// Section 4: AI Configuration — provider toggles, API keys, local model
+import { Theme } from "../theme.slint";
+import { SectionHeader, ActionButton } from "settings_primitives.slint";
+
+component ProviderRow inherits Rectangle {
+    in property <string> name;
+    in-out property <bool> enabled: false;
+    in-out property <string> api-key: "";
+    callback toggled;
+    callback save-key(string);
+
+    // Accordion: expand height when enabled to show the API key input
+    min-height: root.enabled ? 92px : 48px;
+    border-radius: Theme.radius-md;
+    background: Theme.bg-secondary;
+    border-width: 1px;
+    border-color: root.enabled ? Theme.accent : Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-sm;
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        HorizontalLayout {
+            alignment: space-between;
+            Text { text: root.name; color: Theme.text; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+            Text {
+                text: root.enabled ? "Enabled" : "Disabled";
+                color: root.enabled ? Theme.success : Theme.text-muted;
+                font-size: 10px; vertical-alignment: center;
+            }
+            Rectangle {
+                width: 36px; height: 20px; border-radius: 10px;
+                background: root.enabled ? Theme.accent : Theme.bg-tertiary;
+                Rectangle {
+                    width: 14px; height: 14px; border-radius: 7px;
+                    background: #ffffff;
+                    x: root.enabled ? 19px : 3px; y: 3px;
+                }
+                TouchArea { clicked => { root.toggled(); } }
+            }
+        }
+
+        if root.enabled : HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle {
+                height: 28px; horizontal-stretch: 1;
+                border-radius: Theme.radius-sm;
+                border-width: 1px; border-color: Theme.border;
+                background: Theme.bg;
+                TextInput {
+                    text <=> root.api-key;
+                    font-size: 11px; color: Theme.text;
+                    x: Theme.space-sm;
+                    width: parent.width - Theme.space-lg;
+                    vertical-alignment: center;
+                    input-type: password;
+                }
+            }
+            ActionButton { width: 40px; label: "Save"; clicked => { root.save-key(root.api-key); } }
+        }
+    }
+}
+
+export component AIConfigSection inherits VerticalLayout {
+    in property <string> active-provider: "None configured";
+    in property <bool> has-local-model: false;
+    in property <string> local-model-name: "";
+    in-out property <bool> openai-enabled: false;
+    in-out property <bool> anthropic-enabled: false;
+    in-out property <bool> gemini-enabled: false;
+    in-out property <bool> xai-enabled: false;
+
+    callback save-ai-key(string, string);
+    callback scan-models;
+    callback download-model;
+
+    spacing: Theme.space-md;
+
+    SectionHeader { text: "AI Configuration"; }
+
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        Text { text: "Active:"; color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; }
+        Text {
+            text: root.has-local-model ? root.local-model-name : root.active-provider;
+            color: root.has-local-model ? Theme.success : Theme.text-muted;
+            font-size: 12px; vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+
+    ProviderRow { name: "OpenAI"; enabled <=> root.openai-enabled; toggled => { root.openai-enabled = !root.openai-enabled; } save-key(key) => { root.save-ai-key("openai", key); } }
+    ProviderRow { name: "Anthropic"; enabled <=> root.anthropic-enabled; toggled => { root.anthropic-enabled = !root.anthropic-enabled; } save-key(key) => { root.save-ai-key("anthropic", key); } }
+    ProviderRow { name: "Google Gemini"; enabled <=> root.gemini-enabled; toggled => { root.gemini-enabled = !root.gemini-enabled; } save-key(key) => { root.save-ai-key("gemini", key); } }
+    ProviderRow { name: "xAI (Grok)"; enabled <=> root.xai-enabled; toggled => { root.xai-enabled = !root.xai-enabled; } save-key(key) => { root.save-ai-key("xai", key); } }
+
+    // Local model
+    VerticalLayout {
+        spacing: Theme.space-sm;
+        Text { text: "Local Model"; color: Theme.text-secondary; font-size: 12px; font-weight: 500; }
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle {
+                height: 32px; horizontal-stretch: 1;
+                border-radius: Theme.radius-md;
+                border-width: 1px; border-color: Theme.border;
+                background: Theme.bg-secondary;
+                Text {
+                    text: root.has-local-model ? root.local-model-name : "No local model";
+                    color: root.has-local-model ? Theme.text : Theme.text-muted;
+                    font-size: 11px; x: Theme.space-md; vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            ActionButton { width: 50px; label: "Scan"; clicked => { root.scan-models(); } }
+        }
+
+        ActionButton { label: "Download Qwen 2.5 7B (~4.7 GB)"; clicked => { root.download-model(); } }
+    }
+}

@@ -1,0 +1,96 @@
+// Shared primitive components for all settings sections.
+// Import this in each section file.
+import { Theme } from "../theme.slint";
+
+export component SettingsRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    height: 32px;
+    HorizontalLayout {
+        alignment: space-between;
+        Text { text: root.label; color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; min-width: 100px; }
+        Text { text: root.value; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; horizontal-alignment: right; }
+    }
+}
+
+export component SectionHeader inherits Text {
+    color: Theme.text;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+export component SectionDivider inherits Rectangle {
+    height: 1px;
+    background: Theme.border-subtle;
+}
+
+export component ToggleRow inherits Rectangle {
+    in property <string> label;
+    in property <string> description: "";
+    in-out property <bool> enabled: false;
+    callback toggled;
+
+    height: description == "" ? 36px : 48px;
+
+    HorizontalLayout {
+        alignment: space-between;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text { text: root.label; color: Theme.text; font-size: 12px; overflow: elide; }
+            if root.description != "" : Text { text: root.description; color: Theme.text-muted; font-size: 10px; overflow: elide; }
+        }
+
+        Rectangle {
+            width: 40px;
+            height: 22px;
+            border-radius: 11px;
+            background: root.enabled ? Theme.accent : Theme.bg-tertiary;
+            y: (parent.height - self.height) / 2;
+            animate background { duration: 200ms; easing: ease-in-out; }
+
+            Rectangle {
+                width: 16px; height: 16px; border-radius: 8px;
+                background: #ffffff;
+                x: root.enabled ? 21px : 3px;
+                y: 3px;
+                animate x { duration: 200ms; easing: ease-in-out; }
+            }
+
+            TouchArea { clicked => { root.toggled(); } }
+        }
+    }
+}
+
+export component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <string> button-color: "accent"; // "accent", "error", "success"
+    in property <bool> disabled: false;
+    callback clicked;
+
+    height: 32px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent);
+    background: touch.has-hover && !root.disabled
+        ? (button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent))
+        : transparent;
+    opacity: root.disabled ? 0.5 : 1.0;
+    animate background { duration: 150ms; easing: ease-in-out; }
+
+    Text {
+        text: root.label;
+        color: touch.has-hover && !root.disabled
+            ? #000000
+            : (button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent));
+        font-size: 11px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+        animate color { duration: 150ms; easing: ease-in-out; }
+    }
+
+    touch := TouchArea { clicked => { if !root.disabled { root.clicked(); } } }
+}

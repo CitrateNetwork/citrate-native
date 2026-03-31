@@ -1,0 +1,257 @@
+// Storage view — IPFS daemon management, pinned files, peers
+// User-facing name: "Storage" (not "IPFS" — friendlier)
+import { Theme } from "../theme.slint";
+
+export component StorageView inherits Rectangle {
+    // Daemon state
+    in property <bool> daemon-running: false;
+    in property <string> daemon-status: "Not started";
+    in property <int> peer-count: 0;
+    in property <int> pin-count: 0;
+    in property <string> repo-size: "0 MB";
+    in property <string> daemon-version: "";
+
+    // Tab state
+    in-out property <string> active-tab: "files";
+
+    // Callbacks
+    callback start-daemon;
+    callback stop-daemon;
+    callback upload-file;
+    callback pin-cid(string);
+    callback unpin-cid(string);
+    callback refresh;
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // Header
+            HorizontalLayout {
+                alignment: space-between;
+
+                Text { text: "Storage"; color: Theme.text; font-size: 24px; font-weight: 600; vertical-alignment: center; }
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+
+                    // Status indicator
+                    HorizontalLayout {
+                        spacing: Theme.space-xs;
+                        Rectangle {
+                            width: 8px; height: 8px; border-radius: 4px; y: 6px;
+                            background: root.daemon-running ? Theme.success : Theme.text-muted;
+                        }
+                        Text {
+                            text: root.daemon-running ? "Online" : "Offline";
+                            color: root.daemon-running ? Theme.success : Theme.text-muted;
+                            font-size: 12px; vertical-alignment: center;
+                        }
+                    }
+
+                    // Start/Stop button
+                    Rectangle {
+                        height: 32px; width: 80px;
+                        border-radius: Theme.radius-md;
+                        background: root.daemon-running ? Theme.error : Theme.success;
+                        Text {
+                            text: root.daemon-running ? "Stop" : "Start";
+                            color: #000000; font-size: 12px; font-weight: 600;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => {
+                                if root.daemon-running { root.stop-daemon(); }
+                                else { root.start-daemon(); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Stats cards
+            HorizontalLayout {
+                spacing: Theme.space-md;
+
+                // Peers
+                Rectangle {
+                    horizontal-stretch: 1; height: 72px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    clip: true;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "PEERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.peer-count; color: Theme.text; font-size: 20px; font-weight: 600; }
+                    }
+                }
+
+                // Pinned files
+                Rectangle {
+                    horizontal-stretch: 1; height: 72px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    clip: true;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "PINNED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.pin-count; color: Theme.text; font-size: 20px; font-weight: 600; }
+                    }
+                }
+
+                // Repo size
+                Rectangle {
+                    horizontal-stretch: 1; height: 72px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    clip: true;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "REPO SIZE"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.repo-size; color: Theme.text; font-size: 20px; font-weight: 600; overflow: elide; }
+                    }
+                }
+            }
+
+            // Tab bar
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+
+                for tab-name in ["files", "pins", "peers"] : Rectangle {
+                    height: 32px; min-width: 70px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: root.active-tab == tab-name ? Theme.accent : Theme.border;
+                    background: root.active-tab == tab-name ? Theme.accent : transparent;
+                    Text {
+                        text: tab-name == "files" ? "Files" : (tab-name == "pins" ? "Pins" : "Peers");
+                        color: root.active-tab == tab-name ? #000000 : Theme.text-secondary;
+                        font-size: 12px; font-weight: 500;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    TouchArea { clicked => { root.active-tab = tab-name; } }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Refresh button
+                Rectangle {
+                    height: 32px; width: 70px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px; border-color: Theme.border;
+                    Text { text: "Refresh"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.refresh(); } }
+                }
+            }
+
+            // Content area
+            Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px; border-color: Theme.border-subtle;
+                vertical-stretch: 1;
+                min-height: 200px;
+                clip: true;
+
+                if !root.daemon-running : VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-md;
+                    padding: Theme.space-xl;
+
+                    Text { text: "Storage daemon is offline"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                    Text { text: "Start the daemon to manage files, pins, and peers."; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                }
+
+                // Files tab
+                if root.daemon-running && root.active-tab == "files" : VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    // Upload section — file dialog not yet available in Slint 1.9
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+
+                        Rectangle {
+                            height: 36px; horizontal-stretch: 1;
+                            border-radius: Theme.radius-md;
+                            background: Theme.text-muted;
+                            opacity: 0.5;
+                            Text { text: "Upload File (coming soon)"; color: #000000; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+
+                    Text { text: "File upload requires a native file dialog (coming in a future release)."; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "Use the Pins tab to pin content by CID, or upload via the IPFS CLI:"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "  ipfs add <file>"; color: Theme.accent; font-size: 11px; font-family: "monospace"; }
+                }
+
+                // Pins tab
+                if root.daemon-running && root.active-tab == "pins" : VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    Text { text: "Pinned Content"; color: Theme.text; font-size: 14px; font-weight: 500; }
+
+                    if root.pin-count == 0 : Text {
+                        text: "No pinned content. Upload a file or pin a CID to get started.";
+                        color: Theme.text-muted; font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    // Pin by CID input
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+
+                        Rectangle {
+                            height: 36px; horizontal-stretch: 1;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px; border-color: Theme.border;
+                            background: Theme.bg;
+                            pin-input := TextInput {
+                                font-size: 11px; color: Theme.text;
+                                x: Theme.space-md; width: parent.width - Theme.space-2xl;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            height: 36px; width: 50px;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px; border-color: Theme.accent;
+                            Text { text: "Pin"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.pin-cid(pin-input.text); pin-input.text = ""; } }
+                        }
+                    }
+                }
+
+                // Peers tab
+                if root.daemon-running && root.active-tab == "peers" : VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    Text { text: "Connected Peers"; color: Theme.text; font-size: 14px; font-weight: 500; }
+
+                    if root.peer-count == 0 : Text {
+                        text: "No peers connected. The daemon may still be discovering the network.";
+                        color: Theme.text-muted; font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.peer-count > 0 : Text {
+                        text: root.peer-count + " peers connected to the IPFS network";
+                        color: Theme.success; font-size: 12px;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,212 @@
+// Models view — local inventory + deploy + inference
+import { Theme } from "../theme.slint";
+
+component ModelCard inherits Rectangle {
+    in property <string> name;
+    in property <string> size;
+    in property <string> architecture;
+    in property <bool> loaded: false;
+    callback clicked;
+
+    height: 80px;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: root.loaded ? Theme.success : Theme.border-subtle;
+    clip: true;
+
+    HorizontalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+        alignment: space-between;
+
+        VerticalLayout {
+            spacing: Theme.space-xs;
+            alignment: center;
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                Text { text: root.name; color: Theme.text; font-size: 14px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                if root.loaded : Rectangle {
+                    width: 50px;
+                    height: 18px;
+                    border-radius: 9px;
+                    background: Theme.success;
+                    Text { text: "Loaded"; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                Text { text: root.architecture; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+                Text { text: root.size; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+            }
+        }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+export component ModelsView inherits Rectangle {
+    in property <bool> has-local-model: false;
+    in property <string> local-model-name: "";
+    in property <string> local-model-size: "";
+    in property <bool> model-loaded: false;
+    in property <int> on-chain-model-count: 0;
+    in property <string> model-ipfs-cid: "";
+    in property <bool> model-pinning: false;
+
+    callback load-model;
+    callback deploy-model;
+    callback run-inference;
+    callback browse-huggingface;
+    callback pin-model-to-ipfs;
+
+    background: Theme.bg;
+
+    Flickable {
+    VerticalLayout {
+        padding-top: Theme.space-lg;
+        padding-bottom: Theme.space-lg;
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-lg;
+
+        Text { text: "Models"; color: Theme.text; font-size: 24px; font-weight: 600; }
+
+        // Local models section
+        VerticalLayout {
+            spacing: Theme.space-md;
+
+            Text { text: "Local Models"; color: Theme.text-secondary; font-size: 14px; font-weight: 500; }
+
+            if root.has-local-model : ModelCard {
+                name: root.local-model-name;
+                size: root.local-model-size;
+                architecture: "GGUF";
+                loaded: root.model-loaded;
+                clicked => { root.load-model(); }
+            }
+
+            if !root.has-local-model : Rectangle {
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                border-width: 2px;
+                border-color: Theme.border;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-xs;
+                    Text { text: "No local models"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+                    Text { text: "Download a model from HuggingFace or bundle one with the installer."; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+                }
+            }
+
+            // IPFS pinning for local model
+            if root.has-local-model : Rectangle {
+                min-height: 48px;
+                border-radius: Theme.radius-md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-md;
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        if root.model-ipfs-cid == "" && !root.model-pinning : Text {
+                            text: "Pin model to IPFS for decentralized storage";
+                            color: Theme.text-muted; font-size: 11px;
+                        }
+                        if root.model-pinning : Text {
+                            text: "Pinning to IPFS...";
+                            color: Theme.accent; font-size: 11px;
+                        }
+                        if root.model-ipfs-cid != "" : Text {
+                            text: "IPFS: " + root.model-ipfs-cid;
+                            color: Theme.success; font-size: 11px; overflow: elide;
+                        }
+                    }
+
+                    if root.model-ipfs-cid == "" : Rectangle {
+                        width: 80px; height: 28px;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: pin-btn.has-hover ? Theme.accent : Theme.border;
+                        background: pin-btn.has-hover ? Theme.bg-tertiary : transparent;
+                        animate background { duration: 150ms; easing: ease-in-out; }
+                        opacity: root.model-pinning ? 0.5 : 1.0;
+
+                        Text { text: "Pin"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                        pin-btn := TouchArea { clicked => { if !root.model-pinning { root.pin-model-to-ipfs(); } } }
+                    }
+                }
+            }
+        }
+
+        // On-chain models section
+        VerticalLayout {
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text { text: "On-Chain Registry"; color: Theme.text-secondary; font-size: 14px; font-weight: 500; vertical-alignment: center; }
+                Text { text: root.on-chain-model-count + " models"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+            }
+
+            Rectangle {
+                min-height: 60px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                clip: true;
+
+                Text {
+                    text: root.on-chain-model-count > 0 ?
+                        "Query on-chain model registry to see deployed models." :
+                        "No models registered on-chain yet.";
+                    color: Theme.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // Actions
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+
+            Rectangle {
+                height: 38px;
+                horizontal-stretch: 1;
+                border-radius: Theme.radius-md;
+                background: hf-btn.has-hover ? Theme.accent-hover : Theme.accent;
+                animate background { duration: 150ms; easing: ease-in-out; }
+                Text { text: "Browse HuggingFace"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                hf-btn := TouchArea { clicked => { root.browse-huggingface(); } }
+            }
+
+            Rectangle {
+                height: 38px;
+                horizontal-stretch: 1;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: deploy-btn.has-hover ? Theme.accent : Theme.border;
+                background: deploy-btn.has-hover ? Theme.bg-tertiary : transparent;
+                animate background { duration: 150ms; easing: ease-in-out; }
+                animate border-color { duration: 150ms; easing: ease-in-out; }
+                Text { text: "Deploy Model"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                deploy-btn := TouchArea { clicked => { root.deploy-model(); } }
+            }
+        }
+    }
+    }
+}

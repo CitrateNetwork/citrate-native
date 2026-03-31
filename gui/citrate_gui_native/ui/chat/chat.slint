@@ -1,0 +1,291 @@
+// Chat view — traditional Q&A chatbot layout
+// Messages scroll in a thread as individual bubbles, input stays pinned at bottom
+import { Theme } from "../theme.slint";
+
+export struct ChatMessageData {
+    role: string,       // "user" or "assistant"
+    content: string,
+}
+
+component MessageBubble inherits Rectangle {
+    in property <string> role: "user";
+    in property <string> content;
+
+    min-height: 36px;
+    border-radius: Theme.radius-lg;
+    background: root.role == "user" ? Theme.bg-tertiary : Theme.surface;
+    border-width: root.role == "assistant" ? 1px : 0px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding-top: Theme.space-sm;
+        padding-bottom: Theme.space-sm;
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-xs;
+
+        Text {
+            text: root.role == "user" ? "You" : "Citrate AI";
+            color: root.role == "user" ? Theme.text-muted : Theme.accent;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        Text {
+            text: root.content;
+            color: Theme.text;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component ToolApprovalCard inherits Rectangle {
+    in property <string> tool-name;
+    in property <string> tool-description;
+    callback approve;
+    callback reject;
+
+    min-height: 60px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.warning;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.warning; y: 4px; }
+            Text { text: "Tool: " + root.tool-name; color: Theme.warning; font-size: 12px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+        }
+
+        Text { text: root.tool-description; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle {
+                height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.success;
+                Text { text: "Approve"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.approve(); } }
+            }
+            Rectangle {
+                height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.error;
+                Text { text: "Reject"; color: Theme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.reject(); } }
+            }
+        }
+    }
+}
+
+export component ChatView inherits Rectangle {
+    in property <bool> model-loaded: false;
+    in property <string> model-name: "No model";
+    in property <bool> thinking: false;
+    in property <string> last-response: "";
+    in property <string> error: "";
+    in property <[ChatMessageData]> messages: [];
+    in-out property <string> user-input: "";
+
+    in property <bool> tool-pending: false;
+    in property <string> tool-name: "";
+    in property <string> tool-description: "";
+
+    callback send-message(string);
+    callback approve-tool;
+    callback reject-tool;
+
+    background: Theme.bg;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: 0px;
+
+        // ── Header ──
+        HorizontalLayout {
+            height: 36px;
+            spacing: Theme.space-md;
+
+            Text { text: "Chat"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                alignment: center;
+                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.model-loaded ? Theme.success : Theme.text-muted; }
+                Text { text: root.model-name; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; overflow: elide; max-width: 200px; }
+            }
+        }
+
+        Rectangle { height: Theme.space-sm; }
+
+        // ── Message Thread ── (scrollable, fills available space)
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            clip: true;
+
+            thread := Flickable {
+                // Viewport height tracks the inner layout so the Flickable scrolls
+                viewport-height: thread-content.preferred-height;
+                // Auto-scroll: pin to bottom so newest messages are always visible
+                viewport-y: min(0px, self.height - self.viewport-height);
+
+                thread-content := VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    // Welcome state — show when no messages exist
+                    if root.messages.length == 0 && root.last-response == "" && !root.thinking : VerticalLayout {
+                        alignment: center;
+                        min-height: 200px;
+                        spacing: Theme.space-md;
+
+                        Text {
+                            text: root.model-loaded ? "Ask me anything" : "No model loaded";
+                            color: Theme.text-muted;
+                            font-size: 16px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                        }
+
+                        if !root.model-loaded : Text {
+                            text: "Go to Settings > AI Configuration to configure a provider or download a local model.";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+
+                        if root.model-loaded : VerticalLayout {
+                            spacing: Theme.space-xs;
+                            Text { text: "Try:"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+                            Text { text: "\"What is SALT?\""; color: Theme.accent; font-size: 12px; horizontal-alignment: center; }
+                            Text { text: "\"How does GhostDAG consensus work?\""; color: Theme.accent; font-size: 12px; horizontal-alignment: center; }
+                        }
+                    }
+
+                    // Conversation — individual message bubbles
+                    for msg in root.messages : MessageBubble {
+                        role: msg.role;
+                        content: msg.content;
+                    }
+
+                    // Thinking indicator
+                    if root.thinking && root.error == "" : HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        padding-left: Theme.space-sm;
+                        Text { text: "●"; color: Theme.accent; font-size: 16px; vertical-alignment: center;
+                            animate color { duration: 800ms; easing: ease-in-out; }
+                        }
+                        Text { text: "Thinking..."; color: Theme.accent; font-size: 13px; vertical-alignment: center; }
+                    }
+
+                    // Tool approval
+                    if root.tool-pending : ToolApprovalCard {
+                        tool-name: root.tool-name;
+                        tool-description: root.tool-description;
+                        approve => { root.approve-tool(); }
+                        reject => { root.reject-tool(); }
+                    }
+
+                    // Error
+                    if root.error != "" : Rectangle {
+                        min-height: 40px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.error;
+
+                        VerticalLayout {
+                            padding: Theme.space-md;
+                            spacing: Theme.space-xs;
+                            HorizontalLayout {
+                                spacing: Theme.space-sm;
+                                Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.error; y: 3px; }
+                                Text { text: "Error"; color: Theme.error; font-size: 11px; font-weight: 600; }
+                            }
+                            Text { text: root.error; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: Theme.space-sm; }
+
+        // ── Input Area ── (pinned at bottom, grows with content, max 8 lines)
+        Rectangle {
+            min-height: 48px;
+            max-height: 160px;
+            border-radius: Theme.radius-lg;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.bg-secondary;
+
+            HorizontalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-sm;
+                padding-top: Theme.space-sm;
+                padding-bottom: Theme.space-sm;
+                spacing: Theme.space-sm;
+
+                // Text input — scrollable, grows up to max-height
+                Flickable {
+                    horizontal-stretch: 1;
+                    viewport-height: input-field.preferred-height;
+
+                    input-field := TextInput {
+                        text <=> root.user-input;
+                        font-size: 14px;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                        vertical-alignment: top;
+                        enabled: root.model-loaded && !root.thinking;
+                        accepted => {
+                            if root.user-input != "" {
+                                root.send-message(root.user-input);
+                                root.user-input = "";
+                            }
+                        }
+                    }
+                }
+
+                // Send button — always visible, vertically centered
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 18px;
+                    property <bool> can-send: root.model-loaded && !root.thinking && root.user-input != "";
+                    background: can-send
+                        ? (send-touch.has-hover ? Theme.accent-hover : Theme.accent)
+                        : Theme.bg-tertiary;
+                    animate background { duration: 150ms; easing: ease-in-out; }
+
+                    Text {
+                        text: "↑";
+                        color: root.model-loaded ? #000000 : Theme.text-muted;
+                        font-size: 18px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    send-touch := TouchArea {
+                        clicked => {
+                            if root.user-input != "" && root.model-loaded && !root.thinking {
+                                root.send-message(root.user-input);
+                                root.user-input = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
