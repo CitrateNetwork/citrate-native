@@ -52,6 +52,8 @@ pub struct AppCore {
     pub events: Arc<event_bus::EventBus>,
     /// Trail recorder — captures runtime events as canonical TrailEvents
     pub trail: Arc<trail::TrailRecorder>,
+    /// Pending approval store — manages tool approval requests with timeout
+    pub approvals: Arc<citrate_agent_core::delegation::PendingApprovalStore>,
     /// Application-wide configuration
     pub config: Arc<RwLock<AppConfig>>,
 }
@@ -253,6 +255,9 @@ impl AppCore {
         let learning = Arc::new(services::LearningService::new(events.clone(), &rpc_url));
         let compute = Arc::new(services::ComputeService::new(events.clone(), &rpc_url));
 
+        // Pending approval store — manages tool approval requests
+        let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
+
         // Trail recorder — subscribes to event bus and records canonical TrailEvents.
         // LogSeq path from config (if enabled).
         let logseq_path = {
@@ -296,6 +301,7 @@ impl AppCore {
             compute,
             events,
             trail,
+            approvals,
             config,
         }
     }

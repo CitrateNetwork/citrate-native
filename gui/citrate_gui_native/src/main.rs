@@ -2306,23 +2306,51 @@ fn main() {
     // =========================================================================
 
     // --- Chat: Approve Tool ---
+    // Resolves the pending approval in PendingApprovalStore, which unblocks
+    // the tool execution loop in send_message_with_tools().
+    let core = app_core.clone();
     let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
     ui.on_chat_approve_tool(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("Chat: tool approved by user");
-        // Tool approval will execute the pending action when the agent
-        // architecture is fully wired (FINAL-5). For now, log the approval.
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_chat_last_response("Tool approved. Executing...".into());
-        }
+        spawn_async(&rt_h, async move {
+            let pending = core.approvals.list_pending().await;
+            if let Some(req) = pending.first() {
+                let tool = req.tool_name.clone();
+                core.approvals.resolve(&req.request_id, true).await;
+                tracing::info!("Chat: resolved approval for '{}' → approved", tool);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_chat_tool_pending(false);
+                    }
+                });
+            }
+        });
     });
 
     // --- Chat: Reject Tool ---
+    let core = app_core.clone();
     let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
     ui.on_chat_reject_tool(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("Chat: tool rejected by user");
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_chat_last_response("Tool action cancelled.".into());
-        }
+        spawn_async(&rt_h, async move {
+            let pending = core.approvals.list_pending().await;
+            if let Some(req) = pending.first() {
+                let tool = req.tool_name.clone();
+                core.approvals.resolve(&req.request_id, false).await;
+                tracing::info!("Chat: resolved approval for '{}' → denied", tool);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_chat_tool_pending(false);
+                    }
+                });
+            }
+        });
     });
 
     // =========================================================================
