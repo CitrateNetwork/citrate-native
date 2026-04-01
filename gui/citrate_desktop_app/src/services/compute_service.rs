@@ -55,8 +55,8 @@ impl RpcComputeBackend {
 }
 
 /// ComputeMarketplace contract address — deployed on testnet (chain 40204).
-/// Deployed 2026-03-31 via cast send.
-const COMPUTE_CONTRACT: Option<&str> = Some("0xCcc1eF0fbA6399E5173213273BaA78D39ec30Dc0");
+/// Re-genesis 2026-04-01.
+const COMPUTE_CONTRACT: Option<&str> = Some("0xA6a4122126A75611eA06241E404327ADdFe8eB5e");
 
 #[async_trait::async_trait]
 impl ComputeBackend for RpcComputeBackend {
