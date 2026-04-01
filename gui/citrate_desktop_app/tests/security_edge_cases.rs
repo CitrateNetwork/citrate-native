@@ -54,7 +54,8 @@ fn test_app_core() -> AppCore {
     let blocks = Arc::new(citrate_desktop_app::services::BlockService::new(events.clone(), "https://rpc.citrate.ai"));
     let learning = Arc::new(citrate_desktop_app::services::LearningService::new(events.clone(), "https://rpc.citrate.ai"));
     let compute = Arc::new(citrate_desktop_app::services::ComputeService::new(events.clone(), "https://rpc.citrate.ai"));
-    AppCore { node, wallet, editor, file_explorer, git, compiler, terminal, chat, models, blocks, learning, compute, events, config }
+    let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new("test-session", None));
+    AppCore { node, wallet, editor, file_explorer, git, compiler, terminal, chat, models, blocks, learning, compute, events, trail, config }
 }
 
 /// Local test wallet backend for integration tests.

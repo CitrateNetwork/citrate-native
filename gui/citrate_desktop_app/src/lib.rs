@@ -50,6 +50,8 @@ pub struct AppCore {
     pub compute: Arc<services::ComputeService>,
     /// Event bus for background → UI notifications
     pub events: Arc<event_bus::EventBus>,
+    /// Trail recorder — captures runtime events as canonical TrailEvents
+    pub trail: Arc<trail::TrailRecorder>,
     /// Application-wide configuration
     pub config: Arc<RwLock<AppConfig>>,
 }
@@ -251,6 +253,34 @@ impl AppCore {
         let learning = Arc::new(services::LearningService::new(events.clone(), &rpc_url));
         let compute = Arc::new(services::ComputeService::new(events.clone(), &rpc_url));
 
+        // Trail recorder — subscribes to event bus and records canonical TrailEvents.
+        // LogSeq path from config (if enabled).
+        let logseq_path = {
+            let cfg = config.try_read().map(|c| {
+                if c.logseq_enabled {
+                    Some(c.logseq_graph_path.clone())
+                } else {
+                    None
+                }
+            }).unwrap_or(None);
+            cfg
+        };
+        let trail = Arc::new(trail::TrailRecorder::new(
+            &uuid::Uuid::new_v4().to_string(),
+            logseq_path,
+        ));
+        // Start the event bus subscriber in the background (if tokio runtime is available)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let trail_sub = trail.clone();
+            let events_sub = events.clone();
+            handle.spawn(async move {
+                let mut rx = events_sub.subscribe();
+                while let Ok(event) = rx.recv().await {
+                    trail_sub.record_app_event(&event).await;
+                }
+            });
+        }
+
         Self {
             node,
             wallet,
@@ -265,6 +295,7 @@ impl AppCore {
             learning,
             compute,
             events,
+            trail,
             config,
         }
     }
