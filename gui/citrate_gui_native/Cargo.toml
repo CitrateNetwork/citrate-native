@@ -28,6 +28,11 @@ hex = "0.4"
 # Wallet core (for SALT→wei conversion in send flow)
 citrate-wallet-core = { path = "../../wallet-core" }
 
+# Agent substrate (for approval requests in tool executor)
+citrate-agent-core = { path = "../../agent-core" }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
 # IPFS daemon and HTTP client for Storage tab
 citrate-storage = { path = "../../core/storage" }
 reqwest = { version = "0.12", features = ["json", "stream"] }

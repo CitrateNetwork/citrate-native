@@ -484,16 +484,30 @@ impl ChatService {
     }
 
     /// Pick the best model from a list of Ollama model names.
-    /// Prefers qwen, then mistral, then the first available model.
+    /// Prefers SMALL, FAST models over large ones for responsive chat.
+    /// A 7B model responds in seconds; a 72B model takes minutes.
     pub fn pick_best_model(models: &[String]) -> Option<String> {
-        // Preference order: qwen variants first (small, fast), then mistral
-        let preferences = ["qwen", "mistral", "llama", "phi", "gemma"];
-        for pref in &preferences {
-            if let Some(m) = models.iter().find(|m| m.to_lowercase().contains(pref)) {
+        // Prefer small/fast models explicitly — order matters
+        let fast_models = [
+            "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b",
+            "mistral:7b", "mistral:latest",
+            "llama3.1:8b", "llama3.2:3b",
+            "phi3:3.8b", "phi:latest",
+            "gemma:2b", "gemma:7b",
+        ];
+        for fast in &fast_models {
+            if let Some(m) = models.iter().find(|m| m.to_lowercase().contains(fast)) {
                 return Some(m.clone());
             }
         }
-        // Fallback: first available model
+        // If no small model found, pick any model that's NOT 70b/72b
+        if let Some(m) = models.iter().find(|m| {
+            let lower = m.to_lowercase();
+            !lower.contains("70b") && !lower.contains("72b") && !lower.contains("65b")
+        }) {
+            return Some(m.clone());
+        }
+        // Absolute fallback
         models.first().cloned()
     }
 

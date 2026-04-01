@@ -1364,12 +1364,18 @@ fn main() {
     // CHAT WIRING — AI agent via citrate_chatCompletion RPC
     // =========================================================================
 
+    // Shared active approval request ID — used to correlate approve/reject
+    // UI callbacks with the exact request submitted by the tool executor.
+    let active_approval_request_id: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
+    let active_req_for_chat = active_approval_request_id.clone();
+
     let core = app_core.clone();
     let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_chat_send(move |message| {
         let core = core.clone();
         let ui_w = ui_w.clone();
+        let active_req_for_chat = active_req_for_chat.clone();
         let msg = message.to_string();
 
         // Show thinking state and user's message immediately (doesn't block)
@@ -1397,21 +1403,79 @@ fn main() {
             // Get tool definitions from the registry for function calling
             let tool_defs = core.tool_registry.tool_definitions().await;
 
+            // Capture refs for the tool executor closure
+            let approvals = core.approvals.clone();
+            let ui_for_tools = ui_w.clone();
+            let active_req_id = active_req_for_chat.clone();
+
             // Use send_message_with_tools which includes the function-calling loop
             match core.chat.send_message_with_tools(
                 &msg,
                 tool_defs,
-                |tool_name, params| async move {
-                    // Tool executor — route to registered tools
-                    tracing::info!("Tool call: {} with {:?}", tool_name, params);
-                    match tool_name.as_str() {
-                        "check_balance" => {
-                            let addr = params.get("address")
-                                .and_then(|a| a.as_str())
-                                .unwrap_or("default");
-                            Ok(format!("Balance for {}: check the Wallet tab for your current SALT balance", addr))
+                |tool_name, params| {
+                    let approvals = approvals.clone();
+                    let ui_for_tools = ui_for_tools.clone();
+                    let active_req_id = active_req_id.clone();
+                    async move {
+                        tracing::info!("Tool call: {} with {:?}", tool_name, params);
+
+                        // Determine if this tool needs approval
+                        let is_high_risk = matches!(tool_name.as_str(),
+                            "send_tx" | "deploy_contract" | "file_write" | "file_edit" | "shell_exec"
+                        );
+
+                        if is_high_risk {
+                            // Submit approval request and show card in UI
+                            let request = citrate_agent_core::canonical::ApprovalRequest {
+                                request_id: uuid::Uuid::new_v4().to_string(),
+                                session_id: "live".to_string(),
+                                tool_name: tool_name.clone(),
+                                params: params.clone(),
+                                risk_level: "high".to_string(),
+                                created_at: chrono::Utc::now().to_rfc3339(),
+                                timeout_seconds: 30,
+                                resolved: None,
+                                resolved_at: None,
+                            };
+                            let req_id = request.request_id.clone();
+                            let tool_display = tool_name.clone();
+                            let param_display = serde_json::to_string_pretty(&params).unwrap_or_default();
+
+                            // Show approval card in UI
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_for_tools.upgrade() {
+                                    ui.set_chat_tool_pending(true);
+                                    ui.set_chat_tool_name(tool_display.into());
+                                    ui.set_chat_tool_description(param_display.into());
+                                }
+                            });
+
+                            // Store the request ID so approve/reject resolves the exact request
+                            *active_req_id.write().await = Some(req_id.clone());
+
+                            // Submit and wait for user decision
+                            let rx = approvals.submit(request).await;
+                            match rx.await {
+                                Ok(true) => {
+                                    tracing::info!("Tool '{}' approved (req: {})", tool_name, req_id);
+                                }
+                                _ => {
+                                    tracing::info!("Tool '{}' denied (req: {})", tool_name, req_id);
+                                    return Err(format!("Tool '{}' was denied by user", tool_name));
+                                }
+                            }
                         }
-                        _ => Err(format!("Tool '{}' not yet wired for live execution", tool_name)),
+
+                        // Execute the tool
+                        match tool_name.as_str() {
+                            "check_balance" => {
+                                let addr = params.get("address")
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("default");
+                                Ok(format!("Balance for {}: check the Wallet tab for your current SALT balance", addr))
+                            }
+                            _ => Err(format!("Tool '{}' not yet wired for live execution", tool_name)),
+                        }
                     }
                 },
             ).await {
@@ -2340,21 +2404,28 @@ fn main() {
     let core = app_core.clone();
     let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
+    // Use the shared active approval request ID from above
+    let active_req_for_approve = active_approval_request_id.clone();
+    let active_req_for_reject = active_approval_request_id.clone();
+
     ui.on_chat_approve_tool(move || {
         let core = core.clone();
         let ui_w = ui_w.clone();
+        let active_req = active_req_for_approve.clone();
         tracing::info!("Chat: tool approved by user");
         spawn_async(&rt_h, async move {
-            let pending = core.approvals.list_pending().await;
-            if let Some(req) = pending.first() {
-                let tool = req.tool_name.clone();
-                core.approvals.resolve(&req.request_id, true).await;
-                tracing::info!("Chat: resolved approval for '{}' → approved", tool);
+            let req_id = active_req.read().await.clone();
+            if let Some(id) = req_id {
+                core.approvals.resolve(&id, true).await;
+                tracing::info!("Chat: resolved approval {} → approved", id);
+                *active_req.write().await = None;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {
                         ui.set_chat_tool_pending(false);
                     }
                 });
+            } else {
+                tracing::warn!("Chat: approve clicked but no active request ID");
             }
         });
     });
@@ -2366,18 +2437,21 @@ fn main() {
     ui.on_chat_reject_tool(move || {
         let core = core.clone();
         let ui_w = ui_w.clone();
+        let active_req = active_req_for_reject.clone();
         tracing::info!("Chat: tool rejected by user");
         spawn_async(&rt_h, async move {
-            let pending = core.approvals.list_pending().await;
-            if let Some(req) = pending.first() {
-                let tool = req.tool_name.clone();
-                core.approvals.resolve(&req.request_id, false).await;
-                tracing::info!("Chat: resolved approval for '{}' → denied", tool);
+            let req_id = active_req.read().await.clone();
+            if let Some(id) = req_id {
+                core.approvals.resolve(&id, false).await;
+                tracing::info!("Chat: resolved approval {} → denied", id);
+                *active_req.write().await = None;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {
                         ui.set_chat_tool_pending(false);
                     }
                 });
+            } else {
+                tracing::warn!("Chat: reject clicked but no active request ID");
             }
         });
     });
