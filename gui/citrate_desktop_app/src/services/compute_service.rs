@@ -74,27 +74,28 @@ impl ComputeBackend for RpcComputeBackend {
             "params": [{"to": contract, "data": "0x46ce4175"}, "latest"],
             "id": 1,
         });
-        match self.client.post(&self.rpc_url).json(&body)
-            .timeout(std::time::Duration::from_secs(5))
-            .send().await
-        {
-            Ok(resp) => {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
-                        let hex = result.trim_start_matches("0x");
-                        let count = u64::from_str_radix(hex, 16).unwrap_or(0);
-                        tracing::info!("ComputeMarketplace: {} providers registered (contract live)", count);
-                    } else if json.get("error").is_some() {
-                        tracing::warn!("ComputeMarketplace: contract query returned error");
+        // Try local RPC first, fall back to testnet RPC for contract queries
+        // (embedded node doesn't serve HTTP RPC)
+        let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
+        for url in &urls {
+            match self.client.post(*url).json(&body)
+                .timeout(std::time::Duration::from_secs(5))
+                .send().await
+            {
+                Ok(resp) => {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
+                            let hex = result.trim_start_matches("0x");
+                            let count = u64::from_str_radix(hex, 16).unwrap_or(0);
+                            tracing::info!("ComputeMarketplace: {} providers registered (via {})", count, url);
+                            return Ok(Vec::new());
+                        }
                     }
                 }
-                Ok(Vec::new()) // Counts logged; full ABI decoding deferred
-            }
-            Err(e) => {
-                tracing::warn!("ComputeMarketplace: RPC unreachable — {}", e);
-                Ok(Vec::new())
+                Err(_) => continue,
             }
         }
+        Ok(Vec::new())
     }
 
     /// Data source: ComputeMarketplace.getProviderCount() via eth_call
@@ -109,22 +110,23 @@ impl ComputeBackend for RpcComputeBackend {
             "params": [{"to": contract, "data": "0x46ce4175"}, "latest"],
             "id": 1,
         });
-        match self.client.post(&self.rpc_url).json(&body)
-            .timeout(std::time::Duration::from_secs(5))
-            .send().await
-        {
-            Ok(resp) => {
+        let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
+        for url in &urls {
+            if let Ok(resp) = self.client.post(*url).json(&body)
+                .timeout(std::time::Duration::from_secs(5))
+                .send().await
+            {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
                         let hex = result.trim_start_matches("0x");
                         let count = u64::from_str_radix(hex, 16).unwrap_or(0);
-                        tracing::info!("ComputeMarketplace: {} providers (contract deployed, queried)", count);
+                        tracing::info!("ComputeMarketplace: {} providers (via {})", count, url);
+                        return Ok(Vec::new());
                     }
                 }
-                Ok(Vec::new())
             }
-            Err(_) => Ok(Vec::new()),
         }
+        Ok(Vec::new())
     }
 
     async fn get_job(&self, job_id: &str) -> Result<ComputeJob, AppError> {

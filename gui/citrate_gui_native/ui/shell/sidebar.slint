@@ -53,10 +53,14 @@ export component Sidebar inherits Rectangle {
     in property <bool> compact: false;
     callback tab-changed(string);
 
-    width: root.compact ? Theme.sidebar-collapsed : Theme.sidebar-width;
+    // In compact mode, expand on hover (with smooth animation)
+    property <bool> hovered: sidebar-hover.has-hover;
+    width: root.compact ? (root.hovered ? Theme.sidebar-width : Theme.sidebar-collapsed) : Theme.sidebar-width;
     background: Theme.bg-secondary;
     border-width: 0px;
-    animate width { duration: 200ms; easing: ease-in-out; }
+    animate width { duration: 250ms; easing: ease-in-out; }
+
+    sidebar-hover := TouchArea {}
 
     VerticalLayout {
         padding: Theme.space-sm;

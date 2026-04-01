@@ -1601,6 +1601,9 @@ fn main() {
     ui.on_settings_set_theme(move |mode| {
         let mode_str = mode.to_string();
         tracing::info!("Settings: theme = {}", mode_str);
+        if mode_str != "dark" {
+            tracing::warn!("Settings: '{}' theme not yet implemented — only dark mode is available", mode_str);
+        }
         let core = core.clone();
         spawn_async(&rt_h, async move {
             let mut config = core.config.write().await;

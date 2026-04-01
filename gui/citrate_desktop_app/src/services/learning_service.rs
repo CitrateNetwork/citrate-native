@@ -88,22 +88,24 @@ impl LearningBackend for RpcLearningBackend {
             "params": [{"to": contract, "data": "0x18e56131"}, "latest"],
             "id": 1,
         });
-        match self.client.post(&self.rpc_url).json(&body)
-            .timeout(std::time::Duration::from_secs(5))
-            .send().await
-        {
-            Ok(resp) => {
+        // Try local RPC first, fall back to testnet for contract queries
+        let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
+        for url in &urls {
+            if let Ok(resp) = self.client.post(*url).json(&body)
+                .timeout(std::time::Duration::from_secs(5))
+                .send().await
+            {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
                         let count = u64::from_str_radix(result.trim_start_matches("0x"), 16)
                             .unwrap_or(0);
-                        tracing::info!("LearningPool: {} pools on-chain", count);
+                        tracing::info!("LearningPool: {} pools on-chain (via {})", count, url);
+                        return Ok(Vec::new());
                     }
                 }
-                Ok(Vec::new()) // Full ABI decoding needed for pool details
             }
-            Err(_) => Ok(Vec::new()),
         }
+        Ok(Vec::new())
     }
 
     async fn get_pool(&self, pool_id: &str) -> Result<PoolInfo, AppError> {
