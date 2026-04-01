@@ -34,13 +34,15 @@ pub trait WalletBackend: Send + Sync {
     }
     /// Update signing chain ID for environment switching
     fn set_chain_id(&self, _chain_id: u64) {}
+    /// Update RPC URL target for environment switching
+    fn set_rpc_url(&self, _url: &str) {}
 }
 
 /// Production wallet backend — delegates to citrate-wallet-core for real
 /// Argon2+AES-GCM key management, BIP39 mnemonics, and transaction signing.
 pub struct WalletCoreBackend {
     key_manager: Arc<citrate_wallet_core::KeyManager>,
-    rpc_client: Arc<citrate_wallet_core::RpcClient>,
+    rpc_client: std::sync::RwLock<Arc<citrate_wallet_core::RpcClient>>,
     /// Chain ID for transaction signing — derived from AppConfig, not hardcoded.
     chain_id: std::sync::atomic::AtomicU64,
 }
@@ -51,7 +53,7 @@ impl WalletCoreBackend {
         let keystore_path = std::path::PathBuf::from(&config.keystore_path);
         Self {
             key_manager: Arc::new(citrate_wallet_core::KeyManager::new(&keystore_path)),
-            rpc_client: Arc::new(citrate_wallet_core::RpcClient::new(&config.rpc_url)),
+            rpc_client: std::sync::RwLock::new(Arc::new(citrate_wallet_core::RpcClient::new(&config.rpc_url))),
             chain_id: std::sync::atomic::AtomicU64::new(40204), // default testnet
         }
     }
@@ -59,6 +61,13 @@ impl WalletCoreBackend {
     /// Update the signing chain ID (called when environment switches).
     pub fn set_chain_id(&self, id: u64) {
         self.chain_id.store(id, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Update the RPC URL target (called when environment switches).
+    pub fn set_rpc_url(&self, url: &str) {
+        let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
+        *self.rpc_client.write().expect("rpc_client lock") = new_client;
+        tracing::info!("WalletCoreBackend: RPC target updated to {}", url);
     }
 
     fn get_chain_id(&self) -> u64 {
@@ -129,9 +138,11 @@ impl WalletBackend for WalletCoreBackend {
         let unified_key = self.key_manager.get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
+        // Clone the RPC client Arc so we don't hold the lock across await points
+        let rpc = self.rpc_client.read().expect("rpc lock").clone();
+
         // Get the nonce from the chain — MUST succeed, no fallback to 0
-        // F-03 fix: nonce fetch failure is a real error, not silent zero
-        let nonce = self.rpc_client.get_nonce(from).await
+        let nonce = rpc.get_nonce(from).await
             .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}. Is the node running?", e)))?;
 
         // Parse value — invalid amounts are errors, not silent zeros
@@ -160,7 +171,7 @@ impl WalletBackend for WalletCoreBackend {
 
         // Submit to RPC — MUST succeed, no local hash fallback
         // F-03 fix: failed submission is a real error, not a fake success
-        let tx_hash = self.rpc_client.send_raw_transaction(&signed.raw).await
+        let tx_hash = rpc.send_raw_transaction(&signed.raw).await
             .map_err(|e| AppError::Network(format!("Transaction submission failed: {}. The transaction was signed but not accepted by the network.", e)))?;
 
         Ok(tx_hash)
@@ -170,7 +181,8 @@ impl WalletBackend for WalletCoreBackend {
         let unified_key = self.key_manager.get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
-        let nonce = self.rpc_client.get_nonce(from).await
+        let rpc = self.rpc_client.read().expect("rpc lock").clone();
+        let nonce = rpc.get_nonce(from).await
             .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}", e)))?;
 
         let value: u128 = value_wei.parse()
@@ -197,7 +209,7 @@ impl WalletBackend for WalletCoreBackend {
             }
         };
 
-        let tx_hash = self.rpc_client.send_raw_transaction(&signed.raw).await
+        let tx_hash = rpc.send_raw_transaction(&signed.raw).await
             .map_err(|e| AppError::Network(format!("Transaction failed: {}", e)))?;
 
         Ok(tx_hash)
@@ -206,6 +218,12 @@ impl WalletBackend for WalletCoreBackend {
     fn set_chain_id(&self, chain_id: u64) {
         self.chain_id.store(chain_id, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("WalletCoreBackend: chain_id updated to {}", chain_id);
+    }
+
+    fn set_rpc_url(&self, url: &str) {
+        let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
+        *self.rpc_client.write().expect("rpc_client lock") = new_client;
+        tracing::info!("WalletCoreBackend: RPC target updated to {}", url);
     }
 }
 
@@ -447,6 +465,11 @@ impl WalletService {
     /// Update the signing chain ID — called on environment switch.
     pub fn set_chain_id(&self, chain_id: u64) {
         self.backend.set_chain_id(chain_id);
+    }
+
+    /// Update the RPC URL target — called on environment switch.
+    pub fn set_rpc_url(&self, url: &str) {
+        self.backend.set_rpc_url(url);
     }
 
     /// Get the primary account address (for reward configuration)

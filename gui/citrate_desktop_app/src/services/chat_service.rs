@@ -420,7 +420,7 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("mistral-7b-instruct-v0.3".to_string())),
-            max_tokens: 512,
+            max_tokens: 256,
             temperature: 0.7,
         }
     }
@@ -433,7 +433,7 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("mistral:latest".to_string())),
-            max_tokens: 512,
+            max_tokens: 256,
             temperature: 0.7,
         }
     }
@@ -446,7 +446,7 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new(model.to_string())),
-            max_tokens: 512,
+            max_tokens: 256,
             temperature: 0.7,
         }
     }
@@ -629,10 +629,13 @@ impl ChatService {
         if !system.is_empty() {
             request_messages.push(("system".to_string(), system.clone()));
         }
-        for msg in messages.iter() {
-            if msg.role == "user" || msg.role == "assistant" {
-                request_messages.push((msg.role.clone(), msg.content.clone()));
-            }
+        // Rolling window: only include last 10 messages to limit context growth
+        let relevant: Vec<_> = messages.iter()
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .collect();
+        let window_start = relevant.len().saturating_sub(10);
+        for msg in &relevant[window_start..] {
+            request_messages.push((msg.role.clone(), msg.content.clone()));
         }
 
         let request = ChatRequest {
@@ -714,10 +717,13 @@ impl ChatService {
             if !system.is_empty() {
                 request_messages.push(("system".to_string(), system.clone()));
             }
-            for msg in messages.iter() {
-                if msg.role == "user" || msg.role == "assistant" || msg.role == "tool" {
-                    request_messages.push((msg.role.clone(), msg.content.clone()));
-                }
+            // Rolling window: last 10 messages to limit context growth
+            let relevant: Vec<_> = messages.iter()
+                .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "tool")
+                .collect();
+            let window_start = relevant.len().saturating_sub(10);
+            for msg in &relevant[window_start..] {
+                request_messages.push((msg.role.clone(), msg.content.clone()));
             }
             drop(messages);
 
@@ -838,7 +844,7 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("gpt-4".to_string())),
-            max_tokens: 512,
+            max_tokens: 256,
             temperature: 0.7,
         }
     }

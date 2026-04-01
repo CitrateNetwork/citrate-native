@@ -1400,8 +1400,20 @@ fn main() {
 
         // Send async WITH tool execution — the live chat path uses send_message_with_tools
         spawn_async(&rt_h, async move {
-            // Get tool definitions from the registry for function calling
-            let tool_defs = core.tool_registry.tool_definitions().await;
+            // Only include tool definitions when the message looks like it needs tools.
+            // This avoids burdening the model with tool schemas on casual conversation.
+            let msg_lower = msg.to_lowercase();
+            let needs_tools = msg_lower.contains("balance") || msg_lower.contains("send")
+                || msg_lower.contains("deploy") || msg_lower.contains("check")
+                || msg_lower.contains("transaction") || msg_lower.contains("contract")
+                || msg_lower.contains("model") || msg_lower.contains("file")
+                || msg_lower.contains("git") || msg_lower.contains("run")
+                || msg_lower.contains("execute") || msg_lower.contains("search");
+            let tool_defs = if needs_tools {
+                core.tool_registry.tool_definitions().await
+            } else {
+                vec![]
+            };
 
             // Capture refs for the tool executor closure
             let approvals = core.approvals.clone();
@@ -2233,9 +2245,14 @@ fn main() {
             drop(config);
 
             // Update wallet runtime to match new environment
-            // This ensures signed transactions use the correct chain ID
+            // This ensures signed transactions use the correct chain ID AND RPC target
             core.wallet.set_chain_id(new_chain_id);
-            tracing::info!("Wallet chain_id updated to {} for {}", new_chain_id, lower);
+            let rpc_url = match lower.as_str() {
+                "devnet" => "http://127.0.0.1:8545".to_string(),
+                _ => "https://rpc.citrate.ai".to_string(),
+            };
+            core.wallet.set_rpc_url(&rpc_url);
+            tracing::info!("Wallet updated: chain_id={}, rpc={} for {}", new_chain_id, rpc_url, lower);
 
             // Restart node with new config (reads updated data_dir + chain_id)
             if let Err(e) = core.node.start().await {
