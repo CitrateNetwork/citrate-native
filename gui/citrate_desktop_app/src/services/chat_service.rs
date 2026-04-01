@@ -648,6 +648,130 @@ impl ChatService {
         Ok(assistant_msg)
     }
 
+    /// Send a message with tool execution support.
+    /// If the LLM responds with tool_calls, execute them through the provided
+    /// registry and return tool results as part of the conversation.
+    ///
+    /// Send a message with tool execution support. Implements the end-to-end
+    /// function-calling loop. The tool_executor closure is called for each tool
+    /// the LLM requests, receiving (name, params) and returning Ok(result) or
+    /// Err(error). Loops until the LLM stops requesting tools (max 5 iterations).
+    pub async fn send_message_with_tools<F, Fut>(
+        &self,
+        user_message: &str,
+        tool_defs: Vec<serde_json::Value>,
+        tool_executor: F,
+    ) -> Result<ChatMessage, AppError>
+    where
+        F: Fn(String, serde_json::Value) -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Add user message
+        let user_msg = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "user".to_string(),
+            content: user_message.to_string(),
+            timestamp: now,
+            tool_action: None,
+        };
+        self.messages.write().await.push(user_msg);
+
+        let mut iteration = 0;
+        let max_iterations = 5; // Safety: prevent infinite tool loops
+
+        loop {
+            iteration += 1;
+            if iteration > max_iterations {
+                tracing::warn!("Chat: tool loop exceeded {} iterations, stopping", max_iterations);
+                break;
+            }
+
+            // Build request with full history and tool definitions
+            let messages = self.messages.read().await;
+            let system = self.system_prompt.read().await;
+            let model = self.model.read().await.clone();
+
+            let mut request_messages = Vec::new();
+            if !system.is_empty() {
+                request_messages.push(("system".to_string(), system.clone()));
+            }
+            for msg in messages.iter() {
+                if msg.role == "user" || msg.role == "assistant" || msg.role == "tool" {
+                    request_messages.push((msg.role.clone(), msg.content.clone()));
+                }
+            }
+            drop(messages);
+
+            let request = ChatRequest {
+                model: model.clone(),
+                messages: request_messages,
+                max_tokens: self.max_tokens,
+                temperature: self.temperature,
+                tools: if tool_defs.is_empty() { None } else { Some(tool_defs.clone()) },
+            };
+
+            let response = self.backend.chat_completion(request).await?;
+
+            // If no tool calls, this is the final response
+            if response.tool_calls.is_empty() {
+                let assistant_msg = ChatMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    role: "assistant".to_string(),
+                    content: response.content,
+                    timestamp: now + iteration as u64,
+                    tool_action: None,
+                };
+                self.messages.write().await.push(assistant_msg.clone());
+                return Ok(assistant_msg);
+            }
+
+            // Execute each tool call
+            for call in &response.tool_calls {
+                tracing::info!("Chat: executing tool '{}' (id: {})", call.name, call.id);
+
+                let result = tool_executor(call.name.clone(), call.arguments.clone()).await;
+
+                let (result_content, success) = match result {
+                    Ok(output) => (output, true),
+                    Err(err) => (format!("Tool error: {}", err), false),
+                };
+
+                // Add tool result to conversation
+                let tool_msg = ChatMessage {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    role: "tool".to_string(),
+                    content: result_content.clone(),
+                    timestamp: now + iteration as u64,
+                    tool_action: Some(ToolAction {
+                        tool_type: call.name.clone(),
+                        params: serde_json::to_string(&call.arguments).unwrap_or_default(),
+                        status: if success { "completed".to_string() } else { "failed".to_string() },
+                        result: Some(result_content),
+                    }),
+                };
+                self.messages.write().await.push(tool_msg);
+            }
+
+            // Continue the loop — the LLM will see the tool results and respond
+        }
+
+        // Fallback if loop maxed out
+        let fallback = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "assistant".to_string(),
+            content: "I reached the maximum number of tool calls for this request.".to_string(),
+            timestamp: now,
+            tool_action: None,
+        };
+        self.messages.write().await.push(fallback.clone());
+        Ok(fallback)
+    }
+
     /// Get all messages in the conversation.
     pub async fn get_messages(&self) -> Vec<ChatMessage> {
         self.messages.read().await.clone()
