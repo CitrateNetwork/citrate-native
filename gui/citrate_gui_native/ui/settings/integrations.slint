@@ -102,29 +102,29 @@ export component IntegrationsSection inherits VerticalLayout {
 
     Text { text: "PRODUCTIVITY"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
     IntegrationRow {
-        name: "Google Calendar"; category: "Events and scheduling";
+        name: "Google Calendar"; category: "Events and scheduling — paste API key below";
         save-token(tok) => { root.save-integration-token("google-calendar", tok); }
     }
     IntegrationRow {
-        name: "Notion"; category: "Pages, databases, and wikis";
+        name: "Notion"; category: "Pages and databases — paste integration token below";
         save-token(tok) => { root.save-integration-token("notion", tok); }
     }
     IntegrationRow {
-        name: "Linear"; category: "Issues, projects, and cycles";
+        name: "Linear"; category: "Issues and cycles — paste API key below";
         save-token(tok) => { root.save-integration-token("linear", tok); }
     }
 
     Text { text: "PROJECT MANAGEMENT"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
     IntegrationRow {
-        name: "Microsoft Planner"; category: "Plans, tasks, and buckets";
+        name: "Microsoft Planner"; category: "Plans and tasks — paste token below";
         save-token(tok) => { root.save-integration-token("microsoft-planner", tok); }
     }
     IntegrationRow {
-        name: "Trello"; category: "Boards, lists, and cards";
+        name: "Trello"; category: "Boards and cards — paste API key below";
         save-token(tok) => { root.save-integration-token("trello", tok); }
     }
     IntegrationRow {
-        name: "Microsoft Outlook"; category: "Mail and calendar";
+        name: "Microsoft Outlook"; category: "Mail and calendar — paste token below";
         save-token(tok) => { root.save-integration-token("microsoft-outlook", tok); }
     }
 }
