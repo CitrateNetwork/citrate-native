@@ -49,7 +49,8 @@ fn test_app_core() -> AppCore {
     let compute = Arc::new(citrate_desktop_app::services::ComputeService::new(events.clone(), &rpc_url));
     let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new("test-session", None));
     let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
-    AppCore { node, wallet, editor, file_explorer, git, compiler, terminal, chat, models, blocks, learning, compute, events, trail, approvals, config }
+    let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
+    AppCore { node, wallet, editor, file_explorer, git, compiler, terminal, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
 }
 
 fn test_dir(_name: &str) -> std::path::PathBuf {

@@ -32,6 +32,8 @@ pub trait WalletBackend: Send + Sync {
         // Default: ignore data, fall back to value-only send
         self.send_transaction(from, to, value_wei, password).await
     }
+    /// Update signing chain ID for environment switching
+    fn set_chain_id(&self, _chain_id: u64) {}
 }
 
 /// Production wallet backend — delegates to citrate-wallet-core for real
@@ -199,6 +201,11 @@ impl WalletBackend for WalletCoreBackend {
             .map_err(|e| AppError::Network(format!("Transaction failed: {}", e)))?;
 
         Ok(tx_hash)
+    }
+
+    fn set_chain_id(&self, chain_id: u64) {
+        self.chain_id.store(chain_id, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("WalletCoreBackend: chain_id updated to {}", chain_id);
     }
 }
 
@@ -435,6 +442,11 @@ impl WalletService {
         });
 
         Ok(tx_hash)
+    }
+
+    /// Update the signing chain ID — called on environment switch.
+    pub fn set_chain_id(&self, chain_id: u64) {
+        self.backend.set_chain_id(chain_id);
     }
 
     /// Get the primary account address (for reward configuration)

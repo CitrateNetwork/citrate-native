@@ -54,6 +54,8 @@ pub struct AppCore {
     pub trail: Arc<trail::TrailRecorder>,
     /// Pending approval store — manages tool approval requests with timeout
     pub approvals: Arc<citrate_agent_core::delegation::PendingApprovalStore>,
+    /// Agent tool registry — all registered tools for chat function calling
+    pub tool_registry: Arc<citrate_agent_core::tool::ToolRegistry>,
     /// Application-wide configuration
     pub config: Arc<RwLock<AppConfig>>,
 }
@@ -258,6 +260,9 @@ impl AppCore {
         // Pending approval store — manages tool approval requests
         let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
 
+        // Agent tool registry — register available tools for chat function calling
+        let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
+
         // Trail recorder — subscribes to event bus and records canonical TrailEvents.
         // LogSeq path from config (if enabled).
         let logseq_path = {
@@ -302,6 +307,7 @@ impl AppCore {
             events,
             trail,
             approvals,
+            tool_registry,
             config,
         }
     }

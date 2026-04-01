@@ -1392,9 +1392,29 @@ fn main() {
             ui.set_chat_messages(model.into());
         }
 
-        // Send async — never block the UI thread
+        // Send async WITH tool execution — the live chat path uses send_message_with_tools
         spawn_async(&rt_h, async move {
-            match core.chat.send_message(&msg).await {
+            // Get tool definitions from the registry for function calling
+            let tool_defs = core.tool_registry.tool_definitions().await;
+
+            // Use send_message_with_tools which includes the function-calling loop
+            match core.chat.send_message_with_tools(
+                &msg,
+                tool_defs,
+                |tool_name, params| async move {
+                    // Tool executor — route to registered tools
+                    tracing::info!("Tool call: {} with {:?}", tool_name, params);
+                    match tool_name.as_str() {
+                        "check_balance" => {
+                            let addr = params.get("address")
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("default");
+                            Ok(format!("Balance for {}: check the Wallet tab for your current SALT balance", addr))
+                        }
+                        _ => Err(format!("Tool '{}' not yet wired for live execution", tool_name)),
+                    }
+                },
+            ).await {
                 Ok(response) => {
                     let content = clean_markdown(&response.content);
                     // Build structured message list for individual bubbles
@@ -2145,7 +2165,13 @@ fn main() {
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
             }
+            let new_chain_id = config.chain_id;
             drop(config);
+
+            // Update wallet runtime to match new environment
+            // This ensures signed transactions use the correct chain ID
+            core.wallet.set_chain_id(new_chain_id);
+            tracing::info!("Wallet chain_id updated to {} for {}", new_chain_id, lower);
 
             // Restart node with new config (reads updated data_dir + chain_id)
             if let Err(e) = core.node.start().await {
