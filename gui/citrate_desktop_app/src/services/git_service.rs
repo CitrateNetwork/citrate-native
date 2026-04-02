@@ -67,6 +67,15 @@ pub struct Git2Backend {
     repo: Arc<std::sync::Mutex<Option<git2::Repository>>>,
 }
 
+fn lock_repo(
+    repo: &std::sync::Mutex<Option<git2::Repository>>,
+) -> std::sync::MutexGuard<'_, Option<git2::Repository>> {
+    match repo.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 impl Git2Backend {
     pub fn new() -> Self {
         Self {
@@ -90,7 +99,7 @@ impl Git2Backend {
     {
         let repo_arc = self.repo.clone();
         tokio::task::spawn_blocking(move || {
-            let guard = repo_arc.lock().expect("git mutex not poisoned");
+            let guard = lock_repo(&repo_arc);
             let repo = guard
                 .as_ref()
                 .ok_or_else(|| AppError::Git("No repository is open".to_string()))?;
@@ -108,7 +117,7 @@ impl Git2Backend {
     {
         let repo_arc = self.repo.clone();
         tokio::task::spawn_blocking(move || {
-            let guard = repo_arc.lock().expect("git mutex not poisoned");
+            let guard = lock_repo(&repo_arc);
             let repo = guard
                 .as_ref()
                 .ok_or_else(|| AppError::Git("No repository is open".to_string()))?;
@@ -163,7 +172,7 @@ impl GitBackend for Git2Backend {
             let repo = git2::Repository::open(&path).map_err(|e| {
                 AppError::Git(format!("Failed to open repository at {}: {}", path.display(), e))
             })?;
-            *repo_arc.lock().expect("git mutex not poisoned") = Some(repo);
+            *lock_repo(&repo_arc) = Some(repo);
             Ok(())
         })
         .await
