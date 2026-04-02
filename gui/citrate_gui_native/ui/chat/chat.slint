@@ -44,37 +44,66 @@ component MessageBubble inherits Rectangle {
 component ToolApprovalCard inherits Rectangle {
     in property <string> tool-name;
     in property <string> tool-description;
+    in property <string> risk-level: "high";
+    in property <string> tool-target: "";
+    in property <string> tool-scope: "";
     callback approve;
     callback reject;
+
+    property <color> risk-color: root.risk-level == "critical" ? Theme.error
+        : root.risk-level == "high" ? Theme.warning
+        : root.risk-level == "medium" ? Theme.info
+        : Theme.success;
 
     min-height: 60px;
     border-radius: Theme.radius-md;
     background: Theme.surface;
     border-width: 1px;
-    border-color: Theme.warning;
+    border-color: root.risk-color;
 
     VerticalLayout {
         padding: Theme.space-md;
         spacing: Theme.space-sm;
 
+        // Header: risk dot + tool name + risk badge
         HorizontalLayout {
             spacing: Theme.space-sm;
-            Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.warning; y: 4px; }
-            Text { text: "Tool: " + root.tool-name; color: Theme.warning; font-size: 12px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+            Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.risk-color; y: 4px; }
+            Text { text: "Tool: " + root.tool-name; color: root.risk-color; font-size: 12px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            Rectangle {
+                height: 18px; width: 50px; border-radius: Theme.radius-sm; background: root.risk-color;
+                Text { text: root.risk-level; color: #000000; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
+            }
         }
 
+        // Target: what this tool will affect
+        if root.tool-target != "" : HorizontalLayout {
+            spacing: Theme.space-xs;
+            Text { text: "Target:"; color: Theme.text-muted; font-size: 11px; font-weight: 600; }
+            Text { text: root.tool-target; color: Theme.text; font-size: 11px; overflow: elide; }
+        }
+
+        // Scope: what will change
+        if root.tool-scope != "" : HorizontalLayout {
+            spacing: Theme.space-xs;
+            Text { text: "Scope:"; color: Theme.text-muted; font-size: 11px; font-weight: 600; }
+            Text { text: root.tool-scope; color: Theme.text; font-size: 11px; wrap: word-wrap; }
+        }
+
+        // Parameters
         Text { text: root.tool-description; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
 
+        // Action buttons
         HorizontalLayout {
             spacing: Theme.space-sm;
             Rectangle {
                 height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.success;
-                Text { text: "Approve"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Allow Once"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 TouchArea { clicked => { root.approve(); } }
             }
             Rectangle {
                 height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.error;
-                Text { text: "Reject"; color: Theme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Deny"; color: Theme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 TouchArea { clicked => { root.reject(); } }
             }
         }
@@ -94,6 +123,12 @@ export component ChatView inherits Rectangle {
     in property <bool> tool-pending: false;
     in property <string> tool-name: "";
     in property <string> tool-description: "";
+    in property <string> tool-risk-level: "high";
+    in property <string> tool-target: "";
+    in property <string> tool-scope: "";
+
+    // Tool disclosure: shows what tool executed and the result
+    in property <string> tool-disclosure: "";
 
     callback send-message(string);
     callback approve-tool;
@@ -189,10 +224,30 @@ export component ChatView inherits Rectangle {
                         Text { text: "Thinking..."; color: Theme.accent; font-size: 13px; vertical-alignment: center; }
                     }
 
+                    // Tool disclosure: shows what tool was executed
+                    if root.tool-disclosure != "" : Rectangle {
+                        min-height: 28px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.bg-tertiary;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        HorizontalLayout {
+                            padding: Theme.space-sm;
+                            padding-left: Theme.space-md;
+                            spacing: Theme.space-sm;
+                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Theme.info; y: 5px; }
+                            Text { text: root.tool-disclosure; color: Theme.text-secondary; font-size: 11px; wrap: word-wrap; }
+                        }
+                    }
+
                     // Tool approval
                     if root.tool-pending : ToolApprovalCard {
                         tool-name: root.tool-name;
                         tool-description: root.tool-description;
+                        risk-level: root.tool-risk-level;
+                        tool-target: root.tool-target;
+                        tool-scope: root.tool-scope;
                         approve => { root.approve-tool(); }
                         reject => { root.reject-tool(); }
                     }

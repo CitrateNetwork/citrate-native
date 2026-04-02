@@ -86,6 +86,33 @@ pub enum AppEvent {
         error_count: usize,
         warning_count: usize,
     },
+
+    /// Tool call requested (approval pending)
+    ToolCallRequested {
+        tool_name: String,
+        risk_level: String,
+        target: String,
+    },
+
+    /// Tool call approved by user
+    ToolCallApproved {
+        tool_name: String,
+        request_id: String,
+    },
+
+    /// Tool call denied by user
+    ToolCallDenied {
+        tool_name: String,
+        request_id: String,
+    },
+
+    /// Tool call completed
+    ToolCallCompleted {
+        tool_name: String,
+        success: bool,
+        duration_ms: u64,
+        result_summary: String,
+    },
 }
 
 /// Broadcast-based event bus. Multiple subscribers can listen.

@@ -6,6 +6,7 @@ export component ComputeView inherits Rectangle {
     in property <int> available-providers: 0;
     in property <string> provider-status: "Not registered";
     in property <string> total-compute-earned: "0";
+    in property <string> contract-status: "unknown"; // "not-deployed", "empty", "live"
 
     callback post-job;
     callback register-provider;
@@ -32,18 +33,33 @@ export component ComputeView inherits Rectangle {
             }
         }
 
-        // Not-deployed banner
-        if root.active-jobs == 0 && root.available-providers == 0 : Rectangle {
+        // Contract status banner
+        Rectangle {
             height: 44px;
             border-radius: Theme.radius-md;
             background: Theme.bg-tertiary;
             border-width: 1px;
-            border-color: Theme.border;
+            border-color: root.contract-status == "live" ? Theme.success
+                : root.contract-status == "empty" ? Theme.warning
+                : Theme.error;
 
             HorizontalLayout {
                 padding-left: Theme.space-lg;
                 padding-right: Theme.space-lg;
-                Text { text: "Compute marketplace deployed — 0 providers registered. Register your GPU to earn SALT."; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; wrap: word-wrap; }
+                spacing: Theme.space-sm;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: root.contract-status == "live" ? Theme.success
+                        : root.contract-status == "empty" ? Theme.warning
+                        : Theme.error;
+                    y: 18px;
+                }
+                Text {
+                    text: root.contract-status == "live" ? "Marketplace active — " + root.available-providers + " providers, " + root.active-jobs + " jobs"
+                        : root.contract-status == "empty" ? "Marketplace deployed — no providers registered yet. Be the first to earn SALT."
+                        : "Marketplace contract not deployed on this network.";
+                    color: Theme.text-muted; font-size: 12px; vertical-alignment: center; wrap: word-wrap;
+                }
             }
         }
 

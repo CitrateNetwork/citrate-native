@@ -16,6 +16,7 @@ import { LearningView } from "learning/learning.slint";
 import { ComputeView } from "compute/compute.slint";
 import { ContractsPanel } from "contracts/contracts_panel.slint";
 import { StorageView } from "storage/storage.slint";
+import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
 import { FileTreeNodeData, EditorTabData, StyledLineData, StyledSpanData,
          TerminalRowData, TerminalCellData, GitFileData, DiagnosticData } from "ide/ide_structs.slint";
 
@@ -92,11 +93,16 @@ export component App inherits Window {
     in property <int> compute-providers: 0;
     in property <string> compute-earned: "0";
     in property <string> compute-provider-status: "Not registered";
+    in property <string> compute-contract-status: "unknown";
 
     // Chat tool approval state
     in property <bool> chat-tool-pending: false;
     in property <string> chat-tool-name: "";
     in property <string> chat-tool-description: "";
+    in property <string> chat-tool-risk-level: "high";
+    in property <string> chat-tool-target: "";
+    in property <string> chat-tool-scope: "";
+    in property <string> chat-tool-disclosure: "";
 
     // App version
     in property <string> app-version: "0.1.0";
@@ -221,6 +227,8 @@ export component App inherits Window {
     in property <int> models-count: 0;
     in property <string> models-ipfs-cid: "";
     in property <bool> models-pinning: false;
+    in property <bool> models-registered: false;
+    in property <bool> models-verified: false;
 
     // IDE callbacks
     callback ide-file-opened(string);
@@ -236,6 +244,38 @@ export component App inherits Window {
     callback ide-git-pull;
     callback ide-save-file;
     callback ide-pop-out;
+    callback ide-command-palette-execute(string);
+    callback ide-search-in-files(string);
+
+    // === Contracts State ===
+    in property <string> contracts-compiler-version: "forge";
+    in property <string> contracts-compile-status: "Ready";
+    in property <bool> contracts-compiling: false;
+    in property <string> contracts-compile-error: "";
+    in property <string> contracts-selected-contract: "";
+    in property <string> contracts-gas-estimate: "";
+    in property <bool> contracts-deploying: false;
+    in property <string> contracts-deploy-error: "";
+    in property <string> contracts-deployed-address: "";
+    callback contracts-compile;
+    callback contracts-deploy;
+
+    // === Operations / Agent Center State ===
+    in property <string> ops-session-id: "";
+    in property <int> ops-active-sessions: 0;
+    in property <int> ops-pending-count: 0;
+    in property <[ApprovalEntryData]> ops-pending-approvals: [];
+    in property <int> ops-trail-count: 0;
+    in property <[TrailEntryData]> ops-trail-events: [];
+    in property <string> ops-logseq-status: "offline";
+    in property <string> ops-logseq-path: "";
+    in property <string> ops-hermes-status: "offline";
+    in property <string> ops-hermes-endpoint: "";
+    in property <string> ops-grant-scope: "guided";
+    callback ops-emergency-stop;
+    callback ops-refresh-trail;
+    callback ops-approve-pending(string);
+    callback ops-deny-pending(string);
 
     // Callbacks to Rust
     callback tab-changed(string);
@@ -397,6 +437,10 @@ export component App inherits Window {
                     tool-pending: root.chat-tool-pending;
                     tool-name: root.chat-tool-name;
                     tool-description: root.chat-tool-description;
+                    tool-risk-level: root.chat-tool-risk-level;
+                    tool-target: root.chat-tool-target;
+                    tool-scope: root.chat-tool-scope;
+                    tool-disclosure: root.chat-tool-disclosure;
                     send-message(msg) => { root.chat-send(msg); }
                     approve-tool => { root.chat-approve-tool(); }
                     reject-tool => { root.chat-reject-tool(); }
@@ -410,6 +454,8 @@ export component App inherits Window {
                     on-chain-model-count: root.models-count;
                     model-ipfs-cid: root.models-ipfs-cid;
                     model-pinning: root.models-pinning;
+                    model-registered: root.models-registered;
+                    model-verified: root.models-verified;
                     load-model => { root.models-load-model(); }
                     deploy-model => { root.models-deploy-model(); }
                     run-inference => { root.models-run-inference(); }
@@ -451,10 +497,23 @@ export component App inherits Window {
                         git-pull => { root.ide-git-pull(); }
                         save-file => { root.ide-save-file(); }
                         pop-out => { root.ide-pop-out(); }
+                        command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
+                        search-in-files(query) => { root.ide-search-in-files(query); }
                     }
 
                     ContractsPanel {
+                        compiler-version: root.contracts-compiler-version;
+                        compile-status: root.contracts-compile-status;
+                        compiling: root.contracts-compiling;
+                        compile-error: root.contracts-compile-error;
+                        selected-contract: root.contracts-selected-contract;
                         environment: root.environment;
+                        gas-estimate: root.contracts-gas-estimate;
+                        deploying: root.contracts-deploying;
+                        deploy-error: root.contracts-deploy-error;
+                        deployed-address: root.contracts-deployed-address;
+                        compile => { root.contracts-compile(); }
+                        deploy => { root.contracts-deploy(); }
                     }
                 }
 
@@ -490,6 +549,8 @@ export component App inherits Window {
                     git-pull => { root.ide-git-pull(); }
                     save-file => { root.ide-save-file(); }
                     pop-out => { root.ide-pop-out(); }
+                    command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
+                    search-in-files(query) => { root.ide-search-in-files(query); }
                 }
 
                 // Learning Center
@@ -511,6 +572,7 @@ export component App inherits Window {
                     available-providers: root.compute-providers;
                     total-compute-earned: root.compute-earned;
                     provider-status: root.compute-provider-status;
+                    contract-status: root.compute-contract-status;
                     post-job => { root.compute-post-job(); }
                     register-provider => { root.compute-register-provider(); }
                     refresh => { root.compute-refresh(); }
@@ -529,8 +591,27 @@ export component App inherits Window {
                     refresh => { root.storage-refresh(); }
                 }
 
+                // Operations / Agent Center
+                if root.active-tab == "operations" : OperationsView {
+                    session-id: root.ops-session-id;
+                    active-sessions: root.ops-active-sessions;
+                    pending-approval-count: root.ops-pending-count;
+                    pending-approvals: root.ops-pending-approvals;
+                    trail-event-count: root.ops-trail-count;
+                    trail-events: root.ops-trail-events;
+                    logseq-status: root.ops-logseq-status;
+                    logseq-path: root.ops-logseq-path;
+                    hermes-status: root.ops-hermes-status;
+                    hermes-endpoint: root.ops-hermes-endpoint;
+                    grant-scope: root.ops-grant-scope;
+                    emergency-stop => { root.ops-emergency-stop(); }
+                    refresh-trail => { root.ops-refresh-trail(); }
+                    approve-pending(id) => { root.ops-approve-pending(id); }
+                    deny-pending(id) => { root.ops-deny-pending(id); }
+                }
+
                 // Placeholder for any remaining tabs
-                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "studio" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" : VerticalLayout {
+                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "studio" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" && root.active-tab != "operations" : VerticalLayout {
                     padding: Theme.space-lg;
 
                     Text {

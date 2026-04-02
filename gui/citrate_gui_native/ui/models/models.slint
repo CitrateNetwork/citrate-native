@@ -56,6 +56,8 @@ export component ModelsView inherits Rectangle {
     in property <int> on-chain-model-count: 0;
     in property <string> model-ipfs-cid: "";
     in property <bool> model-pinning: false;
+    in property <bool> model-registered: false;
+    in property <bool> model-verified: false;
 
     callback load-model;
     callback deploy-model;
@@ -149,6 +151,70 @@ export component ModelsView inherits Rectangle {
             }
         }
 
+        // Publish workflow section
+        if root.has-local-model : VerticalLayout {
+            spacing: Theme.space-md;
+
+            Text { text: "Publish to Registry"; color: Theme.text-secondary; font-size: 14px; font-weight: 500; }
+
+            // Publish stepper — shows current state of the publish pipeline
+            Rectangle {
+                min-height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-md;
+
+                    // Step 1: Storage
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Rectangle {
+                            width: 24px; height: 24px; border-radius: 12px;
+                            background: root.model-ipfs-cid != "" ? Theme.success : Theme.bg-tertiary;
+                            Text { text: "1"; color: root.model-ipfs-cid != "" ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { text: "Pin"; color: root.model-ipfs-cid != "" ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                    }
+
+                    Text { text: "->"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+
+                    // Step 2: Register
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Rectangle {
+                            width: 24px; height: 24px; border-radius: 12px;
+                            background: root.model-registered ? Theme.success : Theme.bg-tertiary;
+                            Text { text: "2"; color: root.model-registered ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { text: "Register"; color: root.model-registered ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                    }
+
+                    Text { text: "->"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+
+                    // Step 3: Verify
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Rectangle {
+                            width: 24px; height: 24px; border-radius: 12px;
+                            background: root.model-verified ? Theme.success : Theme.bg-tertiary;
+                            Text { text: "3"; color: root.model-verified ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { text: "Verify"; color: root.model-verified ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                    }
+                }
+            }
+        }
+
         // On-chain models section
         VerticalLayout {
             spacing: Theme.space-md;
@@ -156,27 +222,32 @@ export component ModelsView inherits Rectangle {
             HorizontalLayout {
                 alignment: space-between;
                 Text { text: "On-Chain Registry"; color: Theme.text-secondary; font-size: 14px; font-weight: 500; vertical-alignment: center; }
-                Text { text: root.on-chain-model-count + " models"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+                Text { text: root.on-chain-model-count + " registered"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
             }
 
-            Rectangle {
+            if root.on-chain-model-count == 0 : Rectangle {
                 min-height: 60px;
                 border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
+                border-width: 2px;
+                border-color: Theme.border;
+                background: transparent;
 
                 Text {
-                    text: root.on-chain-model-count > 0 ?
-                        "Query on-chain model registry to see deployed models." :
-                        "No models registered on-chain yet.";
+                    text: "No models registered on-chain yet. Publish a local model to get started.";
                     color: Theme.text-muted;
                     font-size: 13px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     wrap: word-wrap;
                 }
+            }
+
+            // Placeholder for browsable model list (populated from citrate_listModels RPC)
+            if root.on-chain-model-count > 0 : Text {
+                text: root.on-chain-model-count + " models available. Use Chat to interact with registered models.";
+                color: Theme.text-secondary;
+                font-size: 12px;
+                wrap: word-wrap;
             }
         }
 

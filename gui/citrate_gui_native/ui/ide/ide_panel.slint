@@ -48,6 +48,13 @@ export component IdePanel inherits Rectangle {
     in property <int> error-count: 0;
     in property <int> warning-count: 0;
 
+    // === Command Palette / Search ===
+    in-out property <bool> show-command-palette: false;
+    in-out property <string> command-palette-query: "";
+    in-out property <bool> show-search-panel: false;
+    in-out property <string> search-query: "";
+    in property <[DiagnosticData]> search-results: [];
+
     // === Callbacks to Rust ===
     callback file-opened(string);
     callback dir-toggled(string);
@@ -64,6 +71,8 @@ export component IdePanel inherits Rectangle {
     callback save-file;
     callback save-all;
     callback pop-out;
+    callback command-palette-execute(string);
+    callback search-in-files(string);
 
     background: Theme.bg;
 
@@ -104,6 +113,23 @@ export component IdePanel inherits Rectangle {
                 }
 
                 Rectangle { horizontal-stretch: 1; }
+
+                // Search button
+                Rectangle {
+                    width: 40px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.show-search-panel ? Theme.bg-tertiary : transparent;
+                    y: 4px;
+                    Text { text: "Search"; color: root.show-search-panel ? Theme.text : Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-search-panel = !root.show-search-panel; } }
+                }
+
+                // Command palette button
+                Rectangle {
+                    width: 24px; height: 24px; border-radius: Theme.radius-sm;
+                    y: 4px;
+                    Text { text: ">_"; color: Theme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-command-palette = true; } }
+                }
 
                 // Pop-out button
                 Rectangle {
@@ -204,6 +230,210 @@ export component IdePanel inherits Rectangle {
             language: root.active-language;
             error-count: root.error-count;
             warning-count: root.warning-count;
+        }
+    }
+
+    // === Welcome State (no file open) ===
+    if root.tabs.length == 0 && !root.show-command-palette : Rectangle {
+        x: root.show-explorer ? 201px : 0px;
+        y: 33px;
+        width: root.width - (root.show-explorer ? 201px : 0px);
+        height: root.height - 65px;
+        background: Theme.bg;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Theme.space-lg;
+            padding: Theme.space-2xl;
+
+            Text { text: "Citrate Studio"; color: Theme.text; font-size: 24px; font-weight: 700; horizontal-alignment: center; }
+            Text { text: "Open a file from the explorer or use the command palette"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+
+            VerticalLayout {
+                spacing: Theme.space-sm;
+                alignment: center;
+                padding-top: Theme.space-xl;
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Ctrl+P"; color: Theme.accent; font-size: 11px; font-weight: 600; }
+                    Text { text: "Command Palette"; color: Theme.text-muted; font-size: 11px; }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Ctrl+F"; color: Theme.accent; font-size: 11px; font-weight: 600; }
+                    Text { text: "Search in Files"; color: Theme.text-muted; font-size: 11px; }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Ctrl+`"; color: Theme.accent; font-size: 11px; font-weight: 600; }
+                    Text { text: "Toggle Terminal"; color: Theme.text-muted; font-size: 11px; }
+                }
+            }
+        }
+    }
+
+    // === Command Palette Overlay ===
+    if root.show-command-palette : Rectangle {
+        background: rgba(0, 0, 0, 0.4);
+
+        TouchArea { clicked => { root.show-command-palette = false; } }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 60px;
+            width: min(500px, parent.width - 80px);
+            height: 200px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: rgba(0, 0, 0, 0.3);
+
+            VerticalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-xs;
+
+                // Search input
+                Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        spacing: Theme.space-sm;
+                        Text { text: ">"; color: Theme.accent; font-size: 14px; font-weight: 700; vertical-alignment: center; }
+                        cmd-input := TextInput {
+                            text <=> root.command-palette-query;
+                            font-size: 13px;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            accepted => {
+                                if root.command-palette-query != "" {
+                                    root.command-palette-execute(root.command-palette-query);
+                                    root.show-command-palette = false;
+                                    root.command-palette-query = "";
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Quick actions
+                Flickable {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 1px;
+
+                        for cmd in [
+                            { label: "Compile Contracts", key: "compile" },
+                            { label: "Run Tests", key: "test" },
+                            { label: "Deploy Contract", key: "deploy" },
+                            { label: "Toggle Terminal", key: "terminal" },
+                            { label: "Toggle Git Panel", key: "git" },
+                            { label: "Save File", key: "save" },
+                        ] : Rectangle {
+                            height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background: cmd-hover.has-hover ? Theme.bg-tertiary : transparent;
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                Text { text: cmd.label; color: Theme.text; font-size: 12px; vertical-alignment: center; }
+                            }
+                            cmd-hover := TouchArea {
+                                clicked => {
+                                    root.command-palette-execute(cmd.key);
+                                    root.show-command-palette = false;
+                                    root.command-palette-query = "";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // === Search Panel Overlay (inline, not modal) ===
+    if root.show-search-panel : Rectangle {
+        x: root.show-explorer ? 201px : 0px;
+        y: 33px;
+        width: 300px;
+        height: root.height - 65px;
+        background: Theme.bg-secondary;
+        border-width: 0px;
+        border-color: Theme.border-subtle;
+
+        VerticalLayout {
+            padding: Theme.space-md;
+            spacing: Theme.space-sm;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text { text: "Search"; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                Rectangle {
+                    width: 20px; height: 20px; border-radius: Theme.radius-sm;
+                    Text { text: "x"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.show-search-panel = false; } }
+                }
+            }
+
+            Rectangle {
+                height: 28px; border-radius: Theme.radius-sm;
+                background: Theme.bg; border-width: 1px; border-color: Theme.border;
+
+                TextInput {
+                    text <=> root.search-query;
+                    font-size: 12px; color: Theme.text;
+                    x: Theme.space-sm; width: parent.width - Theme.space-lg;
+                    vertical-alignment: center;
+                    accepted => { root.search-in-files(root.search-query); }
+                }
+            }
+
+            // Search results (reuse DiagnosticData for file:line display)
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 2px;
+
+                    if root.search-results.length == 0 : VerticalLayout {
+                        padding-top: Theme.space-xl;
+                        Text {
+                            text: root.search-query == "" ? "Type to search" : "No results";
+                            color: Theme.text-muted; font-size: 11px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    for result in root.search-results : Rectangle {
+                        height: 36px; border-radius: Theme.radius-sm;
+                        background: result-hover.has-hover ? Theme.bg-tertiary : transparent;
+
+                        VerticalLayout {
+                            padding-left: Theme.space-sm;
+                            padding-top: Theme.space-xs;
+                            Text { text: result.file-path; color: Theme.text; font-size: 10px; overflow: elide; }
+                            HorizontalLayout {
+                                spacing: Theme.space-xs;
+                                Text { text: result.message; color: Theme.text-secondary; font-size: 10px; overflow: elide; }
+                            }
+                        }
+                        result-hover := TouchArea {
+                            clicked => { root.file-opened(result.file-path); }
+                        }
+                    }
+                }
+            }
         }
     }
 }

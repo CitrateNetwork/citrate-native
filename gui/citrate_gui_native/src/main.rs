@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 slint::include_modules!();
 
+#[cfg(test)]
+mod ui_visual_tests;
+
 /// EIP-55 mixed-case checksum encoding for Ethereum addresses.
 /// Takes a hex address (with or without 0x prefix) and returns the checksummed form.
 fn eip55_checksum(addr: &str) -> String {
@@ -636,6 +639,82 @@ fn main() {
                 }
             });
         }
+
+        // Hydrate Operations page on activation
+        if tab_str == "operations" {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                // Trail events
+                let events = core.trail.get_events().await;
+                let trail_count = events.len() as i32;
+
+                // Pending approvals
+                let pending = core.approvals.list_pending().await;
+                let pending_count = pending.len() as i32;
+                let pending_entries: Vec<ApprovalEntryData> = pending.iter().map(|req| {
+                    ApprovalEntryData {
+                        request_id: req.request_id.clone().into(),
+                        tool_name: req.tool_name.clone().into(),
+                        risk_level: req.risk_level.clone().into(),
+                        target: serde_json::to_string(&req.params).unwrap_or_default().into(),
+                        created_at: req.created_at.clone().into(),
+                    }
+                }).collect();
+
+                // Trail entries for display
+                let trail_entries: Vec<TrailEntryData> = events.iter().map(|e| {
+                    TrailEntryData {
+                        timestamp: e.timestamp.split('T').next_back().unwrap_or(&e.timestamp).into(),
+                        event_type: e.event_type.clone().into(),
+                        tool_name: e.tool_name.clone().unwrap_or_default().into(),
+                        risk_level: e.risk_level.clone().unwrap_or_default().into(),
+                        approved: e.approved.map(|b| b.to_string()).unwrap_or_default().into(),
+                    }
+                }).collect();
+
+                // Logseq status — check if path is configured
+                let logseq_path = core.trail.logseq_path().await;
+                let logseq_status = if logseq_path.is_some() { "online" } else { "disabled" };
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_ops_trail_count(trail_count);
+                        ui.set_ops_pending_count(pending_count);
+                        ui.set_ops_active_sessions(1); // Current session
+                        ui.set_ops_grant_scope("guided".into());
+                        ui.set_ops_logseq_status(logseq_status.into());
+                        ui.set_ops_logseq_path(logseq_path.unwrap_or_default().into());
+                        ui.set_ops_hermes_status("disabled".into());
+
+                        let pending_model = std::rc::Rc::new(slint::VecModel::from(pending_entries));
+                        ui.set_ops_pending_approvals(pending_model.into());
+                        let trail_model = std::rc::Rc::new(slint::VecModel::from(trail_entries));
+                        ui.set_ops_trail_events(trail_model.into());
+                    }
+                });
+            });
+        }
+
+        // Hydrate Compute contract status on activation
+        if tab_str == "compute" {
+            let ui_w = ui_w.clone();
+            let core = core.clone();
+            spawn_async(&rt_h, async move {
+                // Determine contract status based on provider count query
+                let status = match core.compute.list_providers().await {
+                    Ok(providers) => {
+                        if providers.is_empty() { "empty" } else { "live" }
+                    }
+                    Err(_) => "not-deployed",
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_compute_contract_status(status.into());
+                    }
+                });
+            });
+        }
     });
 
     // --- Background data push (non-blocking) ---
@@ -1064,6 +1143,72 @@ fn main() {
         });
     });
 
+    // --- IDE: Command Palette Execute ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_ide_command_palette_execute(move |cmd| {
+        let cmd_str = cmd.to_string();
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("IDE: command palette: {}", cmd_str);
+        spawn_async(&rt_h, async move {
+            match cmd_str.as_str() {
+                "compile" => {
+                    let contracts_dir = std::path::PathBuf::from("contracts");
+                    match core.compiler.compile(&contracts_dir).await {
+                        Ok(result) => {
+                            let status = if result.success {
+                                format!("Compiled {} contracts", result.artifacts.len())
+                            } else {
+                                format!("{} errors", result.errors.len())
+                            };
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_contracts_compile_status(status.into());
+                                }
+                            });
+                        }
+                        Err(e) => tracing::error!("Command palette compile: {}", e),
+                    }
+                }
+                "terminal" => {
+                    tracing::info!("Command palette: toggle terminal (handled by IDE panel)");
+                }
+                "git" => {
+                    tracing::info!("Command palette: toggle git panel (handled by IDE panel)");
+                }
+                "save" => {
+                    let buffers = core.editor.list_open_buffers().await;
+                    if let Some(active) = buffers.first() {
+                        if let Err(e) = core.editor.save_buffer(&active.id).await {
+                            tracing::error!("Save failed: {}", e);
+                        }
+                    }
+                }
+                _ => tracing::info!("Command palette: unknown command '{}'", cmd_str),
+            }
+        });
+    });
+
+    // --- IDE: Search in Files ---
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    ui.on_ide_search_in_files(move |query| {
+        let query_str = query.to_string();
+        let core = core.clone();
+        tracing::info!("IDE: search in files: {}", query_str);
+        spawn_async(&rt_h, async move {
+            // Use find_files as the search backend (filename matching)
+            match core.file_explorer.find_files(&query_str).await {
+                Ok(results) => {
+                    tracing::info!("IDE: search found {} results for '{}'", results.len(), query_str);
+                }
+                Err(e) => tracing::warn!("IDE: search failed: {}", e),
+            }
+        });
+    });
+
     // --- IDE: Initialize file explorer with current directory ---
     {
         let core = app_core.clone();
@@ -1419,6 +1564,8 @@ fn main() {
             let approvals = core.approvals.clone();
             let ui_for_tools = ui_w.clone();
             let active_req_id = active_req_for_chat.clone();
+            let events_for_tools = core.events.clone();
+            let wallet_for_tools = core.wallet.clone();
 
             // Use send_message_with_tools which includes the function-calling loop
             match core.chat.send_message_with_tools(
@@ -1428,22 +1575,52 @@ fn main() {
                     let approvals = approvals.clone();
                     let ui_for_tools = ui_for_tools.clone();
                     let active_req_id = active_req_id.clone();
+                    let events = events_for_tools.clone();
+                    let wallet = wallet_for_tools.clone();
                     async move {
+                        let start_time = std::time::Instant::now();
                         tracing::info!("Tool call: {} with {:?}", tool_name, params);
 
-                        // Determine if this tool needs approval
-                        let is_high_risk = matches!(tool_name.as_str(),
-                            "send_tx" | "deploy_contract" | "file_write" | "file_edit" | "shell_exec"
-                        );
+                        // Determine risk level and target info for each tool
+                        let (risk_level, target, scope) = match tool_name.as_str() {
+                            "send_tx" => {
+                                let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let amount = params.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                ("high".to_string(), format!("Address: {}", to), format!("Send {} SALT", amount))
+                            }
+                            "deploy_contract" => {
+                                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+                                ("high".to_string(), format!("Contract: {}", name), "Deploy new contract to chain".to_string())
+                            }
+                            "file_write" | "file_edit" => {
+                                let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                ("high".to_string(), format!("File: {}", path), "Modify filesystem".to_string())
+                            }
+                            "shell_exec" => {
+                                let cmd = params.get("command").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                ("critical".to_string(), format!("Command: {}", cmd), "Execute shell command".to_string())
+                            }
+                            _ => ("low".to_string(), String::new(), String::new()),
+                        };
+
+                        let is_high_risk = matches!(risk_level.as_str(), "high" | "critical");
+                        let ui_for_disclosure = ui_for_tools.clone();
 
                         if is_high_risk {
+                            // Publish trail event for tool request
+                            events.publish(citrate_desktop_app::event_bus::AppEvent::ToolCallRequested {
+                                tool_name: tool_name.clone(),
+                                risk_level: risk_level.clone(),
+                                target: target.clone(),
+                            });
+
                             // Submit approval request and show card in UI
                             let request = citrate_agent_core::canonical::ApprovalRequest {
                                 request_id: uuid::Uuid::new_v4().to_string(),
                                 session_id: "live".to_string(),
                                 tool_name: tool_name.clone(),
                                 params: params.clone(),
-                                risk_level: "high".to_string(),
+                                risk_level: risk_level.clone(),
                                 created_at: chrono::Utc::now().to_rfc3339(),
                                 timeout_seconds: 30,
                                 resolved: None,
@@ -1452,13 +1629,19 @@ fn main() {
                             let req_id = request.request_id.clone();
                             let tool_display = tool_name.clone();
                             let param_display = serde_json::to_string_pretty(&params).unwrap_or_default();
+                            let risk_display = risk_level.clone();
+                            let target_display = target.clone();
+                            let scope_display = scope.clone();
 
-                            // Show approval card in UI
+                            // Show approval card in UI with risk details
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = ui_for_tools.upgrade() {
                                     ui.set_chat_tool_pending(true);
                                     ui.set_chat_tool_name(tool_display.into());
                                     ui.set_chat_tool_description(param_display.into());
+                                    ui.set_chat_tool_risk_level(risk_display.into());
+                                    ui.set_chat_tool_target(target_display.into());
+                                    ui.set_chat_tool_scope(scope_display.into());
                                 }
                             });
 
@@ -1470,24 +1653,79 @@ fn main() {
                             match rx.await {
                                 Ok(true) => {
                                     tracing::info!("Tool '{}' approved (req: {})", tool_name, req_id);
+                                    events.publish(citrate_desktop_app::event_bus::AppEvent::ToolCallApproved {
+                                        tool_name: tool_name.clone(),
+                                        request_id: req_id.clone(),
+                                    });
                                 }
                                 _ => {
                                     tracing::info!("Tool '{}' denied (req: {})", tool_name, req_id);
+                                    events.publish(citrate_desktop_app::event_bus::AppEvent::ToolCallDenied {
+                                        tool_name: tool_name.clone(),
+                                        request_id: req_id.clone(),
+                                    });
                                     return Err(format!("Tool '{}' was denied by user", tool_name));
                                 }
                             }
                         }
 
                         // Execute the tool
-                        match tool_name.as_str() {
+                        let result = match tool_name.as_str() {
                             "check_balance" => {
                                 let addr = params.get("address")
                                     .and_then(|a| a.as_str())
                                     .unwrap_or("default");
                                 Ok(format!("Balance for {}: check the Wallet tab for your current SALT balance", addr))
                             }
+                            "send_tx" => {
+                                let to = params.get("to").and_then(|v| v.as_str())
+                                    .ok_or_else(|| "Missing 'to' address".to_string())?;
+                                let amount = params.get("amount").and_then(|v| v.as_str())
+                                    .ok_or_else(|| "Missing 'amount'".to_string())?;
+                                // Convert SALT to wei (amount * 10^18)
+                                let amount_f64: f64 = amount.parse()
+                                    .map_err(|_| format!("Invalid amount: {}", amount))?;
+                                let wei = (amount_f64 * 1e18) as u128;
+                                let value_wei = wei.to_string();
+                                // Use the active wallet account
+                                let accounts = wallet.list_accounts().await;
+                                let from = accounts.first()
+                                    .map(|a| a.address.clone())
+                                    .ok_or_else(|| "No wallet account found".to_string())?;
+                                match wallet.send_transaction(&from, to, &value_wei, "").await {
+                                    Ok(tx_hash) => Ok(format!("Transaction sent. Hash: {}", tx_hash)),
+                                    Err(e) => Err(format!("Transaction failed: {}", e)),
+                                }
+                            }
                             _ => Err(format!("Tool '{}' not yet wired for live execution", tool_name)),
-                        }
+                        };
+
+                        // Record tool completion in trail
+                        let elapsed = start_time.elapsed().as_millis() as u64;
+                        let (success, summary) = match &result {
+                            Ok(s) => (true, s.clone()),
+                            Err(e) => (false, e.clone()),
+                        };
+                        events.publish(citrate_desktop_app::event_bus::AppEvent::ToolCallCompleted {
+                            tool_name: tool_name.clone(),
+                            success,
+                            duration_ms: elapsed,
+                            result_summary: summary.clone(),
+                        });
+
+                        // Show tool disclosure in UI
+                        let disclosure = if success {
+                            format!("Executed {} — {}", tool_name, summary)
+                        } else {
+                            format!("Failed {} — {}", tool_name, summary)
+                        };
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_for_disclosure.upgrade() {
+                                ui.set_chat_tool_disclosure(disclosure.into());
+                            }
+                        });
+
+                        result
                     }
                 },
             ).await {
@@ -2024,6 +2262,7 @@ fn main() {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_models_ipfs_cid(format!("Deployed: {}", tx_hash).into());
+                            ui.set_models_registered(true);
                         }
                     });
                 }
@@ -2407,6 +2646,234 @@ fn main() {
             match core.compute.list_jobs().await {
                 Ok(jobs) => tracing::info!("Compute: {} jobs", jobs.len()),
                 Err(e) => tracing::error!("Compute: refresh failed: {}", e),
+            }
+        });
+    });
+
+    // =========================================================================
+    // OPERATIONS: Agent Center
+    // =========================================================================
+
+    // --- Operations: Emergency Stop ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_ops_emergency_stop(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::warn!("Operations: EMERGENCY STOP triggered");
+        spawn_async(&rt_h, async move {
+            // Cancel all pending approvals
+            let pending = core.approvals.list_pending().await;
+            for req in &pending {
+                core.approvals.resolve(&req.request_id, false).await;
+            }
+            tracing::warn!("Operations: denied {} pending approvals", pending.len());
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_ops_pending_count(0);
+                    ui.set_chat_tool_pending(false);
+                }
+            });
+        });
+    });
+
+    // --- Operations: Refresh Trail ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_ops_refresh_trail(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("Operations: refreshing trail");
+        spawn_async(&rt_h, async move {
+            let events = core.trail.get_events().await;
+            let count = events.len() as i32;
+            let trail_entries: Vec<TrailEntryData> = events.iter().map(|e| {
+                TrailEntryData {
+                    timestamp: e.timestamp.split('T').next_back().unwrap_or(&e.timestamp).into(),
+                    event_type: e.event_type.clone().into(),
+                    tool_name: e.tool_name.clone().unwrap_or_default().into(),
+                    risk_level: e.risk_level.clone().unwrap_or_default().into(),
+                    approved: e.approved.map(|b| b.to_string()).unwrap_or_default().into(),
+                }
+            }).collect();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_ops_trail_count(count);
+                    let model = std::rc::Rc::new(slint::VecModel::from(trail_entries));
+                    ui.set_ops_trail_events(model.into());
+                }
+            });
+        });
+    });
+
+    // --- Operations: Approve/Deny pending from Operations page ---
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    ui.on_ops_approve_pending(move |request_id| {
+        let core = core.clone();
+        let id = request_id.to_string();
+        tracing::info!("Operations: approving {}", id);
+        spawn_async(&rt_h, async move {
+            core.approvals.resolve(&id, true).await;
+        });
+    });
+
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    ui.on_ops_deny_pending(move |request_id| {
+        let core = core.clone();
+        let id = request_id.to_string();
+        tracing::info!("Operations: denying {}", id);
+        spawn_async(&rt_h, async move {
+            core.approvals.resolve(&id, false).await;
+        });
+    });
+
+    // =========================================================================
+    // CONTRACTS: Compile + Deploy
+    // =========================================================================
+
+    // --- Contracts: Compile ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_contracts_compile(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("Contracts: compile requested");
+        spawn_async(&rt_h, async move {
+            // Show compiling state
+            let _ = slint::invoke_from_event_loop({
+                let ui_w = ui_w.clone();
+                move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_contracts_compiling(true);
+                        ui.set_contracts_compile_error("".into());
+                        ui.set_contracts_compile_status("Compiling...".into());
+                    }
+                }
+            });
+
+            // Compile from the contracts/ directory relative to workspace root
+            let contracts_dir = std::path::PathBuf::from("contracts");
+            match core.compiler.compile(&contracts_dir).await {
+                Ok(result) => {
+                    let status = if result.success {
+                        let count = result.artifacts.len();
+                        format!("Compiled {} contract{}", count, if count == 1 { "" } else { "s" })
+                    } else {
+                        format!("{} error{}", result.errors.len(), if result.errors.len() == 1 { "" } else { "s" })
+                    };
+                    let error_text = result.errors.iter()
+                        .map(|e| format!("{}:{}: {}", e.file_path, e.line, e.message))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Pick first artifact as selected contract
+                    let selected = result.artifacts.first()
+                        .map(|a| a.name.clone())
+                        .unwrap_or_default();
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_compiling(false);
+                            ui.set_contracts_compile_status(status.into());
+                            ui.set_contracts_compile_error(error_text.into());
+                            ui.set_contracts_selected_contract(selected.into());
+                        }
+                    });
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    tracing::error!("Contracts: compile failed: {}", err_msg);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_compiling(false);
+                            ui.set_contracts_compile_status("Failed".into());
+                            ui.set_contracts_compile_error(err_msg.into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // --- Contracts: Deploy ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_contracts_deploy(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("Contracts: deploy requested");
+        spawn_async(&rt_h, async move {
+            // Show deploying state
+            let _ = slint::invoke_from_event_loop({
+                let ui_w = ui_w.clone();
+                move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_contracts_deploying(true);
+                        ui.set_contracts_deploy_error("".into());
+                        ui.set_contracts_deployed_address("".into());
+                    }
+                }
+            });
+
+            // Get the last compile result for bytecode
+            let compile_result = core.compiler.last_result().await;
+            let artifact = match compile_result {
+                Some(ref r) if !r.artifacts.is_empty() => r.artifacts[0].clone(),
+                _ => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_deploying(false);
+                            ui.set_contracts_deploy_error("No compiled contract. Compile first.".into());
+                        }
+                    });
+                    return;
+                }
+            };
+
+            // Get deployer account
+            let accounts = core.wallet.list_accounts().await;
+            let from = match accounts.first() {
+                Some(a) => a.address.clone(),
+                None => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_deploying(false);
+                            ui.set_contracts_deploy_error("No wallet account. Create a wallet first.".into());
+                        }
+                    });
+                    return;
+                }
+            };
+
+            // Deploy: send transaction with bytecode as data, no 'to' address
+            let bytecode = hex::decode(&artifact.bytecode_hex).unwrap_or_default();
+            match core.wallet.send_transaction_with_data(&from, "", "0", bytecode, "").await {
+                Ok(tx_hash) => {
+                    tracing::info!("Contracts: deployed tx={}", tx_hash);
+                    // For now show the tx hash; a receipt poll would give the contract address
+                    let display = format!("tx: {}", tx_hash);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_deploying(false);
+                            ui.set_contracts_deployed_address(display.into());
+                        }
+                    });
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    tracing::error!("Contracts: deploy failed: {}", err_msg);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_deploying(false);
+                            ui.set_contracts_deploy_error(err_msg.into());
+                        }
+                    });
+                }
             }
         });
     });

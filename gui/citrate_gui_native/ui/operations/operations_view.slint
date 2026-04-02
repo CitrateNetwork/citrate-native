@@ -1,0 +1,301 @@
+// Operations / Agent Center — first-class operator experience
+// Shows: active sessions, pending approvals, trail viewer, integration status, e-stop
+import { Theme } from "../theme.slint";
+
+component StatusCard inherits Rectangle {
+    in property <string> title;
+    in property <string> value;
+    in property <string> status: "unknown"; // "online", "offline", "warning"
+
+    property <color> status-color: root.status == "online" ? Theme.success
+        : root.status == "warning" ? Theme.warning
+        : root.status == "offline" ? Theme.error
+        : Theme.text-muted;
+
+    height: 72px;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.status-color; y: 3px; }
+            Text { text: root.title; color: Theme.text-secondary; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; vertical-alignment: center; }
+        }
+        Text { text: root.value; color: Theme.text; font-size: 18px; font-weight: 700; }
+    }
+}
+
+export struct TrailEntryData {
+    timestamp: string,
+    event-type: string,
+    tool-name: string,
+    risk-level: string,
+    approved: string,
+}
+
+export struct ApprovalEntryData {
+    request-id: string,
+    tool-name: string,
+    risk-level: string,
+    target: string,
+    created-at: string,
+}
+
+export component OperationsView inherits Rectangle {
+    // Session state
+    in property <string> session-id: "";
+    in property <int> active-sessions: 0;
+
+    // Approvals
+    in property <int> pending-approval-count: 0;
+    in property <[ApprovalEntryData]> pending-approvals: [];
+
+    // Trail
+    in property <int> trail-event-count: 0;
+    in property <[TrailEntryData]> trail-events: [];
+
+    // Integration status
+    in property <string> logseq-status: "offline"; // "online", "offline", "disabled"
+    in property <string> logseq-path: "";
+    in property <string> hermes-status: "offline"; // "online", "offline", "disabled"
+    in property <string> hermes-endpoint: "";
+
+    // Grant scope
+    in property <string> grant-scope: "guided"; // "read-only", "guided", "operator"
+
+    // Callbacks
+    callback emergency-stop;
+    callback refresh-trail;
+    callback approve-pending(string);
+    callback deny-pending(string);
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-xl;
+
+            // Header
+            HorizontalLayout {
+                alignment: space-between;
+                Text { text: "Agent Center"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
+
+                // Emergency Stop
+                Rectangle {
+                    width: 120px; height: 36px; border-radius: Theme.radius-md;
+                    background: Theme.error;
+                    Text { text: "Emergency Stop"; color: #000000; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.emergency-stop(); } }
+                }
+            }
+
+            // Status cards row
+            HorizontalLayout {
+                spacing: Theme.space-md;
+
+                StatusCard {
+                    horizontal-stretch: 1;
+                    title: "PENDING APPROVALS";
+                    value: root.pending-approval-count;
+                    status: root.pending-approval-count > 0 ? "warning" : "online";
+                }
+                StatusCard {
+                    horizontal-stretch: 1;
+                    title: "TRAIL EVENTS";
+                    value: root.trail-event-count;
+                    status: "online";
+                }
+                StatusCard {
+                    horizontal-stretch: 1;
+                    title: "GRANT SCOPE";
+                    value: root.grant-scope;
+                    status: root.grant-scope == "read-only" ? "online" : "warning";
+                }
+                StatusCard {
+                    horizontal-stretch: 1;
+                    title: "SESSIONS";
+                    value: root.active-sessions;
+                    status: root.active-sessions > 0 ? "online" : "offline";
+                }
+            }
+
+            // Integration status
+            HorizontalLayout {
+                spacing: Theme.space-md;
+
+                // Logseq card
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-sm;
+
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Rectangle {
+                                width: 8px; height: 8px; border-radius: 4px;
+                                background: root.logseq-status == "online" ? Theme.success : root.logseq-status == "disabled" ? Theme.text-muted : Theme.error;
+                                y: 3px;
+                            }
+                            Text { text: "Logseq"; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                        }
+                        Text {
+                            text: root.logseq-status == "online" ? "Syncing to " + root.logseq-path
+                                : root.logseq-status == "disabled" ? "Not configured"
+                                : "Offline";
+                            color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Hermes card
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-sm;
+
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Rectangle {
+                                width: 8px; height: 8px; border-radius: 4px;
+                                background: root.hermes-status == "online" ? Theme.success : root.hermes-status == "disabled" ? Theme.text-muted : Theme.error;
+                                y: 3px;
+                            }
+                            Text { text: "Hermes Sidecar"; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                        }
+                        Text {
+                            text: root.hermes-status == "online" ? "Connected to " + root.hermes-endpoint
+                                : root.hermes-status == "disabled" ? "Not configured"
+                                : "Offline";
+                            color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            // Pending approvals section
+            Text { text: "Pending Approvals"; color: Theme.text; font-size: 16px; font-weight: 600; }
+
+            if root.pending-approvals.length == 0 : Rectangle {
+                min-height: 60px;
+                border-radius: Theme.radius-lg;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+                background: transparent;
+
+                Text { text: "No pending approvals"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            }
+
+            for approval in root.pending-approvals : Rectangle {
+                min-height: 52px;
+                border-radius: Theme.radius-md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.warning;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-md;
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: Theme.space-xs;
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: approval.tool-name; color: Theme.warning; font-size: 12px; font-weight: 600; }
+                            Text { text: "[" + approval.risk-level + "]"; color: Theme.text-muted; font-size: 10px; vertical-alignment: center; }
+                        }
+                        Text { text: approval.target; color: Theme.text-secondary; font-size: 11px; overflow: elide; }
+                    }
+
+                    Rectangle {
+                        width: 60px; height: 28px; border-radius: Theme.radius-sm; background: Theme.success;
+                        Text { text: "Allow"; color: #000000; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.approve-pending(approval.request-id); } }
+                    }
+                    Rectangle {
+                        width: 50px; height: 28px; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.error;
+                        Text { text: "Deny"; color: Theme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.deny-pending(approval.request-id); } }
+                    }
+                }
+            }
+
+            // Trail viewer
+            HorizontalLayout {
+                alignment: space-between;
+                Text { text: "Trail Events"; color: Theme.text; font-size: 16px; font-weight: 600; vertical-alignment: center; }
+                Rectangle {
+                    width: 60px; height: 24px; border-radius: Theme.radius-sm;
+                    border-width: 1px; border-color: Theme.border;
+                    Text { text: "Refresh"; color: Theme.text-muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.refresh-trail(); } }
+                }
+            }
+
+            if root.trail-events.length == 0 : Rectangle {
+                min-height: 60px;
+                border-radius: Theme.radius-lg;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+                background: transparent;
+
+                Text { text: "No trail events in this session"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+            }
+
+            for evt in root.trail-events : Rectangle {
+                height: 36px;
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-secondary;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-md;
+
+                    Text { text: evt.timestamp; color: Theme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; width: 80px; }
+                    Text { text: evt.event-type; color: Theme.text; font-size: 11px; vertical-alignment: center; width: 150px; overflow: elide; }
+                    Text { text: evt.tool-name; color: Theme.accent; font-size: 11px; vertical-alignment: center; width: 100px; overflow: elide; }
+
+                    Rectangle {
+                        width: 40px; height: 18px; border-radius: Theme.radius-sm;
+                        background: evt.risk-level == "high" ? Theme.warning
+                            : evt.risk-level == "critical" ? Theme.error
+                            : Theme.text-muted;
+                        Text { text: evt.risk-level; color: #000000; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+
+                    Text {
+                        text: evt.approved == "true" ? "approved" : evt.approved == "false" ? "denied" : "—";
+                        color: evt.approved == "true" ? Theme.success : evt.approved == "false" ? Theme.error : Theme.text-muted;
+                        font-size: 10px; vertical-alignment: center;
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+        }
+    }
+}

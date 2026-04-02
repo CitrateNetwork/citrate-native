@@ -123,6 +123,12 @@ export component Sidebar inherits Rectangle {
             NavItem { label: "Learn"; active: root.active-tab == "learning"; clicked => { root.tab-changed("learning"); } }
         }
 
+        // Operations group
+        NavGroup {
+            title: "OPERATIONS";
+            NavItem { label: "Agent Center"; active: root.active-tab == "operations"; clicked => { root.tab-changed("operations"); } }
+        }
+
         // Spacer
         Rectangle { vertical-stretch: 1; }
 

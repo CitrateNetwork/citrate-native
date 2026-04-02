@@ -29,6 +29,11 @@ impl TrailRecorder {
         }
     }
 
+    /// Get the LogSeq graph path (if configured)
+    pub async fn logseq_path(&self) -> Option<String> {
+        self.logseq_path.clone()
+    }
+
     /// Record a trail event
     pub async fn record(&self, event: TrailEvent) {
         tracing::debug!("Trail: {} — {}", event.event_type, event.tool_name.as_deref().unwrap_or(""));
@@ -88,6 +93,64 @@ impl TrailRecorder {
                     risk_level: None,
                     approved: None,
                     duration_ms: None,
+                }
+            }
+            AppEvent::ToolCallRequested { tool_name, risk_level, target } => {
+                TrailEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: self.session_id.clone(),
+                    timestamp: now,
+                    event_type: "tool_call_requested".to_string(),
+                    tool_name: Some(tool_name.clone()),
+                    data: serde_json::json!({
+                        "risk_level": risk_level,
+                        "target": target,
+                    }),
+                    risk_level: Some(risk_level.clone()),
+                    approved: None,
+                    duration_ms: None,
+                }
+            }
+            AppEvent::ToolCallApproved { tool_name, request_id } => {
+                TrailEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: self.session_id.clone(),
+                    timestamp: now,
+                    event_type: "tool_call_approved".to_string(),
+                    tool_name: Some(tool_name.clone()),
+                    data: serde_json::json!({ "request_id": request_id }),
+                    risk_level: Some("high".to_string()),
+                    approved: Some(true),
+                    duration_ms: None,
+                }
+            }
+            AppEvent::ToolCallDenied { tool_name, request_id } => {
+                TrailEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: self.session_id.clone(),
+                    timestamp: now,
+                    event_type: "tool_call_denied".to_string(),
+                    tool_name: Some(tool_name.clone()),
+                    data: serde_json::json!({ "request_id": request_id }),
+                    risk_level: Some("high".to_string()),
+                    approved: Some(false),
+                    duration_ms: None,
+                }
+            }
+            AppEvent::ToolCallCompleted { tool_name, success, duration_ms, result_summary } => {
+                TrailEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: self.session_id.clone(),
+                    timestamp: now,
+                    event_type: "tool_call_completed".to_string(),
+                    tool_name: Some(tool_name.clone()),
+                    data: serde_json::json!({
+                        "success": success,
+                        "result_summary": result_summary,
+                    }),
+                    risk_level: Some("high".to_string()),
+                    approved: Some(true),
+                    duration_ms: Some(*duration_ms),
                 }
             }
             _ => return, // Other events don't need trail recording yet
@@ -227,5 +290,90 @@ mod tests {
         let recorder = TrailRecorder::new("test-session", None);
         let result = recorder.write_logseq_journal().await.expect("no error");
         assert!(result.is_none()); // No logseq path configured
+    }
+
+    #[tokio::test]
+    async fn test_record_tool_call_requested() {
+        let recorder = TrailRecorder::new("test-session", None);
+        let app_event = AppEvent::ToolCallRequested {
+            tool_name: "send_tx".to_string(),
+            risk_level: "high".to_string(),
+            target: "0xabc".to_string(),
+        };
+        recorder.record_app_event(&app_event).await;
+        assert_eq!(recorder.event_count().await, 1);
+        let events = recorder.get_events().await;
+        assert_eq!(events[0].event_type, "tool_call_requested");
+        assert_eq!(events[0].risk_level.as_deref(), Some("high"));
+    }
+
+    #[tokio::test]
+    async fn test_record_tool_call_approved() {
+        let recorder = TrailRecorder::new("test-session", None);
+        let app_event = AppEvent::ToolCallApproved {
+            tool_name: "send_tx".to_string(),
+            request_id: "req-123".to_string(),
+        };
+        recorder.record_app_event(&app_event).await;
+        assert_eq!(recorder.event_count().await, 1);
+        let events = recorder.get_events().await;
+        assert_eq!(events[0].event_type, "tool_call_approved");
+        assert_eq!(events[0].approved, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_record_tool_call_denied() {
+        let recorder = TrailRecorder::new("test-session", None);
+        let app_event = AppEvent::ToolCallDenied {
+            tool_name: "deploy_contract".to_string(),
+            request_id: "req-456".to_string(),
+        };
+        recorder.record_app_event(&app_event).await;
+        assert_eq!(recorder.event_count().await, 1);
+        let events = recorder.get_events().await;
+        assert_eq!(events[0].event_type, "tool_call_denied");
+        assert_eq!(events[0].approved, Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_record_tool_call_completed() {
+        let recorder = TrailRecorder::new("test-session", None);
+        let app_event = AppEvent::ToolCallCompleted {
+            tool_name: "send_tx".to_string(),
+            success: true,
+            duration_ms: 1500,
+            result_summary: "tx 0xabc sent".to_string(),
+        };
+        recorder.record_app_event(&app_event).await;
+        assert_eq!(recorder.event_count().await, 1);
+        let events = recorder.get_events().await;
+        assert_eq!(events[0].event_type, "tool_call_completed");
+        assert_eq!(events[0].duration_ms, Some(1500));
+    }
+
+    #[tokio::test]
+    async fn test_full_tool_lifecycle_trail() {
+        let recorder = TrailRecorder::new("test-session", None);
+        // Simulate full lifecycle: request → approve → complete
+        recorder.record_app_event(&AppEvent::ToolCallRequested {
+            tool_name: "send_tx".to_string(),
+            risk_level: "high".to_string(),
+            target: "0xdead".to_string(),
+        }).await;
+        recorder.record_app_event(&AppEvent::ToolCallApproved {
+            tool_name: "send_tx".to_string(),
+            request_id: "req-789".to_string(),
+        }).await;
+        recorder.record_app_event(&AppEvent::ToolCallCompleted {
+            tool_name: "send_tx".to_string(),
+            success: true,
+            duration_ms: 2000,
+            result_summary: "Transaction sent".to_string(),
+        }).await;
+        assert_eq!(recorder.event_count().await, 3);
+        let events = recorder.get_events().await;
+        assert_eq!(events[0].event_type, "tool_call_requested");
+        assert_eq!(events[1].event_type, "tool_call_approved");
+        assert_eq!(events[2].event_type, "tool_call_completed");
     }
 }
