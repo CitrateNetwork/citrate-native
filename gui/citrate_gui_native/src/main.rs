@@ -1588,8 +1588,9 @@ fn main() {
             let events_for_tools = core.events.clone();
             let wallet_for_tools = core.wallet.clone();
 
-            // Use send_message_with_tools which includes the function-calling loop
-            match core.chat.send_message_with_tools(
+            // Use streaming variant for incremental UI updates
+            let ui_for_stream = ui_w.clone();
+            match core.chat.send_message_with_tools_streaming(
                 &msg,
                 tool_defs,
                 |tool_name, params| {
@@ -1748,6 +1749,16 @@ fn main() {
 
                         result
                     }
+                },
+                // Streaming chunk callback — updates UI incrementally
+                move |chunk: &str| {
+                    let text = chunk.to_string();
+                    let ui_s = ui_for_stream.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_s.upgrade() {
+                            ui.set_chat_last_response(text.into());
+                        }
+                    });
                 },
             ).await {
                 Ok(response) => {
@@ -2767,6 +2778,7 @@ fn main() {
             };
 
             // Deploy: send transaction with bytecode as data, no 'to' address
+            let artifact_name = artifact.name.clone();
             let bytecode = hex::decode(&artifact.bytecode_hex).unwrap_or_default();
             match core.wallet.send_transaction_with_data(&from, "", "0", bytecode, "").await {
                 Ok(tx_hash) => {
@@ -2813,14 +2825,27 @@ fn main() {
                     }
 
                     let display = if !contract_addr.is_empty() {
-                        contract_addr
+                        contract_addr.clone()
                     } else {
                         format!("tx: {}", tx_hash)
                     };
+                    // Track deployment history
+                    let history_entry = format!("{} → {}",
+                        artifact_name,
+                        if !contract_addr.is_empty() { &contract_addr } else { &tx_hash }
+                    );
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_contracts_deploying(false);
                             ui.set_contracts_deployed_address(display.into());
+                            // Append to history
+                            let prev = ui.get_contracts_deployment_history().to_string();
+                            let new_history = if prev.is_empty() {
+                                history_entry
+                            } else {
+                                format!("{}\n{}", prev, history_entry)
+                            };
+                            ui.set_contracts_deployment_history(new_history.into());
                         }
                     });
                 }
@@ -2831,6 +2856,73 @@ fn main() {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_contracts_deploying(false);
                             ui.set_contracts_deploy_error(err_msg.into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    // --- Contracts: Run Tests (forge test) ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_contracts_run_tests(move || {
+        let _core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("Contracts: running forge tests");
+        spawn_async(&rt_h, async move {
+            let _ = slint::invoke_from_event_loop({
+                let ui_w = ui_w.clone();
+                move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_contracts_compiling(true);
+                        ui.set_contracts_compile_status("Running tests...".into());
+                    }
+                }
+            });
+
+            // Run forge test in the contracts directory
+            let contracts_dir = std::path::PathBuf::from("contracts");
+            let output = tokio::process::Command::new("forge")
+                .arg("test")
+                .arg("--summary")
+                .current_dir(&contracts_dir)
+                .output()
+                .await;
+
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let status = if out.status.success() {
+                        "Tests passed".to_string()
+                    } else {
+                        "Tests failed".to_string()
+                    };
+                    let details = if !stderr.is_empty() && !out.status.success() {
+                        stderr.lines().take(5).collect::<Vec<_>>().join("\n")
+                    } else {
+                        stdout.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
+                    };
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_compiling(false);
+                            ui.set_contracts_compile_status(status.into());
+                            if !details.is_empty() {
+                                ui.set_contracts_compile_error(details.into());
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    let err = format!("forge test failed to run: {}", e);
+                    tracing::error!("Contracts: {}", err);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_contracts_compiling(false);
+                            ui.set_contracts_compile_status("Test run failed".into());
+                            ui.set_contracts_compile_error(err.into());
                         }
                     });
                 }

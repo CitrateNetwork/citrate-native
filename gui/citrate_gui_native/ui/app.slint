@@ -258,8 +258,10 @@ export component App inherits Window {
     in property <bool> contracts-deploying: false;
     in property <string> contracts-deploy-error: "";
     in property <string> contracts-deployed-address: "";
+    in property <string> contracts-deployment-history: "";
     callback contracts-compile;
     callback contracts-deploy;
+    callback contracts-run-tests;
 
     // === Operations / Agent Center State ===
     in property <string> ops-session-id: "";
@@ -513,8 +515,10 @@ export component App inherits Window {
                         deploying: root.contracts-deploying;
                         deploy-error: root.contracts-deploy-error;
                         deployed-address: root.contracts-deployed-address;
+                        deployment-history: root.contracts-deployment-history;
                         compile => { root.contracts-compile(); }
                         deploy => { root.contracts-deploy(); }
+                        run-tests => { root.contracts-run-tests(); }
                     }
                 }
 

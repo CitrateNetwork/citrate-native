@@ -683,6 +683,24 @@ impl ChatService {
         F: Fn(String, serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<String, String>>,
     {
+        self.send_message_with_tools_streaming(user_message, tool_defs, tool_executor, |_| {}).await
+    }
+
+    /// Like send_message_with_tools, but calls `on_chunk` with intermediate content
+    /// after each tool execution and when the final response arrives.
+    /// This enables incremental UI updates without rewriting the transport layer.
+    pub async fn send_message_with_tools_streaming<F, Fut, C>(
+        &self,
+        user_message: &str,
+        tool_defs: Vec<serde_json::Value>,
+        tool_executor: F,
+        on_chunk: C,
+    ) -> Result<ChatMessage, AppError>
+    where
+        F: Fn(String, serde_json::Value) -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+        C: Fn(&str),
+    {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -739,6 +757,8 @@ impl ChatService {
 
             // If no tool calls, this is the final response
             if response.tool_calls.is_empty() {
+                // Notify listener of the final content
+                on_chunk(&response.content);
                 let assistant_msg = ChatMessage {
                     id: uuid::Uuid::new_v4().to_string(),
                     role: "assistant".to_string(),
@@ -760,6 +780,9 @@ impl ChatService {
                     Ok(output) => (output, true),
                     Err(err) => (format!("Tool error: {}", err), false),
                 };
+
+                // Notify listener of tool execution progress
+                on_chunk(&format!("[Tool: {} → {}]", call.name, if success { "ok" } else { "failed" }));
 
                 // Add tool result to conversation
                 let tool_msg = ChatMessage {

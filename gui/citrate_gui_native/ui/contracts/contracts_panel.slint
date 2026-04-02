@@ -8,6 +8,7 @@ component CompileSection inherits VerticalLayout {
     in property <bool> compiling: false;
     in property <string> compile-error: "";
     callback compile;
+    callback run-tests;
 
     spacing: Theme.space-sm;
 
@@ -30,6 +31,24 @@ component CompileSection inherits VerticalLayout {
         }
 
         TouchArea { clicked => { if !root.compiling { root.compile(); } } }
+    }
+
+    // Run Tests button
+    Rectangle {
+        height: 32px;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.bg-tertiary;
+
+        Text {
+            text: "Run Tests";
+            color: Theme.text-secondary;
+            font-size: 11px; font-weight: 500;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+
+        TouchArea { clicked => { if !root.compiling { root.run-tests(); } } }
     }
 
     Text {
@@ -62,11 +81,14 @@ component DeploySection inherits VerticalLayout {
     in property <string> environment: "Testnet";
     in-out property <string> deploy-account: "";
     in-out property <string> deploy-password: "";
+    in-out property <string> constructor-args: "";
     in property <string> gas-estimate: "";
     in property <bool> deploying: false;
     in property <string> deploy-error: "";
     in property <string> deployed-address: "";
+    in property <string> deployment-history: "";
     callback deploy;
+    callback run-tests;
 
     spacing: Theme.space-sm;
 
@@ -126,6 +148,22 @@ component DeploySection inherits VerticalLayout {
         }
     }
 
+    // Constructor args
+    VerticalLayout {
+        spacing: 2px;
+        Text { text: "Constructor Args (JSON)"; color: Theme.text-secondary; font-size: 10px; }
+        Rectangle {
+            height: 28px; border-radius: Theme.radius-sm;
+            border-width: 1px; border-color: Theme.border; background: Theme.bg;
+            TextInput {
+                text <=> root.constructor-args;
+                font-size: 10px; color: Theme.text;
+                x: Theme.space-sm; width: parent.width - Theme.space-lg;
+                vertical-alignment: center;
+            }
+        }
+    }
+
     // Gas estimate
     if root.gas-estimate != "" : HorizontalLayout {
         alignment: space-between;
@@ -162,6 +200,21 @@ component DeploySection inherits VerticalLayout {
     }
 
     if root.deploy-error != "" : Text { text: root.deploy-error; color: Theme.error; font-size: 10px; }
+
+    // Deployment history
+    if root.deployment-history != "" : VerticalLayout {
+        spacing: Theme.space-xs;
+        Text { text: "Recent Deployments"; color: Theme.text-secondary; font-size: 10px; font-weight: 600; }
+        Rectangle {
+            min-height: 28px; border-radius: Theme.radius-sm;
+            background: Theme.bg; border-width: 1px; border-color: Theme.border-subtle;
+            VerticalLayout {
+                padding: Theme.space-xs;
+                padding-left: Theme.space-sm;
+                Text { text: root.deployment-history; color: Theme.text-muted; font-size: 10px; wrap: word-wrap; }
+            }
+        }
+    }
 }
 
 export component ContractsPanel inherits Rectangle {
@@ -175,9 +228,11 @@ export component ContractsPanel inherits Rectangle {
     in property <bool> deploying: false;
     in property <string> deploy-error: "";
     in property <string> deployed-address: "";
+    in property <string> deployment-history: "";
 
     callback compile;
     callback deploy;
+    callback run-tests;
 
     background: Theme.bg;
 
@@ -200,6 +255,7 @@ export component ContractsPanel inherits Rectangle {
                         compiling: root.compiling;
                         compile-error: root.compile-error;
                         compile => { root.compile(); }
+                        run-tests => { root.run-tests(); }
                     }
 
                     Rectangle { height: 1px; background: Theme.border-subtle; }
@@ -211,7 +267,9 @@ export component ContractsPanel inherits Rectangle {
                         deploying: root.deploying;
                         deploy-error: root.deploy-error;
                         deployed-address: root.deployed-address;
+                        deployment-history: root.deployment-history;
                         deploy => { root.deploy(); }
+                        run-tests => { root.run-tests(); }
                     }
 
                     Rectangle { height: 1px; background: Theme.border-subtle; }
