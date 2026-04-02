@@ -2216,22 +2216,29 @@ fn main() {
                 }
             };
 
-            // 2. Compute model hash (SHA3 of filename for deterministic ID)
-            let filename = path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "model.gguf".to_string());
+            // 2. Compute model hash from actual file bytes (NOT filename)
+            // This ensures same bytes → same identity, different bytes → different identity
+            let model_bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!("Models: failed to read model file: {}", e);
+                    return;
+                }
+            };
             let model_hash: [u8; 32] = {
                 use sha3::{Digest, Keccak256};
                 let mut hasher = Keccak256::new();
-                hasher.update(filename.as_bytes());
+                hasher.update(&model_bytes);
                 hasher.finalize().into()
             };
+            tracing::info!("Models: artifact hash={} size={} bytes",
+                hex::encode(&model_hash[..8]), model_bytes.len());
 
-            // 3. Get IPFS CID if pinned, otherwise use filename
+            // 3. Get IPFS CID if pinned, otherwise use hex hash as placeholder
             let cid = ui_w.upgrade()
                 .map(|ui| ui.get_models_ipfs_cid().to_string())
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| filename.clone());
+                .unwrap_or_else(|| format!("hash:{}", hex::encode(model_hash)));
 
             // 4. Build registerModel(bytes32,string) calldata
             // Selector: keccak256("registerModel(bytes32,string)")[:4]
@@ -2280,10 +2287,10 @@ fn main() {
                     tracing::info!("Models: deploy tx submitted: {}", tx_hash);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
-                            ui.set_models_ipfs_cid(format!("Deployed: {}", tx_hash).into());
-                            ui.set_models_registered(true);
-                            // Mark verified once tx is confirmed (tx submission = registration success on this chain)
-                            ui.set_models_verified(true);
+                            ui.set_models_ipfs_cid(format!("tx: {}", tx_hash).into());
+                            // Truthful state: tx submitted, NOT verified.
+                            // Verified requires receipt + registry readback confirmation.
+                            ui.set_models_publish_state("submitted".into());
                         }
                     });
                 }

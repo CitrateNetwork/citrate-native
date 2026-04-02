@@ -227,8 +227,8 @@ export component App inherits Window {
     in property <int> models-count: 0;
     in property <string> models-ipfs-cid: "";
     in property <bool> models-pinning: false;
-    in property <bool> models-registered: false;
-    in property <bool> models-verified: false;
+    // Publish state: "local" | "pinned" | "submitted" | "confirmed" | "verified" | "ready" | "failed"
+    in property <string> models-publish-state: "local";
 
     // IDE callbacks
     callback ide-file-opened(string);
@@ -455,8 +455,7 @@ export component App inherits Window {
                     on-chain-model-count: root.models-count;
                     model-ipfs-cid: root.models-ipfs-cid;
                     model-pinning: root.models-pinning;
-                    model-registered: root.models-registered;
-                    model-verified: root.models-verified;
+                    publish-state: root.models-publish-state;
                     load-model => { root.models-load-model(); }
                     deploy-model => { root.models-deploy-model(); }
                     run-inference => { root.models-run-inference(); }

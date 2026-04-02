@@ -56,8 +56,8 @@ export component ModelsView inherits Rectangle {
     in property <int> on-chain-model-count: 0;
     in property <string> model-ipfs-cid: "";
     in property <bool> model-pinning: false;
-    in property <bool> model-registered: false;
-    in property <bool> model-verified: false;
+    // Publish state machine: "local" → "pinned" → "submitted" → "confirmed" → "verified" → "ready" | "failed"
+    in property <string> publish-state: "local";
 
     callback load-model;
     callback deploy-model;
@@ -165,52 +165,84 @@ export component ModelsView inherits Rectangle {
                 border-width: 1px;
                 border-color: Theme.border-subtle;
 
+                // Publish state: local → pinned → submitted → confirmed → verified → ready
+                // Each step lights up only when the state has genuinely advanced
+                property <bool> step-pinned: root.publish-state == "pinned" || root.publish-state == "submitted" || root.publish-state == "confirmed" || root.publish-state == "verified" || root.publish-state == "ready";
+                property <bool> step-submitted: root.publish-state == "submitted" || root.publish-state == "confirmed" || root.publish-state == "verified" || root.publish-state == "ready";
+                property <bool> step-confirmed: root.publish-state == "confirmed" || root.publish-state == "verified" || root.publish-state == "ready";
+                property <bool> step-verified: root.publish-state == "verified" || root.publish-state == "ready";
+                property <bool> step-failed: root.publish-state == "failed";
+
                 HorizontalLayout {
                     padding: Theme.space-md;
-                    spacing: Theme.space-md;
+                    spacing: Theme.space-sm;
 
-                    // Step 1: Storage
+                    // Step 1: Pin
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
                         spacing: Theme.space-xs;
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
-                            background: root.model-ipfs-cid != "" ? Theme.success : Theme.bg-tertiary;
-                            Text { text: "1"; color: root.model-ipfs-cid != "" ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            background: step-pinned ? Theme.success : Theme.bg-tertiary;
+                            Text { text: "1"; color: step-pinned ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
-                        Text { text: "Pin"; color: root.model-ipfs-cid != "" ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                        Text { text: "Pin"; color: step-pinned ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
 
                     Text { text: "->"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
 
-                    // Step 2: Register
+                    // Step 2: Submit
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
                         spacing: Theme.space-xs;
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
-                            background: root.model-registered ? Theme.success : Theme.bg-tertiary;
-                            Text { text: "2"; color: root.model-registered ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            background: step-submitted ? Theme.warning : Theme.bg-tertiary;
+                            Text { text: "2"; color: step-submitted ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
-                        Text { text: "Register"; color: root.model-registered ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                        Text { text: "Submit"; color: step-submitted ? Theme.warning : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
 
                     Text { text: "->"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
 
-                    // Step 3: Verify
+                    // Step 3: Confirm
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
                         spacing: Theme.space-xs;
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
-                            background: root.model-verified ? Theme.success : Theme.bg-tertiary;
-                            Text { text: "3"; color: root.model-verified ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            background: step-confirmed ? Theme.info : Theme.bg-tertiary;
+                            Text { text: "3"; color: step-confirmed ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
-                        Text { text: "Verify"; color: root.model-verified ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                        Text { text: "Confirm"; color: step-confirmed ? Theme.info : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
+
+                    Text { text: "->"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+
+                    // Step 4: Verify (readback)
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Rectangle {
+                            width: 24px; height: 24px; border-radius: 12px;
+                            background: step-verified ? Theme.success : Theme.bg-tertiary;
+                            Text { text: "4"; color: step-verified ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text { text: "Verify"; color: step-verified ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
+                    }
+                }
+
+                // Failed state banner
+                if step-failed : HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-top: Theme.space-xs;
+                    spacing: Theme.space-sm;
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.error; y: 3px; }
+                    Text { text: "Publish failed — check logs"; color: Theme.error; font-size: 11px; }
                 }
             }
         }
