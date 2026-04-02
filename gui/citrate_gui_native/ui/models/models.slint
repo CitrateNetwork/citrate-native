@@ -245,6 +245,70 @@ export component ModelsView inherits Rectangle {
                     Text { text: "Publish failed — check logs"; color: Theme.error; font-size: 11px; }
                 }
             }
+
+            // Next action CTA — always shows one clear thing to do
+            Rectangle {
+                height: 40px;
+                border-radius: Theme.radius-md;
+                background: root.publish-state == "failed" ? Theme.error
+                    : root.publish-state == "verified" || root.publish-state == "ready" ? Theme.success
+                    : Theme.accent;
+
+                Text {
+                    text: root.publish-state == "local" ? "Pin Model to IPFS"
+                        : root.publish-state == "hashed" ? "Pin Model to IPFS"
+                        : root.publish-state == "pinned" ? "Register On-Chain"
+                        : root.publish-state == "submitted" ? "Awaiting Confirmation..."
+                        : root.publish-state == "confirmed" ? "Verifying Registry..."
+                        : root.publish-state == "verified" ? "Verified — Model Published"
+                        : root.publish-state == "ready" ? "Ready for Inference"
+                        : root.publish-state == "failed" ? "Retry Publish"
+                        : "Pin Model to IPFS";
+                    color: #000000;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    enabled: root.publish-state != "submitted" && root.publish-state != "confirmed";
+                    clicked => {
+                        if root.publish-state == "local" || root.publish-state == "hashed" {
+                            root.pin-model-to-ipfs();
+                        } else if root.publish-state == "pinned" || root.publish-state == "failed" {
+                            root.deploy-model();
+                        }
+                    }
+                }
+            }
+
+            // State detail card (when publish is in progress)
+            if root.publish-state != "local" : Rectangle {
+                min-height: 40px;
+                border-radius: Theme.radius-md;
+                background: Theme.bg-tertiary;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-lg;
+
+                    VerticalLayout {
+                        spacing: Theme.space-xs;
+                        Text { text: "State"; color: Theme.text-muted; font-size: 10px; }
+                        Text { text: root.publish-state; color: Theme.text; font-size: 12px; font-weight: 600; }
+                    }
+
+                    if root.model-ipfs-cid != "" : VerticalLayout {
+                        spacing: Theme.space-xs;
+                        horizontal-stretch: 1;
+                        Text { text: "CID / Tx"; color: Theme.text-muted; font-size: 10px; }
+                        Text { text: root.model-ipfs-cid; color: Theme.text-secondary; font-size: 10px; overflow: elide; }
+                    }
+                }
+            }
         }
 
         // On-chain models section
