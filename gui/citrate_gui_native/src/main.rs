@@ -2771,8 +2771,52 @@ fn main() {
             match core.wallet.send_transaction_with_data(&from, "", "0", bytecode, "").await {
                 Ok(tx_hash) => {
                     tracing::info!("Contracts: deployed tx={}", tx_hash);
-                    // For now show the tx hash; a receipt poll would give the contract address
-                    let display = format!("tx: {}", tx_hash);
+                    // Show tx hash immediately, then poll for contract address
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        let tx = tx_hash.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_contracts_deployed_address(format!("tx: {} (confirming...)", tx).into());
+                            }
+                        }
+                    });
+
+                    // FL-2: Poll receipt for contract address (up to 30 seconds)
+                    let config = core.config.read().await;
+                    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+                    let client = reqwest::Client::new();
+                    let mut contract_addr = String::new();
+                    for _ in 0..15 {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let body = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "eth_getTransactionReceipt",
+                            "params": [&tx_hash],
+                            "id": 1,
+                        });
+                        if let Ok(resp) = client.post(&rpc_url).json(&body).send().await {
+                            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                                if let Some(result) = json.get("result") {
+                                    if !result.is_null() {
+                                        let status = result["status"].as_str().unwrap_or("0x0");
+                                        if status == "0x1" {
+                                            contract_addr = result["contractAddress"]
+                                                .as_str().unwrap_or("").to_string();
+                                            tracing::info!("Contracts: receipt confirmed, address={}", contract_addr);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let display = if !contract_addr.is_empty() {
+                        contract_addr
+                    } else {
+                        format!("tx: {}", tx_hash)
+                    };
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_contracts_deploying(false);
