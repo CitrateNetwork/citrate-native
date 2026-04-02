@@ -219,13 +219,15 @@ impl TerminalBackend for PtyTerminalBackend {
 // Test-only in-memory backend
 // ---------------------------------------------------------------------------
 
-/// Test-only in-memory backend. Not available in release builds.
-#[cfg(test)]
+/// In-memory backend for deterministic tests and harnesses.
+///
+/// This backend does not spawn an OS shell or PTY. It only records stdin,
+/// stores injected stdout bytes, and tracks terminal dimensions. That makes it
+/// portable across Linux, macOS, and Windows integration tests.
 pub struct InMemoryTerminalBackend {
     sessions: RwLock<HashMap<String, TestSession>>,
 }
 
-#[cfg(test)]
 struct TestSession {
     input_log: Vec<u8>,
     output_buffer: Vec<u8>,
@@ -234,12 +236,10 @@ struct TestSession {
     _shell: String,
 }
 
-#[cfg(test)]
 impl Default for InMemoryTerminalBackend {
     fn default() -> Self { Self::new() }
 }
 
-#[cfg(test)]
 impl InMemoryTerminalBackend {
     pub fn new() -> Self {
         Self {
@@ -265,7 +265,6 @@ impl InMemoryTerminalBackend {
     }
 }
 
-#[cfg(test)]
 #[async_trait::async_trait]
 impl TerminalBackend for InMemoryTerminalBackend {
     async fn create_session(
