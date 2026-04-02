@@ -24,8 +24,9 @@ impl Platform for TestPlatform {
 fn init_test_platform() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        slint::platform::set_platform(Box::new(TestPlatform))
-            .expect("test platform should initialize once");
+        if let Err(err) = slint::platform::set_platform(Box::new(TestPlatform)) {
+            panic!("test platform should initialize once: {err}");
+        }
     });
 }
 
@@ -37,7 +38,9 @@ fn snapshot_lock() -> &'static Mutex<()> {
 fn artifacts_dir() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/gui-snapshots");
-    fs::create_dir_all(&dir).expect("snapshot artifact directory should be created");
+    if let Err(err) = fs::create_dir_all(&dir) {
+        panic!("snapshot artifact directory should be created: {err}");
+    }
     dir
 }
 
@@ -53,9 +56,11 @@ fn save_snapshot(name: &str, snapshot: SharedPixelBuffer<slint::Rgba8Pixel>) {
         snapshot.height(),
         pixels,
     )
-    .expect("snapshot should contain RGBA pixels");
+    .unwrap_or_else(|| panic!("snapshot should contain RGBA pixels"));
     let path = artifacts_dir().join(format!("{name}.png"));
-    image.save(&path).expect("snapshot png should save");
+    if let Err(err) = image.save(&path) {
+        panic!("snapshot png should save: {err}");
+    }
 }
 
 fn assert_snapshot_has_content(snapshot: &SharedPixelBuffer<slint::Rgba8Pixel>) {
@@ -71,7 +76,7 @@ fn base_app(width: u32, height: u32) -> App {
     // Recover from poisoned mutex (prior test panic should not block subsequent tests)
     let _guard = snapshot_lock().lock().unwrap_or_else(|e| e.into_inner());
 
-    let app = App::new().expect("App should instantiate for visual test");
+    let app = App::new().unwrap_or_else(|err| panic!("App should instantiate for visual test: {err}"));
     WINDOW.with(|window| {
         window.set_size(PhysicalSize::new(width, height));
     });
@@ -193,7 +198,7 @@ fn capture_page_inline(app: &App, page_name: &str, width: u32, height: u32, conf
         window.set_size(PhysicalSize::new(width, height));
     });
     configure(app);
-    let snapshot = app.window().take_snapshot().expect("snapshot should render");
+    let snapshot = app.window().take_snapshot().unwrap_or_else(|_| panic!("snapshot should render"));
     assert_eq!(snapshot.width(), width);
     assert_eq!(snapshot.height(), height);
     assert_snapshot_has_content(&snapshot);
@@ -206,7 +211,9 @@ fn capture_page_inline(app: &App, page_name: &str, width: u32, height: u32, conf
 #[test]
 fn ui_visual_proof_suite() {
     let app = base_app(1200, 800);
-    app.show().expect("show");
+    if let Err(err) = app.show() {
+        panic!("show: {err}");
+    }
 
     // ── Part 1: Snapshot smoke — all 12 pages at 3 resolutions (36 screenshots) ──
     {
@@ -245,7 +252,7 @@ fn ui_visual_proof_suite() {
         // No approval pending
         assert!(!app.get_chat_tool_pending());
         save_snapshot("journey_approval_01_no_pending",
-            app.window().take_snapshot().expect("snap"));
+            app.window().take_snapshot().unwrap_or_else(|_| panic!("snap")));
 
         // Tool approval appears
         app.set_chat_tool_pending(true);
@@ -257,7 +264,7 @@ fn ui_visual_proof_suite() {
         assert!(app.get_chat_tool_pending());
         assert_eq!(app.get_chat_tool_risk_level().to_string(), "high");
         save_snapshot("journey_approval_02_pending",
-            app.window().take_snapshot().expect("snap"));
+            app.window().take_snapshot().unwrap_or_else(|_| panic!("snap")));
 
         // User approves → disclosure shown
         app.set_chat_tool_pending(false);

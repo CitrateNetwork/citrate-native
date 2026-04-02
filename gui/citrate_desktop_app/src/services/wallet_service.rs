@@ -6,7 +6,7 @@
 
 use crate::error::AppError;
 use crate::event_bus::{AppEvent, EventBus};
-use std::sync::Arc;
+use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
 use tokio::sync::RwLock;
 
 /// Trait for real wallet backend implementations.
@@ -66,12 +66,26 @@ impl WalletCoreBackend {
     /// Update the RPC URL target (called when environment switches).
     pub fn set_rpc_url(&self, url: &str) {
         let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
-        *self.rpc_client.write().expect("rpc_client lock") = new_client;
+        *self.rpc_client_write() = new_client;
         tracing::info!("WalletCoreBackend: RPC target updated to {}", url);
     }
 
     fn get_chain_id(&self) -> u64 {
         self.chain_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn rpc_client_read(&self) -> RwLockReadGuard<'_, Arc<citrate_wallet_core::RpcClient>> {
+        match self.rpc_client.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn rpc_client_write(&self) -> RwLockWriteGuard<'_, Arc<citrate_wallet_core::RpcClient>> {
+        match self.rpc_client.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 }
 
@@ -139,7 +153,7 @@ impl WalletBackend for WalletCoreBackend {
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
         // Clone the RPC client Arc so we don't hold the lock across await points
-        let rpc = self.rpc_client.read().expect("rpc lock").clone();
+        let rpc = self.rpc_client_read().clone();
 
         // Get the nonce from the chain — MUST succeed, no fallback to 0
         let nonce = rpc.get_nonce(from).await
@@ -181,7 +195,7 @@ impl WalletBackend for WalletCoreBackend {
         let unified_key = self.key_manager.get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
-        let rpc = self.rpc_client.read().expect("rpc lock").clone();
+        let rpc = self.rpc_client_read().clone();
         let nonce = rpc.get_nonce(from).await
             .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}", e)))?;
 
@@ -222,7 +236,7 @@ impl WalletBackend for WalletCoreBackend {
 
     fn set_rpc_url(&self, url: &str) {
         let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
-        *self.rpc_client.write().expect("rpc_client lock") = new_client;
+        *self.rpc_client_write() = new_client;
         tracing::info!("WalletCoreBackend: RPC target updated to {}", url);
     }
 }

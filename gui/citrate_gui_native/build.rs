@@ -1,3 +1,5 @@
 fn main() {
-    slint_build::compile("ui/app.slint").expect("Slint UI compilation failed");
+    if let Err(err) = slint_build::compile("ui/app.slint") {
+        panic!("Slint UI compilation failed: {err}");
+    }
 }

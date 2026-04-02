@@ -230,11 +230,23 @@ fn main() {
 
     tracing::info!("Citrate Desktop starting (Slint native)");
 
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("Failed to create Tokio runtime: {err}");
+            std::process::exit(1);
+        }
+    };
     let app_core = Arc::new(AppCore::new());
     let is_first_run = rt.block_on(app_core.wallet.is_first_run());
 
-    let ui = App::new().expect("Failed to create Slint window");
+    let ui = match App::new() {
+        Ok(ui) => ui,
+        Err(err) => {
+            eprintln!("Failed to create Slint window: {err}");
+            std::process::exit(1);
+        }
+    };
 
     // Initial state — derive environment label from loaded config, not hardcoded
     ui.set_show_onboarding(is_first_run);
@@ -3326,5 +3338,8 @@ fn main() {
     }
 
     tracing::info!("Citrate Desktop ready (full wiring)");
-    ui.run().expect("Slint event loop failed");
+    if let Err(err) = ui.run() {
+        eprintln!("Slint event loop failed: {err}");
+        std::process::exit(1);
+    }
 }
