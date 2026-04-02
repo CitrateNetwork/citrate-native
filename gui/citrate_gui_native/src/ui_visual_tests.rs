@@ -42,10 +42,16 @@ fn artifacts_dir() -> PathBuf {
 }
 
 fn save_snapshot(name: &str, snapshot: SharedPixelBuffer<slint::Rgba8Pixel>) {
+    // Fix: Slint software renderer produces alpha=0 everywhere.
+    // Force alpha to 255 so PNGs display as opaque in all viewers.
+    let mut pixels = snapshot.as_bytes().to_vec();
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk[3] = 255; // Set alpha to fully opaque
+    }
     let image = RgbaImage::from_raw(
         snapshot.width(),
         snapshot.height(),
-        snapshot.as_bytes().to_vec(),
+        pixels,
     )
     .expect("snapshot should contain RGBA pixels");
     let path = artifacts_dir().join(format!("{name}.png"));

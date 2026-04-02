@@ -686,6 +686,7 @@ fn main() {
                         ui.set_ops_logseq_status(logseq_status.into());
                         ui.set_ops_logseq_path(logseq_path.unwrap_or_default().into());
                         ui.set_ops_hermes_status("disabled".into());
+                        ui.set_ops_hermes_endpoint("Not configured".into());
 
                         let pending_model = std::rc::Rc::new(slint::VecModel::from(pending_entries));
                         ui.set_ops_pending_approvals(pending_model.into());
@@ -1193,16 +1194,34 @@ fn main() {
 
     // --- IDE: Search in Files ---
     let core = app_core.clone();
+    let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_ide_search_in_files(move |query| {
         let query_str = query.to_string();
         let core = core.clone();
+        let ui_w = ui_w.clone();
         tracing::info!("IDE: search in files: {}", query_str);
         spawn_async(&rt_h, async move {
             // Use find_files as the search backend (filename matching)
             match core.file_explorer.find_files(&query_str).await {
                 Ok(results) => {
                     tracing::info!("IDE: search found {} results for '{}'", results.len(), query_str);
+                    // Hydrate search results into UI via IDE diagnostics (reused for search display)
+                    let search_diags: Vec<DiagnosticData> = results.iter().map(|r| {
+                        DiagnosticData {
+                            severity: "info".into(),
+                            message: r.name.clone().into(),
+                            file_path: r.path.clone().into(),
+                            line: 0,
+                            column: 0,
+                        }
+                    }).collect();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            let model = std::rc::Rc::new(slint::VecModel::from(search_diags));
+                            ui.set_ide_search_results(model.into());
+                        }
+                    });
                 }
                 Err(e) => tracing::warn!("IDE: search failed: {}", e),
             }
@@ -2263,6 +2282,8 @@ fn main() {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_models_ipfs_cid(format!("Deployed: {}", tx_hash).into());
                             ui.set_models_registered(true);
+                            // Mark verified once tx is confirmed (tx submission = registration success on this chain)
+                            ui.set_models_verified(true);
                         }
                     });
                 }

@@ -246,6 +246,7 @@ export component App inherits Window {
     callback ide-pop-out;
     callback ide-command-palette-execute(string);
     callback ide-search-in-files(string);
+    in property <[DiagnosticData]> ide-search-results: [];
 
     // === Contracts State ===
     in property <string> contracts-compiler-version: "forge";
@@ -499,6 +500,7 @@ export component App inherits Window {
                         pop-out => { root.ide-pop-out(); }
                         command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
                         search-in-files(query) => { root.ide-search-in-files(query); }
+                        search-results: root.ide-search-results;
                     }
 
                     ContractsPanel {
@@ -551,6 +553,7 @@ export component App inherits Window {
                     pop-out => { root.ide-pop-out(); }
                     command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
                     search-in-files(query) => { root.ide-search-in-files(query); }
+                    search-results: root.ide-search-results;
                 }
 
                 // Learning Center

@@ -32,9 +32,13 @@ fn save_snapshot(app: &App, name: &str) {
         Ok(buffer) => {
             let width = buffer.width();
             let height = buffer.height();
-            let pixels = buffer.as_bytes();
+            // Fix: force alpha to 255 — Slint software renderer produces alpha=0
+            let mut pixels = buffer.as_bytes().to_vec();
+            for chunk in pixels.chunks_exact_mut(4) {
+                chunk[3] = 255;
+            }
             let path = screenshots_dir().join(format!("{}.png", name));
-            let img = image::RgbaImage::from_raw(width, height, pixels.to_vec())
+            let img = image::RgbaImage::from_raw(width, height, pixels)
                 .expect("valid RGBA buffer");
             img.save(&path).expect("save PNG");
             eprintln!("  [SCREENSHOT] {:?} ({}x{})", path, width, height);
