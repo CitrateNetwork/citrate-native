@@ -2280,19 +2280,84 @@ fn main() {
             tracing::info!("Models: sending registerModel tx to {} (hash={}, cid={})",
                 precompile, hex::encode(&model_hash[..8]), cid);
 
+            // Initialize publish record in ModelService
+            let content_hash = hex::encode(model_hash);
+            core.models.init_publish(
+                &path.to_string_lossy(),
+                &content_hash,
+                model_bytes.len() as u64,
+                &from,
+            ).await;
+
+            // If CID exists, mark pinned
+            if !cid.starts_with("hash:") {
+                core.models.mark_pinned(&cid).await;
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || { if let Some(ui) = ui_w.upgrade() { ui.set_models_publish_state("pinned".into()); } }
+                });
+            }
+
             match core.wallet.send_transaction_with_data(
                 &from, precompile, "0", calldata, ""
             ).await {
                 Ok(tx_hash) => {
                     tracing::info!("Models: deploy tx submitted: {}", tx_hash);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_models_ipfs_cid(format!("tx: {}", tx_hash).into());
-                            // Truthful state: tx submitted, NOT verified.
-                            // Verified requires receipt + registry readback confirmation.
-                            ui.set_models_publish_state("submitted".into());
+                    core.models.mark_submitted(&tx_hash).await;
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        let tx = tx_hash.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_models_ipfs_cid(format!("tx: {}", tx).into());
+                                ui.set_models_publish_state("submitted".into());
+                            }
                         }
                     });
+
+                    // VM-3: Poll for receipt (up to 30 seconds)
+                    for _ in 0..15 {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        match core.models.poll_receipt().await {
+                            Ok(state) => {
+                                let state_str = state.as_str().to_string();
+                                let ui_w2 = ui_w.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(ui) = ui_w2.upgrade() {
+                                        ui.set_models_publish_state(state_str.into());
+                                    }
+                                });
+                                if matches!(state,
+                                    citrate_desktop_app::services::model_service::ModelPublishState::Confirmed |
+                                    citrate_desktop_app::services::model_service::ModelPublishState::Failed
+                                ) {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Models: receipt poll error: {}", e);
+                                break;
+                            }
+                        }
+                    }
+
+                    // VM-4: If confirmed, do registry readback verification
+                    if let Some(record) = core.models.publish_record().await {
+                        if record.state == citrate_desktop_app::services::model_service::ModelPublishState::Confirmed {
+                            match core.models.verify_readback().await {
+                                Ok(state) => {
+                                    let state_str = state.as_str().to_string();
+                                    tracing::info!("Models: readback verification result: {}", state_str);
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(ui) = ui_w.upgrade() {
+                                            ui.set_models_publish_state(state_str.into());
+                                        }
+                                    });
+                                }
+                                Err(e) => tracing::warn!("Models: readback verification failed: {}", e),
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Models: deploy failed: {}", e);
