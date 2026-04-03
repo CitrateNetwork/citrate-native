@@ -3,14 +3,17 @@
 //! Tests ANSI bombs, escape injection, boundary conditions,
 //! and malicious PTY output that could crash the terminal renderer.
 
-use citrate_desktop_app::services::terminal_service::TerminalService;
+use citrate_desktop_app::services::terminal_service::{
+    InMemoryTerminalBackend, TerminalService,
+};
 use citrate_desktop_app::view_models::ide_view_models::TerminalConfig;
 use citrate_desktop_app::event_bus::EventBus;
 use std::sync::Arc;
 
 fn make_service() -> TerminalService {
     let events = Arc::new(EventBus::new());
-    TerminalService::new(events)
+    let backend = Arc::new(InMemoryTerminalBackend::new());
+    TerminalService::with_backend(events, backend)
 }
 
 fn small_config() -> TerminalConfig {
