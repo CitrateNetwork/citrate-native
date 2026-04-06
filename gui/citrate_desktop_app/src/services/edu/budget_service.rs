@@ -7,7 +7,7 @@ use crate::error::AppError;
 use super::abi;
 
 /// Contract address on chain 40204 (deployed 2026-04-05).
-const BUDGET_ADDRESS: &str = "0x712516e61C8B383dF4A63CFe83d7701Bce54B03e";
+const BUDGET_ADDRESS: &str = "0xAd5d57aD9bB17d34Debb88566ab2F5dB879Cc46F";
 
 /// Per-classroom budget snapshot.
 #[derive(Debug, Clone)]

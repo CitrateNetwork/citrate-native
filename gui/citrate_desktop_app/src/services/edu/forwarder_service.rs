@@ -8,7 +8,7 @@ use crate::error::AppError;
 use super::abi;
 
 /// Contract address on chain 40204 (deployed 2026-04-05).
-const FORWARDER_ADDRESS: &str = "0x948B3c65b89DF0B4894ABE91E6D02FE579834F8F";
+const FORWARDER_ADDRESS: &str = "0xc63d2a04762529edB649d7a4cC3E57A0085e8544";
 
 /// A meta-transaction forward request matching the Solidity struct.
 #[derive(Debug, Clone)]
