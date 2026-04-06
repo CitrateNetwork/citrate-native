@@ -13,6 +13,7 @@ import { ChatView, ChatMessageData } from "chat/chat.slint";
 import { ModelsView } from "models/models.slint";
 import { IdePanel } from "ide/ide_panel.slint";
 import { LearningView } from "learning/learning.slint";
+import { EduPanel } from "learning/edu_panel.slint";
 import { ComputeView } from "compute/compute.slint";
 import { ContractsPanel } from "contracts/contracts_panel.slint";
 import { StorageView } from "storage/storage.slint";
@@ -87,6 +88,28 @@ export component App inherits Window {
     in property <int> learning-pool-count: 0;
     in property <string> learning-pool-status: "No pool joined";
     in property <int> learning-epoch: 0;
+
+    // Education state
+    in property <string> edu-user-role: "none";
+    in property <bool> edu-vault-paused: false;
+    in property <int> edu-vault-threshold: 2;
+    in property <int> edu-vault-signer-count: 3;
+    in property <string> edu-vault-balance: "0";
+    in property <string> edu-classroom-name: "No classroom";
+    in property <int> edu-classroom-id: -1;
+    in property <int> edu-student-count: 0;
+    in property <string> edu-teacher-address: "0x";
+    in property <string> edu-budget-allocated: "0";
+    in property <string> edu-budget-remaining: "0";
+    in property <string> edu-budget-spent: "0";
+    in property <int> edu-pending-cashouts: 0;
+    in property <string> edu-salt-usd-rate: "0.01";
+    in property <int> edu-active-devices: 0;
+    callback edu-request-cashout;
+    callback edu-approve-cashout;
+    callback edu-create-classroom;
+    callback edu-register-device;
+    callback edu-refresh;
 
     // Compute state
     in property <int> compute-active-jobs: 0;
@@ -560,16 +583,42 @@ export component App inherits Window {
                 }
 
                 // Learning Center
-                if root.active-tab == "learning" : LearningView {
-                    staked-amount: root.learning-staked;
-                    total-earnings: root.learning-earnings;
-                    pool-count: root.learning-pool-count;
-                    pool-status: root.learning-pool-status;
-                    current-epoch: root.learning-epoch;
-                    peer-count: root.peer-count;
-                    join-pool => { root.learning-join-pool(); }
-                    stake => { root.learning-stake(); }
-                    claim-earnings => { root.learning-claim-earnings(); }
+                if root.active-tab == "learning" : VerticalLayout {
+                    LearningView {
+                        vertical-stretch: 0;
+                        staked-amount: root.learning-staked;
+                        total-earnings: root.learning-earnings;
+                        pool-count: root.learning-pool-count;
+                        pool-status: root.learning-pool-status;
+                        current-epoch: root.learning-epoch;
+                        peer-count: root.peer-count;
+                        join-pool => { root.learning-join-pool(); }
+                        stake => { root.learning-stake(); }
+                        claim-earnings => { root.learning-claim-earnings(); }
+                    }
+                    EduPanel {
+                        vertical-stretch: 1;
+                        user-role: root.edu-user-role;
+                        vault-paused: root.edu-vault-paused;
+                        vault-threshold: root.edu-vault-threshold;
+                        vault-signer-count: root.edu-vault-signer-count;
+                        vault-balance: root.edu-vault-balance;
+                        classroom-name: root.edu-classroom-name;
+                        classroom-id: root.edu-classroom-id;
+                        student-count: root.edu-student-count;
+                        teacher-address: root.edu-teacher-address;
+                        budget-allocated: root.edu-budget-allocated;
+                        budget-remaining: root.edu-budget-remaining;
+                        budget-spent: root.edu-budget-spent;
+                        pending-cashouts: root.edu-pending-cashouts;
+                        salt-usd-rate: root.edu-salt-usd-rate;
+                        active-devices: root.edu-active-devices;
+                        request-cashout => { root.edu-request-cashout(); }
+                        approve-cashout => { root.edu-approve-cashout(); }
+                        create-classroom => { root.edu-create-classroom(); }
+                        register-device => { root.edu-register-device(); }
+                        refresh-data => { root.edu-refresh(); }
+                    }
                 }
 
                 // Compute Marketplace

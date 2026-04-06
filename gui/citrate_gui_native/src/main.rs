@@ -2514,6 +2514,102 @@ fn main() {
     });
 
     // =========================================================================
+    // EDUCATION WIRING — Institutional vault, classroom, budget, forwarder
+    // =========================================================================
+    // Data sources: InstitutionalVault, ClassroomClusterV1, BudgetAllocation,
+    // CashoutRequest, Forwarder — all deployed on chain 40204 (2026-04-05).
+
+    // --- Edu: Refresh data ---
+    {
+        let ui_w = ui.as_weak();
+        let rpc = app_core.rpc_url.clone();
+        let rt_h = rt.handle().clone();
+        ui.on_edu_refresh(move || {
+            let ui_w = ui_w.clone();
+            let rpc = rpc.clone();
+            tracing::info!("Edu: refresh requested");
+            spawn_async(&rt_h, async move {
+                use citrate_desktop_app::services::edu::institutional_service::{RpcInstitutionalBackend, InstitutionalBackend};
+                use citrate_desktop_app::services::edu::budget_service::{RpcBudgetBackend, BudgetBackend};
+
+                let inst = RpcInstitutionalBackend::new(&rpc);
+                match inst.get_vault_status().await {
+                    Ok(status) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_edu_vault_paused(status.is_paused);
+                                ui.set_edu_vault_threshold(status.threshold as i32);
+                                ui.set_edu_vault_signer_count(status.signer_count as i32);
+                                ui.set_edu_vault_balance(status.balance_wei.into());
+                            }
+                        });
+                    }
+                    Err(e) => tracing::warn!("Edu: vault status query failed: {}", e),
+                }
+
+                // Also refresh SALT/USD rate
+                match inst.get_salt_usd_rate().await {
+                    Ok(rate) => {
+                        let display = format!("{:.2}", rate as f64 / 10000.0);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_edu_salt_usd_rate(display.into());
+                            }
+                        });
+                    }
+                    Err(e) => tracing::warn!("Edu: SALT/USD rate query failed: {}", e),
+                }
+            });
+        });
+    }
+
+    // --- Edu: Request Cashout ---
+    {
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_edu_request_cashout(move || {
+            let ui_w = ui_w.clone();
+            tracing::info!("Edu: teacher cashout requested");
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(_ui) = ui_w.upgrade() {
+                    tracing::info!("Edu: cashout flow — requires wallet tx to CashoutRequest.requestCashout()");
+                }
+            });
+        });
+    }
+
+    // --- Edu: Approve Cashout ---
+    {
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_edu_approve_cashout(move || {
+            let ui_w = ui_w.clone();
+            tracing::info!("Edu: admin cashout approval requested");
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(_ui) = ui_w.upgrade() {
+                    tracing::info!("Edu: approval flow — requires vault governance tx to CashoutRequest.approveCashout()");
+                }
+            });
+        });
+    }
+
+    // --- Edu: Create Classroom ---
+    {
+        let rt_h = rt.handle().clone();
+        ui.on_edu_create_classroom(move || {
+            tracing::info!("Edu: create classroom requested — requires Admin role tx to ClassroomClusterV1.createClassroom()");
+        });
+    }
+
+    // --- Edu: Register Device ---
+    {
+        let rt_h = rt.handle().clone();
+        ui.on_edu_register_device(move || {
+            tracing::info!("Edu: register device requested — requires IT role tx to ClassroomClusterV1.registerDevice()");
+        });
+    }
+
+    // =========================================================================
     // COMPUTE MARKETPLACE WIRING — Post job, register provider, refresh
     // =========================================================================
 
