@@ -7,8 +7,8 @@ use crate::error::AppError;
 use super::abi;
 
 /// Contract addresses on chain 40204 (deployed 2026-04-05).
-const VAULT_ADDRESS: &str = "0x8464135c8F25Da09e49BC8782676a84730C318bC";
-const CASHOUT_ADDRESS: &str = "0xbCF26943C0197d2eE0E5D05c716Be60cc2761508";
+const VAULT_ADDRESS: &str = "0x20Fbd46DeEd5EEDEB6e5c87eeB31924e9CA312ad";
+const CASHOUT_ADDRESS: &str = "0x130A46b6E41DB6E1e18fb9c759F223c459190e90";
 
 /// Vault status summary.
 #[derive(Debug, Clone)]

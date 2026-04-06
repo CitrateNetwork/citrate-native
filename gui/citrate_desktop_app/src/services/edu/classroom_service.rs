@@ -7,7 +7,7 @@ use crate::error::AppError;
 use super::abi;
 
 /// Contract address on chain 40204 (deployed 2026-04-05).
-const CLUSTER_ADDRESS: &str = "0x71C95911E9a5D330f4D621842EC243EE1343292e";
+const CLUSTER_ADDRESS: &str = "0xe0B39353F69b54e945364ffcdDD7901697Ca0166";
 
 /// Org-level role (maps to ClassroomClusterV1.OrgRole enum).
 #[derive(Debug, Clone, PartialEq)]
