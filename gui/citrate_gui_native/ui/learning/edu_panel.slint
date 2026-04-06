@@ -1,0 +1,416 @@
+// Education Panel — role-aware view for institutional learning stack.
+// Shows different content based on the user's role:
+//   Teacher: classroom dashboard, student roster, cashout requests, earnings
+//   Student: classroom feed, contribution history, progress
+//   Admin:   vault status, budget allocation, role management
+//   IT:      device registry, fleet health
+import { Theme } from "../theme.slint";
+
+export component EduPanel inherits Rectangle {
+    // Role detection (set by backend on wallet unlock)
+    in property <string> user-role: "none"; // none, student, teacher, admin, it, superadmin
+
+    // Vault status
+    in property <bool> vault-paused: false;
+    in property <int> vault-threshold: 2;
+    in property <int> vault-signer-count: 3;
+    in property <string> vault-balance: "0";
+
+    // Classroom data
+    in property <string> classroom-name: "No classroom";
+    in property <int> classroom-id: -1;
+    in property <int> student-count: 0;
+    in property <string> teacher-address: "0x...";
+
+    // Budget data
+    in property <string> budget-allocated: "0";
+    in property <string> budget-remaining: "0";
+    in property <string> budget-spent: "0";
+
+    // Cashout
+    in property <int> pending-cashouts: 0;
+    in property <string> salt-usd-rate: "0.01";
+
+    // Device (IT view)
+    in property <int> active-devices: 0;
+
+    // Callbacks
+    callback request-cashout;
+    callback approve-cashout;
+    callback create-classroom;
+    callback register-device;
+    callback refresh-data;
+
+    background: transparent;
+
+    Flickable {
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // Role badge
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+
+            Text {
+                text: "Education";
+                color: Theme.text;
+                font-size: 18px;
+                font-weight: 600;
+            }
+
+            Rectangle {
+                width: role-label.preferred-width + 16px;
+                height: 24px;
+                border-radius: 12px;
+                background: root.user-role == "admin" || root.user-role == "superadmin" ? Theme.accent :
+                            root.user-role == "teacher" ? Theme.success :
+                            root.user-role == "it" ? Theme.warning :
+                            root.user-role == "student" ? Theme.info : Theme.bg-tertiary;
+
+                role-label := Text {
+                    text: root.user-role == "none" ? "Not enrolled" :
+                          root.user-role == "superadmin" ? "Super Admin" :
+                          root.user-role;
+                    color: Theme.bg;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            // Refresh button
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                Text { text: "↻"; color: Theme.text-muted; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.refresh-data(); } }
+            }
+        }
+
+        // Vault pause banner
+        if root.vault-paused : Rectangle {
+            height: 40px;
+            border-radius: Theme.radius-md;
+            background: #7f1d1d;
+            border-width: 1px;
+            border-color: Theme.error;
+
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                alignment: start;
+                Text { text: "⚠ Vault is PAUSED — all outflows are blocked"; color: #fca5a5; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+            }
+        }
+
+        // Not enrolled
+        if root.user-role == "none" : Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-lg;
+            background: Theme.bg-secondary;
+            border-width: 2px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: Theme.space-sm;
+                Text { text: "Not enrolled in any classroom"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                Text { text: "Ask your school administrator to add you to a classroom"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+            }
+        }
+
+        // ============ TEACHER VIEW ============
+        if root.user-role == "teacher" : VerticalLayout {
+            spacing: Theme.space-md;
+
+            // Classroom header
+            Text { text: root.classroom-name; color: Theme.text; font-size: 16px; font-weight: 600; }
+
+            // Stats row
+            HorizontalLayout {
+                spacing: Theme.space-md;
+
+                // Students
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "STUDENTS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.student-count; color: Theme.text; font-size: 22px; font-weight: 600; }
+                    }
+                }
+
+                // Budget remaining
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "BUDGET LEFT"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.budget-remaining + " SALT"; color: Theme.success; font-size: 18px; font-weight: 600; overflow: elide; }
+                    }
+                }
+
+                // Rate
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "SALT/USD"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: "$" + root.salt-usd-rate; color: Theme.text; font-size: 18px; font-weight: 600; }
+                    }
+                }
+            }
+
+            // Budget bar
+            Rectangle {
+                height: 48px;
+                border-radius: Theme.radius-md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-sm;
+                    alignment: start;
+
+                    Text { text: "Spent: " + root.budget-spent + " SALT"; color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "·"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Allocated: " + root.budget-allocated + " SALT"; color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; }
+                }
+            }
+
+            // Actions
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.accent;
+
+                    Text { text: "Request Cashout"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.request-cashout(); } }
+                }
+            }
+
+            // Placeholder for student roster
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 100px;
+                border-radius: Theme.radius-lg;
+                background: Theme.bg-secondary;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Student Roster"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                    Text { text: root.student-count + " students enrolled"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+                }
+            }
+        }
+
+        // ============ STUDENT VIEW ============
+        if root.user-role == "student" : VerticalLayout {
+            spacing: Theme.space-md;
+
+            Text { text: root.classroom-name; color: Theme.text; font-size: 16px; font-weight: 600; }
+
+            // Status card
+            Rectangle {
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-xs;
+                    Text { text: "YOUR STATUS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                    Text { text: "Active contributor"; color: Theme.success; font-size: 16px; font-weight: 600; }
+                    Text { text: "Enrolled in " + root.classroom-name; color: Theme.text-secondary; font-size: 12px; }
+                }
+            }
+
+            // Contribution placeholder
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 120px;
+                border-radius: Theme.radius-lg;
+                background: Theme.bg-secondary;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Contribution Feed"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                    Text { text: "Your training corrections and learning progress will appear here"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+                }
+            }
+        }
+
+        // ============ ADMIN VIEW ============
+        if root.user-role == "admin" || root.user-role == "superadmin" : VerticalLayout {
+            spacing: Theme.space-md;
+
+            // Vault card
+            Rectangle {
+                height: 80px;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                HorizontalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-xl;
+
+                    VerticalLayout {
+                        spacing: Theme.space-xs;
+                        Text { text: "VAULT"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.vault-balance + " SALT"; color: Theme.accent; font-size: 18px; font-weight: 600; overflow: elide; }
+                    }
+
+                    VerticalLayout {
+                        spacing: Theme.space-xs;
+                        Text { text: "MULTI-SIG"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.vault-threshold + "-of-" + root.vault-signer-count; color: Theme.text; font-size: 18px; font-weight: 600; }
+                    }
+
+                    VerticalLayout {
+                        spacing: Theme.space-xs;
+                        Text { text: "CASHOUTS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.pending-cashouts + " pending"; color: root.pending-cashouts > 0 ? Theme.warning : Theme.text-muted; font-size: 18px; font-weight: 600; }
+                    }
+                }
+            }
+
+            // Admin actions
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.accent;
+                    Text { text: "Create Classroom"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.create-classroom(); } }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    Text { text: "Approve Cashouts"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.approve-cashout(); } }
+                }
+            }
+
+            // Classrooms list placeholder
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 100px;
+                border-radius: Theme.radius-lg;
+                background: Theme.bg-secondary;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Classroom Management"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                    Text { text: "Create and manage classrooms, assign teachers, allocate budgets"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+                }
+            }
+        }
+
+        // ============ IT VIEW ============
+        if root.user-role == "it" : VerticalLayout {
+            spacing: Theme.space-md;
+
+            // Device stats
+            HorizontalLayout {
+                spacing: Theme.space-md;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "ACTIVE DEVICES"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.active-devices; color: Theme.success; font-size: 22px; font-weight: 600; }
+                    }
+                }
+            }
+
+            // IT actions
+            Rectangle {
+                height: 40px;
+                border-radius: Theme.radius-md;
+                background: Theme.accent;
+                Text { text: "Register Device"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.register-device(); } }
+            }
+
+            // Fleet placeholder
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 100px;
+                border-radius: Theme.radius-lg;
+                background: Theme.bg-secondary;
+                border-width: 2px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Theme.space-sm;
+                    Text { text: "Device Fleet"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
+                    Text { text: "Provision, monitor, and revoke Chromebooks"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+                }
+            }
+        }
+    }
+    }
+}
