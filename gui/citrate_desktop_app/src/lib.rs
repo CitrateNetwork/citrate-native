@@ -149,10 +149,12 @@ pub fn data_dir_for_network(network: &str) -> String {
 }
 
 /// Get the correct chain_id for a network name.
-/// Devnet = 1337 (local), Testnet = 40204 (public).
+///
+/// Testnet beta (40204) is the only live Citrate network. Any non-mainnet
+/// alias resolves to 40204.
 pub fn chain_id_for_network(network: &str) -> u64 {
     match network.to_lowercase().as_str() {
-        "devnet" => 1337,
+        "mainnet" => 1, // Reserved
         _ => 40204,
     }
 }
