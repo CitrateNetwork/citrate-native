@@ -426,7 +426,7 @@ export component App inherits Window {
                 if root.active-tab == "settings" : SettingsView {
                     node-running: root.node-running;
                     network: root.environment;
-                    chain-id: root.environment == "TESTNET" ? 40204 : 1337;
+                    chain-id: 40204;
                     rpc-port: 18545;
                     p2p-port: 30304;
                     peer-count: root.peer-count;

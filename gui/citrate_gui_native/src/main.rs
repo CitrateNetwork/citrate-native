@@ -2522,19 +2522,28 @@ fn main() {
     // --- Edu: Refresh data ---
     {
         let ui_w = ui.as_weak();
-        let rpc = app_core.rpc_url.clone();
+        let core = app_core.clone();
         let rt_h = rt.handle().clone();
         ui.on_edu_refresh(move || {
             let ui_w = ui_w.clone();
-            let rpc = rpc.clone();
+            let core = core.clone();
             tracing::info!("Edu: refresh requested");
             spawn_async(&rt_h, async move {
                 use citrate_desktop_app::services::edu::institutional_service::{RpcInstitutionalBackend, InstitutionalBackend};
-                use citrate_desktop_app::services::edu::budget_service::{RpcBudgetBackend, BudgetBackend};
+
+                // Format RPC URL from the live config. AppCore exposes the RPC
+                // port via AppConfig (not a raw rpc_url field) so environment
+                // switches at runtime are picked up automatically. Same pattern
+                // as the contract-deploy receipt poll below.
+                let rpc = {
+                    let config = core.config.read().await;
+                    format!("http://127.0.0.1:{}", config.rpc_port)
+                };
 
                 let inst = RpcInstitutionalBackend::new(&rpc);
                 match inst.get_vault_status().await {
                     Ok(status) => {
+                        let ui_w = ui_w.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_edu_vault_paused(status.is_paused);
@@ -2551,6 +2560,7 @@ fn main() {
                 match inst.get_salt_usd_rate().await {
                     Ok(rate) => {
                         let display = format!("{:.2}", rate as f64 / 10000.0);
+                        let ui_w = ui_w.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_edu_salt_usd_rate(display.into());
@@ -2566,7 +2576,7 @@ fn main() {
     // --- Edu: Request Cashout ---
     {
         let ui_w = ui.as_weak();
-        let rt_h = rt.handle().clone();
+        let _rt_h = rt.handle().clone();
         ui.on_edu_request_cashout(move || {
             let ui_w = ui_w.clone();
             tracing::info!("Edu: teacher cashout requested");
@@ -2581,7 +2591,7 @@ fn main() {
     // --- Edu: Approve Cashout ---
     {
         let ui_w = ui.as_weak();
-        let rt_h = rt.handle().clone();
+        let _rt_h = rt.handle().clone();
         ui.on_edu_approve_cashout(move || {
             let ui_w = ui_w.clone();
             tracing::info!("Edu: admin cashout approval requested");
@@ -2595,7 +2605,7 @@ fn main() {
 
     // --- Edu: Create Classroom ---
     {
-        let rt_h = rt.handle().clone();
+        let _rt_h = rt.handle().clone();
         ui.on_edu_create_classroom(move || {
             tracing::info!("Edu: create classroom requested — requires Admin role tx to ClassroomClusterV1.createClassroom()");
         });
@@ -2603,7 +2613,7 @@ fn main() {
 
     // --- Edu: Register Device ---
     {
-        let rt_h = rt.handle().clone();
+        let _rt_h = rt.handle().clone();
         ui.on_edu_register_device(move || {
             tracing::info!("Edu: register device requested — requires IT role tx to ClassroomClusterV1.registerDevice()");
         });
