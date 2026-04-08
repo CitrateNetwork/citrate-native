@@ -197,7 +197,7 @@ impl NodeBackend for EmbeddedNodeBackend {
             Ok(accounts) => {
                 tracing::info!("Loaded {} accounts from storage", accounts.len());
                 for (address, account) in accounts {
-                    state_db.accounts.set_account(address, account);
+                    state_db.accounts.load_account(address, account);
                 }
             }
             Err(e) => tracing::warn!("Could not load accounts: {}", e),
