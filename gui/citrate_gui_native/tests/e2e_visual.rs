@@ -15,6 +15,39 @@
 slint::include_modules!();
 
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Once;
+use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint::platform::{Platform, PlatformError, WindowAdapter};
+use slint::PhysicalSize;
+
+thread_local! {
+    static WINDOW: Rc<MinimalSoftwareWindow> =
+        MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+}
+
+struct TestPlatform;
+
+impl Platform for TestPlatform {
+    fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+        Ok(WINDOW.with(|window| window.clone()))
+    }
+}
+
+fn init_test_platform() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        if let Err(err) = slint::platform::set_platform(Box::new(TestPlatform)) {
+            panic!("test platform should initialize once: {err}");
+        }
+    });
+}
+
+fn set_window_size(width: u32, height: u32) {
+    WINDOW.with(|window| {
+        window.set_size(PhysicalSize::new(width, height));
+    });
+}
 
 fn screenshots_dir() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/screenshots");
@@ -23,12 +56,8 @@ fn screenshots_dir() -> PathBuf {
 }
 
 fn save_snapshot(app: &App, name: &str) {
-    let window = app.window();
-    let size = window.size();
-    if size.width == 0 || size.height == 0 {
-        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
-    }
-    match window.take_snapshot() {
+    slint::platform::update_timers_and_animations();
+    match app.window().take_snapshot() {
         Ok(buffer) => {
             let width = buffer.width();
             let height = buffer.height();
@@ -53,8 +82,10 @@ fn save_snapshot(app: &App, name: &str) {
 /// Each check navigates to a tab, verifies state, and captures a screenshot.
 #[test]
 fn e2e_all_surfaces() {
+    init_test_platform();
+    set_window_size(1200, 800);
     let app = App::new().expect("create App");
-    app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+    app.show().expect("show App");
 
     let mut passed = 0u32;
     let mut failed = 0u32;
@@ -277,18 +308,18 @@ fn e2e_all_surfaces() {
 
     // ── 25-27. Resolution tests ──
     check!("resolution_800x600", {
-        app.window().set_size(slint::LogicalSize::new(800.0, 600.0));
+        set_window_size(800, 600);
         app.set_active_tab("dashboard".into());
         save_snapshot(&app, "25_resolution_800x600");
     });
 
     check!("resolution_1200x800", {
-        app.window().set_size(slint::LogicalSize::new(1200.0, 800.0));
+        set_window_size(1200, 800);
         save_snapshot(&app, "26_resolution_1200x800");
     });
 
     check!("resolution_1440x960", {
-        app.window().set_size(slint::LogicalSize::new(1440.0, 960.0));
+        set_window_size(1440, 960);
         save_snapshot(&app, "27_resolution_1440x960");
     });
 
