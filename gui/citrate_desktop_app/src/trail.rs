@@ -3,7 +3,7 @@
 //!
 //! Architecture: TrailEvent is the machine truth. LogSeq pages are the human
 //! truth projection. Chain anchors are the public integrity proof.
-//! See .agentile/audit/2026-03-31-agent-ecosystem-strategy/ for rationale.
+//! See .agentile/audits/2026-03/2026-03-31-agent-ecosystem-strategy/ for rationale.
 
 use crate::event_bus::{AppEvent, EventBus};
 use citrate_agent_core::canonical::{TrailEvent, LogseqProjection};
