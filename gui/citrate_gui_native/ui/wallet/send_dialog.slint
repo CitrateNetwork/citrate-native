@@ -1,5 +1,6 @@
 // Send SALT dialog — address, amount, confirm, result
 import { Theme } from "../theme.slint";
+import { PrimaryButton, SecondaryButton } from "../shared/feedback.slint";
 
 export component SendDialog inherits Rectangle {
     in property <string> from-address: "";
@@ -69,12 +70,9 @@ export component SendDialog inherits Rectangle {
                     }
                 }
 
-                Rectangle {
-                    height: 38px;
-                    border-radius: Theme.radius-md;
-                    background: Theme.accent;
-                    Text { text: "Done"; color: #000000; font-size: 14px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { clicked => { root.close(); } }
+                PrimaryButton {
+                    text: "Done";
+                    clicked => { root.close(); }
                 }
             }
 
@@ -113,31 +111,17 @@ export component SendDialog inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-sm;
 
-                    Rectangle {
-                        height: 38px;
+                    SecondaryButton {
+                        text: "Back";
                         horizontal-stretch: 1;
-                        border-radius: Theme.radius-md;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        Text { text: "Back"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.confirming = false; } }
+                        clicked => { root.confirming = false; }
                     }
 
-                    Rectangle {
-                        height: 38px;
+                    PrimaryButton {
+                        text: root.sending ? "Sending..." : "Confirm & Send";
+                        disabled: root.sending;
                         horizontal-stretch: 1;
-                        border-radius: Theme.radius-md;
-                        background: root.sending ? Theme.bg-tertiary : Theme.accent;
-                        opacity: root.sending ? 0.6 : 1.0;
-                        Text {
-                            text: root.sending ? "Sending..." : "Confirm & Send";
-                            color: root.sending ? Theme.text-muted : #000000;
-                            font-size: 13px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        TouchArea { clicked => { if !root.sending { root.send(root.to-address, root.amount, root.password); } } }
+                        clicked => { root.send(root.to-address, root.amount, root.password); }
                     }
                 }
             }
@@ -224,23 +208,16 @@ export component SendDialog inherits Rectangle {
                 HorizontalLayout {
                     spacing: Theme.space-sm;
 
-                    Rectangle {
-                        height: 38px;
+                    SecondaryButton {
+                        text: "Cancel";
                         horizontal-stretch: 1;
-                        border-radius: Theme.radius-md;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        Text { text: "Cancel"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.close(); } }
+                        clicked => { root.close(); }
                     }
 
-                    Rectangle {
-                        height: 38px;
+                    PrimaryButton {
+                        text: "Review";
                         horizontal-stretch: 1;
-                        border-radius: Theme.radius-md;
-                        background: Theme.accent;
-                        Text { text: "Review"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.confirming = true; } }
+                        clicked => { root.confirming = true; }
                     }
                 }
             }

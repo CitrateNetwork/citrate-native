@@ -47,6 +47,59 @@ export global Theme {
     out property <length> radius-lg: 8px;
     out property <length> radius-xl: 12px;
 
+    // ========================================================================
+    // Typography (Sprint P950-C, WP-C.1)
+    // ========================================================================
+    // Use these instead of literal px values. Sizes are ordered by visual
+    // weight: xs for labels, 3xl for hero headings.
+    out property <length> font-size-xs: 10px;      // Tiny labels, monospace status
+    out property <length> font-size-sm: 11px;      // Secondary metadata
+    out property <length> font-size-md: 13px;      // Default body
+    out property <length> font-size-lg: 14px;      // Emphasized body
+    out property <length> font-size-xl: 16px;      // Subheadings
+    out property <length> font-size-2xl: 18px;     // Section headings
+    out property <length> font-size-3xl: 24px;     // Page/hero headings
+
+    // Weights — numeric per CSS convention
+    out property <int> font-weight-regular: 400;
+    out property <int> font-weight-medium: 500;
+    out property <int> font-weight-semibold: 600;
+    out property <int> font-weight-bold: 700;
+
+    // ========================================================================
+    // Motion tokens (Sprint P950-C, WP-C.1)
+    // ========================================================================
+    // Guidelines:
+    //   duration-instant — state flips that must feel immediate (focus, hover-start)
+    //   duration-fast    — most press/hover transitions; the "default" choice
+    //   duration-base    — tab switches, drawer slides, meaningful state changes
+    //   duration-slow    — large-surface transitions, emphasis animations
+    out property <duration> duration-instant: 80ms;
+    out property <duration> duration-fast: 120ms;
+    out property <duration> duration-base: 180ms;
+    out property <duration> duration-slow: 240ms;
+
+    // ========================================================================
+    // Elevation tokens (Sprint P950-C, WP-C.1)
+    // ========================================================================
+    // Apply to Rectangles via drop-shadow-*. Three levels match the standard
+    // elevation ladder: cards → dialogs → modals. The shadow color includes
+    // opacity so tokens work on any background.
+    out property <color> shadow-color-sm: rgba(0, 0, 0, 0.25);
+    out property <color> shadow-color-md: rgba(0, 0, 0, 0.35);
+    out property <color> shadow-color-lg: rgba(0, 0, 0, 0.50);
+    out property <length> shadow-offset-sm: 2px;
+    out property <length> shadow-offset-md: 4px;
+    out property <length> shadow-offset-lg: 8px;
+    out property <length> shadow-blur-sm: 4px;
+    out property <length> shadow-blur-md: 8px;
+    out property <length> shadow-blur-lg: 16px;
+
+    // Hover scale — subtle lift on interactive surfaces. 1.02 is the
+    // sweet spot; less is imperceptible, more feels jumpy.
+    out property <float> scale-hover: 1.02;
+    out property <float> scale-pressed: 0.98;
+
     // Layout
     out property <length> sidebar-width: 220px;
     out property <length> sidebar-collapsed: 52px;
