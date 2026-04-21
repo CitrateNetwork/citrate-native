@@ -297,10 +297,11 @@ export component WalletView inherits Rectangle {
                 Rectangle {
                     height: 44px; horizontal-stretch: 1;
                     border-radius: Theme.radius-lg;
-                    background: send-btn.has-hover ? Theme.accent-hover : Theme.accent;
-                    animate background { duration: 150ms; easing: ease-in-out; }
-                    Text { text: "Send"; color: #000000; font-size: 14px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                    send-btn := TouchArea { clicked => { root.send-clicked(); } }
+                    background: send-btn.pressed ? Theme.accent-hover.darker(0.15) :
+                                (send-btn.has-hover ? Theme.accent-hover : Theme.accent);
+                    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+                    Text { text: "Send"; color: #000000; font-size: Theme.font-size-md; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
+                    send-btn := TouchArea { mouse-cursor: pointer; clicked => { root.send-clicked(); } }
                 }
 
                 Rectangle {
@@ -308,11 +309,12 @@ export component WalletView inherits Rectangle {
                     border-radius: Theme.radius-lg;
                     border-width: 1px;
                     border-color: recv-btn.has-hover ? Theme.accent : Theme.border;
-                    background: recv-btn.has-hover ? Theme.bg-tertiary : transparent;
-                    animate background { duration: 150ms; easing: ease-in-out; }
-                    animate border-color { duration: 150ms; easing: ease-in-out; }
-                    Text { text: "Receive"; color: Theme.text; font-size: 14px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                    recv-btn := TouchArea { clicked => { root.copy-address(); } }
+                    background: recv-btn.pressed ? Theme.bg-secondary :
+                                (recv-btn.has-hover ? Theme.bg-tertiary : transparent);
+                    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+                    animate border-color { duration: Theme.duration-fast; easing: ease-in-out; }
+                    Text { text: "Receive"; color: Theme.text; font-size: Theme.font-size-md; font-weight: Theme.font-weight-medium; horizontal-alignment: center; vertical-alignment: center; }
+                    recv-btn := TouchArea { mouse-cursor: pointer; clicked => { root.copy-address(); } }
                 }
 
                 Rectangle {
@@ -320,17 +322,18 @@ export component WalletView inherits Rectangle {
                     border-radius: Theme.radius-lg;
                     border-width: 1px;
                     border-color: faucet-btn.has-hover ? Theme.success : Theme.border;
-                    background: faucet-btn.has-hover ? Theme.bg-tertiary : transparent;
-                    animate background { duration: 150ms; easing: ease-in-out; }
-                    animate border-color { duration: 150ms; easing: ease-in-out; }
+                    background: faucet-btn.pressed ? Theme.bg-secondary :
+                                (faucet-btn.has-hover ? Theme.bg-tertiary : transparent);
+                    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+                    animate border-color { duration: Theme.duration-fast; easing: ease-in-out; }
                     Text {
                         text: root.faucet-status != "" ? root.faucet-status : "Faucet";
                         color: root.faucet-status == "Sent!" ? Theme.success : Theme.text;
-                        font-size: 14px; font-weight: 500;
+                        font-size: Theme.font-size-md; font-weight: Theme.font-weight-medium;
                         horizontal-alignment: center; vertical-alignment: center;
                         overflow: elide;
                     }
-                    faucet-btn := TouchArea { clicked => { root.request-faucet(); } }
+                    faucet-btn := TouchArea { mouse-cursor: pointer; clicked => { root.request-faucet(); } }
                 }
 
                 // Session timer display
@@ -506,6 +509,10 @@ export component WalletView inherits Rectangle {
             border-radius: Theme.radius-xl;
             background: Theme.surface;
             border-width: 1px; border-color: Theme.border;
+            // Elevation — lifts the dialog off the overlay backdrop
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000070;
             TouchArea {} // block click-through
 
             VerticalLayout {
@@ -580,6 +587,9 @@ export component WalletView inherits Rectangle {
             border-radius: Theme.radius-xl;
             background: Theme.surface;
             border-width: 1px; border-color: Theme.border;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000070;
             TouchArea {}
 
             VerticalLayout {
@@ -660,6 +670,9 @@ export component WalletView inherits Rectangle {
             border-radius: Theme.radius-xl;
             background: Theme.surface;
             border-width: 1px; border-color: Theme.border;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000070;
             TouchArea {} // block click-through
 
             VerticalLayout {

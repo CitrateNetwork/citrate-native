@@ -20,8 +20,8 @@ export component LoadingButton inherits Rectangle {
                 root.state == "error" ? Theme.error :
                 (btn-touch.has-hover && !root.disabled ? Theme.bg-tertiary : transparent);
     opacity: root.disabled ? 0.5 : 1.0;
-    animate background { duration: 200ms; easing: ease-in-out; }
-    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-base; easing: ease-in-out; }
+    animate border-color { duration: Theme.duration-base; easing: ease-in-out; }
 
     HorizontalLayout {
         alignment: center;
@@ -78,6 +78,125 @@ export component StatusBadge inherits Rectangle {
         font-weight: 600;
         horizontal-alignment: center;
         vertical-alignment: center;
+    }
+}
+
+// ============================================================================
+// Press-state button primitives (Sprint P950-C, WP-C.2)
+// ============================================================================
+//
+// The core UX fix for "I have to double-click all the buttons." These give
+// INSTANT visual feedback on press — the background changes and scale dips
+// slightly, so the user sees their click was registered before any async
+// handler returns.
+
+/// Primary button — filled accent color; use for main CTAs (Send, Submit).
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> disabled: false;
+    in property <length> button-height: 38px;
+    callback clicked;
+
+    height: root.button-height;
+    border-radius: Theme.radius-md;
+    background: root.disabled ? Theme.bg-tertiary :
+                (touch.pressed ? Theme.accent-hover.darker(0.15) :
+                 (touch.has-hover ? Theme.accent-hover : Theme.accent));
+    animate background { duration: Theme.duration-fast; }
+    opacity: root.disabled ? 0.6 : 1.0;
+    animate opacity { duration: Theme.duration-fast; }
+
+    Text {
+        text: root.text;
+        color: root.disabled ? Theme.text-muted : #000000;
+        font-size: Theme.font-size-md;
+        font-weight: Theme.font-weight-semibold;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => {
+            if (!root.disabled) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+/// Secondary button — outlined; for Cancel, Back, secondary actions.
+export component SecondaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> disabled: false;
+    in property <length> button-height: 38px;
+    callback clicked;
+
+    height: root.button-height;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.disabled ? Theme.border-subtle :
+                  (touch.has-hover ? Theme.accent : Theme.border);
+    background: root.disabled ? transparent :
+                (touch.pressed ? Theme.bg-tertiary :
+                 (touch.has-hover ? Theme.bg-secondary : transparent));
+    animate background { duration: Theme.duration-fast; }
+    animate border-color { duration: Theme.duration-fast; }
+    opacity: root.disabled ? 0.6 : 1.0;
+
+    Text {
+        text: root.text;
+        color: Theme.text;
+        font-size: Theme.font-size-md;
+        font-weight: Theme.font-weight-medium;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => {
+            if (!root.disabled) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+/// Generic press-state Rectangle for sites that need a non-button click
+/// surface (rows, tiles, nav items, avatar bubbles). Provides the same
+/// instant-feedback hover + press coloring as PrimaryButton without
+/// forcing button styling.
+///
+/// Usage:
+///   Pressable {
+///       base-color: root.active ? Theme.bg-tertiary : transparent;
+///       border-radius: Theme.radius-md;
+///       clicked => { root.select(); }
+///
+///       // children go INSIDE via HorizontalLayout / VerticalLayout
+///       HorizontalLayout { ... }
+///   }
+export component Pressable inherits Rectangle {
+    in property <color> base-color: transparent;
+    in property <color> hover-color: Theme.bg-tertiary;
+    in property <color> pressed-color: Theme.bg-secondary;
+    in property <bool> disabled: false;
+    callback clicked;
+
+    background: root.disabled ? root.base-color :
+                (touch.pressed ? root.pressed-color :
+                 (touch.has-hover ? root.hover-color : root.base-color));
+    animate background { duration: Theme.duration-fast; }
+    opacity: root.disabled ? 0.5 : 1.0;
+
+    touch := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => {
+            if (!root.disabled) {
+                root.clicked();
+            }
+        }
     }
 }
 

@@ -140,12 +140,13 @@ export component ModelsView inherits Rectangle {
                         border-radius: Theme.radius-sm;
                         border-width: 1px;
                         border-color: pin-btn.has-hover ? Theme.accent : Theme.border;
-                        background: pin-btn.has-hover ? Theme.bg-tertiary : transparent;
-                        animate background { duration: 150ms; easing: ease-in-out; }
+                        background: pin-btn.pressed ? Theme.bg-secondary :
+                                    (pin-btn.has-hover ? Theme.bg-tertiary : transparent);
+                        animate background { duration: Theme.duration-fast; easing: ease-in-out; }
                         opacity: root.model-pinning ? 0.5 : 1.0;
 
                         Text { text: "Pin"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                        pin-btn := TouchArea { clicked => { if !root.model-pinning { root.pin-model-to-ipfs(); } } }
+                        pin-btn := TouchArea { mouse-cursor: root.model-pinning ? default : pointer; clicked => { if !root.model-pinning { root.pin-model-to-ipfs(); } } }
                     }
                 }
             }
@@ -355,10 +356,11 @@ export component ModelsView inherits Rectangle {
                 height: 38px;
                 horizontal-stretch: 1;
                 border-radius: Theme.radius-md;
-                background: hf-btn.has-hover ? Theme.accent-hover : Theme.accent;
-                animate background { duration: 150ms; easing: ease-in-out; }
-                Text { text: "Browse HuggingFace"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                hf-btn := TouchArea { clicked => { root.browse-huggingface(); } }
+                background: hf-btn.pressed ? Theme.accent-hover.darker(0.15) :
+                            (hf-btn.has-hover ? Theme.accent-hover : Theme.accent);
+                animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+                Text { text: "Browse HuggingFace"; color: #000000; font-size: Theme.font-size-sm; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
+                hf-btn := TouchArea { mouse-cursor: pointer; clicked => { root.browse-huggingface(); } }
             }
 
             Rectangle {
@@ -367,11 +369,12 @@ export component ModelsView inherits Rectangle {
                 border-radius: Theme.radius-md;
                 border-width: 1px;
                 border-color: deploy-btn.has-hover ? Theme.accent : Theme.border;
-                background: deploy-btn.has-hover ? Theme.bg-tertiary : transparent;
-                animate background { duration: 150ms; easing: ease-in-out; }
-                animate border-color { duration: 150ms; easing: ease-in-out; }
-                Text { text: "Deploy Model"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                deploy-btn := TouchArea { clicked => { root.deploy-model(); } }
+                background: deploy-btn.pressed ? Theme.bg-secondary :
+                            (deploy-btn.has-hover ? Theme.bg-tertiary : transparent);
+                animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+                animate border-color { duration: Theme.duration-fast; easing: ease-in-out; }
+                Text { text: "Deploy Model"; color: Theme.text; font-size: Theme.font-size-sm; horizontal-alignment: center; vertical-alignment: center; }
+                deploy-btn := TouchArea { mouse-cursor: pointer; clicked => { root.deploy-model(); } }
             }
         }
     }
