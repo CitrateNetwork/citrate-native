@@ -20,8 +20,8 @@ export component LoadingButton inherits Rectangle {
                 root.state == "error" ? Theme.error :
                 (btn-touch.has-hover && !root.disabled ? Theme.bg-tertiary : transparent);
     opacity: root.disabled ? 0.5 : 1.0;
-    animate background { duration: 200ms; easing: ease-in-out; }
-    animate border-color { duration: 200ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-base; easing: ease-in-out; }
+    animate border-color { duration: Theme.duration-base; easing: ease-in-out; }
 
     HorizontalLayout {
         alignment: center;
@@ -152,6 +152,43 @@ export component SecondaryButton inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
+
+    touch := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => {
+            if (!root.disabled) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+/// Generic press-state Rectangle for sites that need a non-button click
+/// surface (rows, tiles, nav items, avatar bubbles). Provides the same
+/// instant-feedback hover + press coloring as PrimaryButton without
+/// forcing button styling.
+///
+/// Usage:
+///   Pressable {
+///       base-color: root.active ? Theme.bg-tertiary : transparent;
+///       border-radius: Theme.radius-md;
+///       clicked => { root.select(); }
+///
+///       // children go INSIDE via HorizontalLayout / VerticalLayout
+///       HorizontalLayout { ... }
+///   }
+export component Pressable inherits Rectangle {
+    in property <color> base-color: transparent;
+    in property <color> hover-color: Theme.bg-tertiary;
+    in property <color> pressed-color: Theme.bg-secondary;
+    in property <bool> disabled: false;
+    callback clicked;
+
+    background: root.disabled ? root.base-color :
+                (touch.pressed ? root.pressed-color :
+                 (touch.has-hover ? root.hover-color : root.base-color));
+    animate background { duration: Theme.duration-fast; }
+    opacity: root.disabled ? 0.5 : 1.0;
 
     touch := TouchArea {
         mouse-cursor: root.disabled ? default : pointer;

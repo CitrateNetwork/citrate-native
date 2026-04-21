@@ -7,9 +7,11 @@ export component NavItem inherits Rectangle {
     callback clicked;
 
     height: 36px;
-    background: active ? Theme.bg-tertiary : (touch.has-hover ? Theme.bg-tertiary : transparent);
+    background: root.active ? Theme.bg-tertiary :
+                (touch.pressed ? Theme.bg-secondary :
+                 (touch.has-hover ? Theme.bg-tertiary : transparent));
     border-radius: Theme.radius-md;
-    animate background { duration: 150ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
 
     HorizontalLayout {
         padding-left: Theme.space-lg;
@@ -18,15 +20,16 @@ export component NavItem inherits Rectangle {
 
         Text {
             text: root.label;
-            color: active ? Theme.accent : (touch.has-hover ? Theme.text : Theme.text-secondary);
-            font-size: 13px;
+            color: root.active ? Theme.accent : (touch.has-hover ? Theme.text : Theme.text-secondary);
+            font-size: Theme.font-size-sm;
             vertical-alignment: center;
             overflow: elide;
-            animate color { duration: 150ms; easing: ease-in-out; }
+            animate color { duration: Theme.duration-fast; easing: ease-in-out; }
         }
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 }
@@ -58,7 +61,7 @@ export component Sidebar inherits Rectangle {
     width: root.compact ? (root.hovered ? Theme.sidebar-width : Theme.sidebar-collapsed) : Theme.sidebar-width;
     background: Theme.bg-secondary;
     border-width: 0px;
-    animate width { duration: 250ms; easing: ease-in-out; }
+    animate width { duration: Theme.duration-slow; easing: ease-in-out; }
 
     sidebar-hover := TouchArea {}
 

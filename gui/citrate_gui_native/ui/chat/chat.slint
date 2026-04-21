@@ -97,14 +97,20 @@ component ToolApprovalCard inherits Rectangle {
         HorizontalLayout {
             spacing: Theme.space-sm;
             Rectangle {
-                height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.success;
+                height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm;
+                background: approve-touch.pressed ? Theme.success.darker(0.2) :
+                            (approve-touch.has-hover ? Theme.success.brighter(0.15) : Theme.success);
+                animate background { duration: Theme.duration-fast; }
                 Text { text: "Allow Once"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.approve(); } }
+                approve-touch := TouchArea { mouse-cursor: pointer; clicked => { root.approve(); } }
             }
             Rectangle {
                 height: 28px; horizontal-stretch: 1; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.error;
+                background: deny-touch.pressed ? Theme.error.with-alpha(0.3) :
+                            (deny-touch.has-hover ? Theme.error.with-alpha(0.15) : transparent);
+                animate background { duration: Theme.duration-fast; }
                 Text { text: "Deny"; color: Theme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.reject(); } }
+                deny-touch := TouchArea { mouse-cursor: pointer; clicked => { root.reject(); } }
             }
         }
     }
@@ -321,9 +327,10 @@ export component ChatView inherits Rectangle {
                     border-radius: 18px;
                     property <bool> can-send: root.model-loaded && !root.thinking && root.user-input != "";
                     background: can-send
-                        ? (send-touch.has-hover ? Theme.accent-hover : Theme.accent)
+                        ? (send-touch.pressed ? Theme.accent-hover.darker(0.2) :
+                           (send-touch.has-hover ? Theme.accent-hover : Theme.accent))
                         : Theme.bg-tertiary;
-                    animate background { duration: 150ms; easing: ease-in-out; }
+                    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
 
                     Text {
                         text: "↑";
@@ -335,6 +342,7 @@ export component ChatView inherits Rectangle {
                     }
 
                     send-touch := TouchArea {
+                        mouse-cursor: parent.can-send ? pointer : default;
                         clicked => {
                             if root.user-input != "" && root.model-loaded && !root.thinking {
                                 root.send-message(root.user-input);
