@@ -9,11 +9,16 @@ component StatCard inherits Rectangle {
 
     min-height: 88px;
     border-radius: Theme.radius-lg;
-    background: Theme.surface;
+    background: touch.has-hover ? Theme.bg-tertiary.brighter(0.3) : Theme.surface;
     border-width: 1px;
     border-color: touch.has-hover ? Theme.border : Theme.border-subtle;
     clip: true;
-    animate border-color { duration: 150ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+    animate border-color { duration: Theme.duration-fast; easing: ease-in-out; }
+    // Subtle depth — lifts card off the background on hover
+    drop-shadow-offset-y: touch.has-hover ? 2px : 0px;
+    drop-shadow-blur: touch.has-hover ? 8px : 0px;
+    drop-shadow-color: touch.has-hover ? #00000030 : transparent;
 
     touch := TouchArea {}
 

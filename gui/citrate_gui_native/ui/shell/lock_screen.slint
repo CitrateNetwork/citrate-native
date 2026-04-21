@@ -90,23 +90,27 @@ export component LockScreen inherits Rectangle {
 
                 // Unlock button
                 Rectangle {
+                    property <bool> ready: !root.locked-out && !root.unlocking;
                     height: 42px;
                     border-radius: Theme.radius-md;
-                    background: root.locked-out ? Theme.bg-tertiary :
-                                root.unlocking ? Theme.bg-tertiary : Theme.accent;
-                    opacity: root.locked-out || root.unlocking ? 0.5 : 1.0;
+                    background: !self.ready ? Theme.bg-tertiary :
+                                (unlock-touch.pressed ? Theme.accent-hover.darker(0.15) :
+                                 (unlock-touch.has-hover ? Theme.accent-hover : Theme.accent));
+                    animate background { duration: Theme.duration-fast; }
+                    opacity: self.ready ? 1.0 : 0.5;
 
                     Text {
                         text: root.unlocking ? "Unlocking..." :
                               root.locked-out ? "Locked Out" : "Unlock";
-                        color: root.locked-out || root.unlocking ? Theme.text-muted : #000000;
-                        font-size: 14px;
-                        font-weight: 600;
+                        color: parent.ready ? #000000 : Theme.text-muted;
+                        font-size: Theme.font-size-md;
+                        font-weight: Theme.font-weight-semibold;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
 
-                    TouchArea {
+                    unlock-touch := TouchArea {
+                        mouse-cursor: parent.ready ? pointer : default;
                         clicked => {
                             if !root.unlocking && !root.locked-out {
                                 root.unlock(root.password);
@@ -118,16 +122,21 @@ export component LockScreen inherits Rectangle {
                 // Sign out link
                 Rectangle {
                     height: 32px;
+                    background: signout-touch.pressed ? Theme.bg-secondary :
+                                (signout-touch.has-hover ? Theme.bg-tertiary : transparent);
+                    border-radius: Theme.radius-sm;
+                    animate background { duration: Theme.duration-fast; }
 
                     Text {
                         text: "Sign Out";
-                        color: Theme.text-muted;
-                        font-size: 12px;
+                        color: signout-touch.has-hover ? Theme.text : Theme.text-muted;
+                        font-size: Theme.font-size-sm;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                        animate color { duration: Theme.duration-fast; }
                     }
 
-                    TouchArea {
+                    signout-touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.sign-out(); }
                     }

@@ -28,16 +28,19 @@ component OnboardingButton inherits Rectangle {
     min-width: 140px;
     border-radius: Theme.radius-md;
     background: !root.enabled ? Theme.bg-tertiary :
-                root.primary ? (btn-touch.has-hover ? Theme.accent-hover : Theme.accent) :
-                (btn-touch.has-hover ? Theme.surface : Theme.bg-tertiary);
+                root.primary
+                    ? (btn-touch.pressed ? Theme.accent-hover.darker(0.15) :
+                       (btn-touch.has-hover ? Theme.accent-hover : Theme.accent))
+                    : (btn-touch.pressed ? Theme.bg-secondary :
+                       (btn-touch.has-hover ? Theme.surface : Theme.bg-tertiary));
     opacity: root.enabled ? 1.0 : 0.5;
-    animate background { duration: 150ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
 
     Text {
         text: root.label;
         color: root.primary ? #000000 : Theme.text;
-        font-size: 14px;
-        font-weight: 600;
+        font-size: Theme.font-size-md;
+        font-weight: Theme.font-weight-semibold;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -57,9 +60,14 @@ component PersonaCard inherits Rectangle {
 
     height: 90px;
     border-radius: Theme.radius-lg;
-    background: selected ? Theme.bg-tertiary : Theme.surface;
+    background: selected ? Theme.bg-tertiary :
+                (card-touch.pressed ? Theme.bg-tertiary :
+                 (card-touch.has-hover ? Theme.bg-tertiary.brighter(0.4) : Theme.surface));
+    animate background { duration: Theme.duration-fast; }
     border-width: selected ? 2px : 1px;
-    border-color: selected ? Theme.accent : Theme.border-subtle;
+    border-color: selected ? Theme.accent :
+                  (card-touch.has-hover ? Theme.accent.darker(0.3) : Theme.border-subtle);
+    animate border-color { duration: Theme.duration-fast; }
 
     HorizontalLayout {
         padding: Theme.space-lg;
@@ -101,7 +109,10 @@ component PersonaCard inherits Rectangle {
         }
     }
 
-    TouchArea { clicked => { root.clicked(); } }
+    card-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
 }
 
 component LabeledInput inherits VerticalLayout {
@@ -163,9 +174,14 @@ component EnvironmentCard inherits Rectangle {
 
     height: 60px;
     border-radius: Theme.radius-md;
-    background: selected ? Theme.bg-tertiary : Theme.surface;
+    background: selected ? Theme.bg-tertiary :
+                (env-touch.pressed ? Theme.bg-tertiary :
+                 (env-touch.has-hover ? Theme.bg-tertiary.brighter(0.4) : Theme.surface));
+    animate background { duration: Theme.duration-fast; }
     border-width: selected ? 2px : 1px;
-    border-color: selected ? Theme.accent : Theme.border-subtle;
+    border-color: selected ? Theme.accent :
+                  (env-touch.has-hover ? Theme.accent.darker(0.3) : Theme.border-subtle);
+    animate border-color { duration: Theme.duration-fast; }
 
     VerticalLayout {
         padding: Theme.space-md;
@@ -173,8 +189,8 @@ component EnvironmentCard inherits Rectangle {
         Text {
             text: root.name;
             color: selected ? Theme.accent : Theme.text;
-            font-size: 14px;
-            font-weight: 600;
+            font-size: Theme.font-size-md;
+            font-weight: Theme.font-weight-semibold;
         }
         Text {
             text: root.description;
@@ -183,7 +199,10 @@ component EnvironmentCard inherits Rectangle {
         }
     }
 
-    TouchArea { clicked => { root.clicked(); } }
+    env-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -48,17 +48,17 @@ export component ToggleRow inherits Rectangle {
             border-radius: 11px;
             background: root.enabled ? Theme.accent : Theme.bg-tertiary;
             y: (parent.height - self.height) / 2;
-            animate background { duration: 200ms; easing: ease-in-out; }
+            animate background { duration: Theme.duration-base; easing: ease-in-out; }
 
             Rectangle {
                 width: 16px; height: 16px; border-radius: 8px;
                 background: #ffffff;
                 x: root.enabled ? 21px : 3px;
                 y: 3px;
-                animate x { duration: 200ms; easing: ease-in-out; }
+                animate x { duration: Theme.duration-base; easing: ease-in-out; }
             }
 
-            TouchArea { clicked => { root.toggled(); } }
+            TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
         }
     }
 }
@@ -69,28 +69,32 @@ export component ActionButton inherits Rectangle {
     in property <bool> disabled: false;
     callback clicked;
 
+    property <color> btn-color: root.button-color == "error" ? Theme.error :
+                                 (root.button-color == "success" ? Theme.success : Theme.accent);
+
     height: 32px;
     border-radius: Theme.radius-md;
     border-width: 1px;
-    border-color: button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent);
-    background: touch.has-hover && !root.disabled
-        ? (button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent))
-        : transparent;
+    border-color: self.btn-color;
+    background: root.disabled ? transparent :
+                (touch.pressed ? self.btn-color.darker(0.2) :
+                 (touch.has-hover ? self.btn-color : transparent));
     opacity: root.disabled ? 0.5 : 1.0;
-    animate background { duration: 150ms; easing: ease-in-out; }
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
 
     Text {
         text: root.label;
-        color: touch.has-hover && !root.disabled
-            ? #000000
-            : (button-color == "error" ? Theme.error : (button-color == "success" ? Theme.success : Theme.accent));
+        color: touch.has-hover && !root.disabled ? #000000 : parent.btn-color;
         font-size: 11px;
-        font-weight: 500;
+        font-weight: Theme.font-weight-medium;
         horizontal-alignment: center;
         vertical-alignment: center;
         overflow: elide;
-        animate color { duration: 150ms; easing: ease-in-out; }
+        animate color { duration: Theme.duration-fast; easing: ease-in-out; }
     }
 
-    touch := TouchArea { clicked => { if !root.disabled { root.clicked(); } } }
+    touch := TouchArea {
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => { if !root.disabled { root.clicked(); } }
+    }
 }
