@@ -44,7 +44,7 @@ vte = "0.13"
 portable-pty = "0.8"
 
 # IDE — Git
-git2 = { version = "0.19", features = ["vendored-libgit2", "vendored-openssl"] }
+git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
 
 # IDE — File Explorer
 walkdir = "2.5"
