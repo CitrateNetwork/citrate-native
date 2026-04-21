@@ -21,16 +21,23 @@ export component SendDialog inherits Rectangle {
 
     TouchArea { clicked => { root.close(); } }
 
-    // Dialog
+    // Dialog — responsive width (Sprint P950-C WP-C.7).
+    // Was `width: 440px` (overflowed the window on narrow screens).
+    // New pattern: prefer 440px, but shrink to window width minus 32px
+    // padding on both sides when the window is narrower.
     Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        width: 440px;
+        width: min(440px, parent.width - 32px);
         min-height: 300px;
         border-radius: Theme.radius-lg;
         background: Theme.bg;
         border-width: 1px;
         border-color: Theme.border;
+        // Elevation: dialog lifts off the overlay
+        drop-shadow-offset-y: Theme.shadow-offset-lg;
+        drop-shadow-blur: Theme.shadow-blur-lg;
+        drop-shadow-color: Theme.shadow-color-lg;
 
         TouchArea {} // Block click-through
 
