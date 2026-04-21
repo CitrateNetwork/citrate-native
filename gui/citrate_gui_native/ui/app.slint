@@ -25,8 +25,11 @@ export component App inherits Window {
     title: "Citrate — AI-Native Blockchain";
     preferred-width: 1200px;
     preferred-height: 800px;
-    min-width: 800px;
-    min-height: 600px;
+    // Min dimensions lowered in Sprint P950-C (WP-C.7): 800×600 blocked
+    // iPad (768 wide) and phones. New floor supports tablets in portrait
+    // and small laptop windows while keeping desktop layouts comfortable.
+    min-width: 480px;
+    min-height: 480px;
     background: Theme.bg;
 
     // App state — three modes: onboarding, locked, or main app
