@@ -11,12 +11,15 @@ export struct ChatMessageData {
 component MessageBubble inherits Rectangle {
     in property <string> role: "user";
     in property <string> content;
+    callback copy-content(string);
 
     min-height: 36px;
     border-radius: Theme.radius-lg;
     background: root.role == "user" ? Theme.bg-tertiary : Theme.surface;
     border-width: root.role == "assistant" ? 1px : 0px;
     border-color: Theme.border-subtle;
+
+    property <bool> copied: false;
 
     VerticalLayout {
         padding-top: Theme.space-sm;
@@ -25,11 +28,53 @@ component MessageBubble inherits Rectangle {
         padding-right: Theme.space-lg;
         spacing: Theme.space-xs;
 
-        Text {
-            text: root.role == "user" ? "You" : "Citrate AI";
-            color: root.role == "user" ? Theme.text-muted : Theme.accent;
-            font-size: 10px;
-            font-weight: 600;
+        HorizontalLayout {
+            Text {
+                text: root.role == "user" ? "You" : "Citrate AI";
+                color: root.role == "user" ? Theme.text-muted : Theme.accent;
+                font-size: 10px;
+                font-weight: 600;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            // Copy button — always visible because Slint's Text
+            // element doesn't support text selection. arboard handles
+            // the actual clipboard write via the Rust side.
+            Rectangle {
+                width: 48px;
+                height: 20px;
+                border-radius: Theme.radius-sm;
+                background: copy-touch.pressed ? Theme.bg-tertiary
+                    : (copy-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent);
+                animate background { duration: Theme.duration-fast; }
+
+                Text {
+                    text: root.copied ? "Copied" : "Copy";
+                    color: root.copied ? Theme.success : Theme.text-muted;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                copy-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.copy-content(root.content);
+                        root.copied = true;
+                        copy-reset.running = true;
+                    }
+                }
+
+                copy-reset := Timer {
+                    interval: 2s;
+                    running: false;
+                    triggered => {
+                        root.copied = false;
+                        copy-reset.running = false;
+                    }
+                }
+            }
         }
 
         Text {
@@ -139,6 +184,7 @@ export component ChatView inherits Rectangle {
     callback send-message(string);
     callback approve-tool;
     callback reject-tool;
+    callback copy-to-clipboard(string);
 
     background: Theme.bg;
 
@@ -218,6 +264,7 @@ export component ChatView inherits Rectangle {
                     for msg in root.messages : MessageBubble {
                         role: msg.role;
                         content: msg.content;
+                        copy-content(text) => { root.copy-to-clipboard(text); }
                     }
 
                     // Thinking indicator
