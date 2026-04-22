@@ -31,6 +31,9 @@ export component App inherits Window {
     min-width: 480px;
     min-height: 480px;
     background: Theme.bg;
+    // P960-F: make Space Grotesk the app-wide body default. Text
+    // nodes that need monospace opt in per-element via Theme.font-mono.
+    default-font-family: Theme.font-body;
 
     // App state — three modes: onboarding, locked, or main app
     in property <bool> show-onboarding: true;
