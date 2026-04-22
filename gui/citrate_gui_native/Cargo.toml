@@ -19,7 +19,7 @@ dirs = "5"
 
 # Clipboard for copy buttons (mnemonic, addresses)
 arboard = "3"
-rand = "0.8"
+rand = "0.9"
 
 # EIP-55 address checksumming
 sha3 = "0.10"
