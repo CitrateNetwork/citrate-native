@@ -33,7 +33,7 @@ async-trait = "0.1"
 # Crypto
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 sha3 = "0.10"
-rand = "0.8"
+rand = "0.9"
 
 # IDE — Editor
 ropey = "1.6"
