@@ -420,7 +420,11 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("mistral-7b-instruct-v0.3".to_string())),
-            max_tokens: 256,
+            // 2048 tokens (~1500 words) — enough to render a list of
+            // recent blocks or a full tx breakdown without truncation.
+            // Previous 256 was the source of the "context got cut off"
+            // bug the user reported when asking for block lists.
+            max_tokens: 2048,
             temperature: 0.7,
         }
     }
@@ -433,7 +437,11 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("mistral:latest".to_string())),
-            max_tokens: 256,
+            // 2048 tokens (~1500 words) — enough to render a list of
+            // recent blocks or a full tx breakdown without truncation.
+            // Previous 256 was the source of the "context got cut off"
+            // bug the user reported when asking for block lists.
+            max_tokens: 2048,
             temperature: 0.7,
         }
     }
@@ -446,7 +454,11 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new(model.to_string())),
-            max_tokens: 256,
+            // 2048 tokens (~1500 words) — enough to render a list of
+            // recent blocks or a full tx breakdown without truncation.
+            // Previous 256 was the source of the "context got cut off"
+            // bug the user reported when asking for block lists.
+            max_tokens: 2048,
             temperature: 0.7,
         }
     }
@@ -867,7 +879,11 @@ impl ChatService {
             messages: Arc::new(RwLock::new(Vec::new())),
             system_prompt: Arc::new(RwLock::new(String::new())),
             model: Arc::new(RwLock::new("gpt-4".to_string())),
-            max_tokens: 256,
+            // 2048 tokens (~1500 words) — enough to render a list of
+            // recent blocks or a full tx breakdown without truncation.
+            // Previous 256 was the source of the "context got cut off"
+            // bug the user reported when asking for block lists.
+            max_tokens: 2048,
             temperature: 0.7,
         }
     }

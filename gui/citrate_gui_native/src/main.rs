@@ -201,6 +201,115 @@ async fn ipfs_fetch_stats(client: &reqwest::Client) -> IpfsStats {
 }
 
 /// Format a byte count into a human-readable string (B, KB, MB, GB, TB).
+/// P960-A WP-A.4: Pretty-format a tool-result JSON string so it reads
+/// naturally in the chat thread. Chain data is structured —
+/// `{"blocks": [...]}` etc. — and dumping raw JSON into a conversation
+/// bubble is hostile. This renders:
+///
+/// - `get_recent_blocks` → `#N (hash…) · M txns · T ago` rows
+/// - `get_block_height`  → `Block N · chain 40204 · synced` one-liner
+/// - `get_peer_count`    → `1 peer · 0 mempool · 1 tip`
+/// - `check_balance`     → `0xaaaa… — 10.00 SALT`
+/// - `explain_tx`        → labeled from/to/value/status card
+/// - `get_tx_history`    → N rows of `send/receive/reward · amount · counterparty`
+///
+/// Falls back to the raw content on any parse failure — the LLM still
+/// has the JSON so the conversation doesn't break.
+fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(raw_content) {
+        Ok(v) => v,
+        Err(_) => return raw_content.to_string(),
+    };
+
+    match tool_name {
+        "get_recent_blocks" => {
+            let arr = match v.get("blocks").and_then(|a| a.as_array()) {
+                Some(a) => a,
+                None => return raw_content.to_string(),
+            };
+            if arr.is_empty() {
+                return "No recent blocks.".to_string();
+            }
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let mut lines: Vec<String> = Vec::with_capacity(arr.len());
+            for b in arr {
+                let height = b.get("height").and_then(|x| x.as_u64()).unwrap_or(0);
+                let full_hash = b.get("hash").and_then(|x| x.as_str()).unwrap_or("");
+                let short_hash = full_hash.chars().take(10).collect::<String>();
+                let tx_count = b.get("tx_count").and_then(|x| x.as_u64()).unwrap_or(0);
+                let ts = b.get("timestamp").and_then(|x| x.as_u64()).unwrap_or(0);
+                let age = if ts > 0 && now_secs > 0 {
+                    let d = (now_secs - ts as i64).max(0);
+                    if d < 60 { format!("{}s ago", d) }
+                    else if d < 3600 { format!("{}m ago", d / 60) }
+                    else { format!("{}h ago", d / 3600) }
+                } else {
+                    "—".to_string()
+                };
+                lines.push(format!("#{}  {}…  {} txns  {}", height, short_hash, tx_count, age));
+            }
+            lines.join("\n")
+        }
+        "get_block_height" => {
+            let h = v.get("height").and_then(|x| x.as_u64()).unwrap_or(0);
+            let c = v.get("chain_id").and_then(|x| x.as_u64()).unwrap_or(0);
+            let sync = v.get("syncing").and_then(|x| x.as_bool()).unwrap_or(false);
+            format!("Block {} · chain {} · {}", h, c, if sync { "syncing" } else { "synced" })
+        }
+        "get_peer_count" => {
+            let p = v.get("peers").and_then(|x| x.as_u64()).unwrap_or(0);
+            let m = v.get("mempool_size").and_then(|x| x.as_u64()).unwrap_or(0);
+            let t = v.get("dag_tips").and_then(|x| x.as_u64()).unwrap_or(0);
+            format!("{} peer{} · {} mempool · {} tip{}",
+                p, if p == 1 { "" } else { "s" },
+                m,
+                t, if t == 1 { "" } else { "s" })
+        }
+        "check_balance" => {
+            let a = v.get("address").and_then(|x| x.as_str()).unwrap_or("—");
+            let s = v.get("balance_salt").and_then(|x| x.as_str()).unwrap_or("0");
+            let short = if a.len() > 14 { format!("{}…{}", &a[..6], &a[a.len()-4..]) } else { a.to_string() };
+            format!("{}\n{} SALT", short, s)
+        }
+        "explain_tx" => {
+            let hash = v.get("hash").and_then(|x| x.as_str()).unwrap_or("—");
+            let from = v.get("from").and_then(|x| x.as_str()).unwrap_or("—");
+            let to = v.get("to").and_then(|x| x.as_str()).unwrap_or("—");
+            let value = v.get("value_salt").and_then(|x| x.as_str()).unwrap_or("0");
+            let status = v.get("status").and_then(|x| x.as_str()).unwrap_or("—");
+            let block = v.get("block_height").and_then(|x| x.as_u64()).unwrap_or(0);
+            let ty = v.get("tx_type").and_then(|x| x.as_str()).unwrap_or("—");
+            format!(
+                "hash:   {}\nfrom:   {}\nto:     {}\nvalue:  {} SALT\nstatus: {}  ({})\nblock:  #{}",
+                hash, from, to, value, status, ty, block,
+            )
+        }
+        "get_tx_history" => {
+            let txs = match v.get("transactions").and_then(|a| a.as_array()) {
+                Some(a) => a,
+                None => return raw_content.to_string(),
+            };
+            if txs.is_empty() {
+                let addr = v.get("address").and_then(|x| x.as_str()).unwrap_or("this address");
+                return format!("No transactions yet for {}.", addr);
+            }
+            let mut lines: Vec<String> = Vec::with_capacity(txs.len());
+            for t in txs {
+                let ty = t.get("tx_type").and_then(|x| x.as_str()).unwrap_or("tx");
+                let amt = t.get("amount").and_then(|x| x.as_str()).unwrap_or("0");
+                let cp = t.get("counterparty").and_then(|x| x.as_str()).unwrap_or("—");
+                let st = t.get("status").and_then(|x| x.as_str()).unwrap_or("");
+                lines.push(format!("{:<8} {:>10} SALT  {}  [{}]", ty, amt, cp, st));
+            }
+            lines.join("\n")
+        }
+        _ => raw_content.to_string(),
+    }
+}
+
 /// Convert a decimal wei string (what eth_getBalance returns) to a
 /// human-readable SALT string with 4 fractional digits. Handles either
 /// "0x…" hex or plain decimal input.
@@ -1717,6 +1826,7 @@ fn main() {
             msgs.push(ChatMessageData {
                 role: "user".into(),
                 content: msg.clone().into(),
+                tool_name: "".into(),
             });
             let model = std::rc::Rc::new(slint::VecModel::from(msgs));
             ui.set_chat_messages(model.into());
@@ -2065,19 +2175,29 @@ fn main() {
             ).await {
                 Ok(response) => {
                     let content = clean_markdown(&response.content);
-                    // Build structured message list for individual bubbles
+                    // Build structured message list. Include tool-role
+                    // messages so the user sees the actual structured
+                    // chain data (not just the LLM's summary of it).
+                    // Tool JSON gets pretty-formatted via
+                    // `format_tool_result` below.
                     let messages = core.chat.get_messages().await;
                     let slint_messages: Vec<ChatMessageData> = messages.iter()
-                        .filter(|m| m.role == "user" || m.role == "assistant")
+                        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "tool")
                         .map(|m| {
-                            let cleaned = if m.role == "user" {
-                                m.content.clone()
+                            let (cleaned, tool_name) = if m.role == "user" {
+                                (m.content.clone(), String::new())
+                            } else if m.role == "tool" {
+                                let tn = m.tool_action.as_ref()
+                                    .map(|ta| ta.tool_type.clone())
+                                    .unwrap_or_default();
+                                (format_tool_result(&tn, &m.content), tn)
                             } else {
-                                clean_markdown(&m.content)
+                                (clean_markdown(&m.content), String::new())
                             };
                             ChatMessageData {
                                 role: m.role.clone().into(),
                                 content: cleaned.into(),
+                                tool_name: tool_name.into(),
                             }
                         })
                         .collect();
