@@ -9,6 +9,7 @@ slint::include_modules!();
 
 mod app_binder;
 mod storage_service;
+mod compute_service;
 
 #[cfg(test)]
 mod ui_visual_tests;
@@ -3217,6 +3218,18 @@ fn main() {
         let core = core.clone();
         let ui_w = ui_w.clone();
         tracing::info!("Compute: register provider requested");
+        // P960-D WP-D.3 is behind a "coming soon" pill in the UI,
+        // so registration doesn't fire a tx yet. This handler flips
+        // the toast so the user gets visible feedback.
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_clipboard_toast("Provider registration opens after the ComputeMarketplace.registerProvider wiring lands — your opt-in prefs are saved locally".into());
+            let ui_for_clear = ui_w.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(3500), move || {
+                if let Some(ui) = ui_for_clear.upgrade() {
+                    ui.set_clipboard_toast("".into());
+                }
+            });
+        }
         spawn_async(&rt_h, async move {
             match core.compute.list_providers().await {
                 Ok(providers) => {
@@ -3234,6 +3247,32 @@ fn main() {
                 Err(e) => tracing::error!("Compute: query failed: {}", e),
             }
         });
+    });
+
+    // P960-D WP-D.2: persist opt-in settings on every change. The
+    // slider + toggle + schedule fire `settings-changed` after
+    // mutating their two-way-bound properties.
+    let ui_w = ui.as_weak();
+    ui.on_compute_settings_changed(move || {
+        let ui_w = ui_w.clone();
+        let Some(ui) = ui_w.upgrade() else { return; };
+        let settings = compute_service::ComputeSettings {
+            enabled: ui.get_compute_enabled(),
+            allocation_percent: ui.get_compute_allocation() as u32,
+            schedule: ui.get_compute_schedule().to_string(),
+        };
+        // Normalize schedule → also update the description line.
+        let desc = settings.schedule_description();
+        ui.set_compute_schedule_description(desc.into());
+        if let Some(path) = compute_service::ComputeSettings::default_path() {
+            if let Err(e) = settings.save(&path) {
+                tracing::warn!("compute.json save failed: {}", e);
+            }
+        }
+        tracing::info!(
+            "Compute settings: enabled={} alloc={}% schedule={}",
+            settings.enabled, settings.allocation_percent, settings.schedule,
+        );
     });
 
     // --- Compute: Refresh ---
@@ -4074,6 +4113,51 @@ fn main() {
                     tracing::info!("Storage: no IPFS daemon detected at startup");
                 }
             }
+        });
+    }
+
+    // =========================================================================
+    // P960-D WP-D.1 / D.2: compute panel hydration on startup
+    // =========================================================================
+    // Detect hardware + load persisted opt-in prefs so the Compute
+    // panel renders the correct state on first open (rather than the
+    // "Detecting hardware…" placeholder).
+    {
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        rt_h.spawn(async move {
+            let hw = tokio::task::spawn_blocking(compute_service::HardwareProfile::detect)
+                .await
+                .unwrap_or_default();
+            let settings = compute_service::ComputeSettings::default_path()
+                .map(|p| compute_service::ComputeSettings::load(&p))
+                .unwrap_or_default();
+            tracing::info!(
+                "Compute hydration: {} (opt-in={}, alloc={}%, schedule={})",
+                hw.summary(), settings.enabled, settings.allocation_percent, settings.schedule,
+            );
+            let desc = settings.schedule_description().to_string();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_compute_hw_cpu(hw.cpu_model.into());
+                    ui.set_compute_hw_cpu_cores(hw.cpu_cores as i32);
+                    ui.set_compute_hw_cpu_threads(hw.cpu_threads as i32);
+                    ui.set_compute_hw_ram_gb(hw.ram_gb as i32);
+                    if let Some(gpu) = hw.gpu {
+                        ui.set_compute_hw_has_gpu(true);
+                        ui.set_compute_hw_gpu_name(gpu.name.into());
+                        ui.set_compute_hw_gpu_vram_gb(gpu.vram_gb as i32);
+                        ui.set_compute_hw_gpu_cc(gpu.compute_capability.into());
+                        ui.set_compute_hw_gpu_driver(gpu.driver_version.into());
+                    } else {
+                        ui.set_compute_hw_has_gpu(false);
+                    }
+                    ui.set_compute_enabled(settings.enabled);
+                    ui.set_compute_allocation(settings.allocation_percent as i32);
+                    ui.set_compute_schedule(settings.schedule.into());
+                    ui.set_compute_schedule_description(desc.into());
+                }
+            });
         });
     }
 

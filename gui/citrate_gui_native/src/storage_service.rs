@@ -233,7 +233,7 @@ pub async fn ipfs_add_file(
     // IPFS may return multiple NDJSON lines when given a directory;
     // for a single file it's one line.
     let body = resp.text().await.map_err(|e| format!("read body: {}", e))?;
-    let last_line = body.lines().filter(|l| !l.trim().is_empty()).last()
+    let last_line = body.lines().rfind(|l| !l.trim().is_empty())
         .ok_or_else(|| "empty ipfs response".to_string())?;
     let json: serde_json::Value = serde_json::from_str(last_line)
         .map_err(|e| format!("parse ipfs response: {}", e))?;
