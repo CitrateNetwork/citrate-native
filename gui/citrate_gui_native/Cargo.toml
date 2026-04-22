@@ -49,6 +49,9 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "t
 # file-list view icons (no external daemon or network call).
 mime_guess = "2"
 
+# P960-C WP-C.3: serde for the persisted `files.json` index.
+serde = { version = "1", features = ["derive"] }
+
 [dev-dependencies]
 async-trait = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -1,7 +1,132 @@
-// Storage view — IPFS daemon management, pinned files, peers
-// User-facing name: "Storage" (not "IPFS" — friendlier)
+// Storage view — IPFS-backed files, but presented as a "Files" app.
+//
+// Design contract (P960-C): the word "CID" and "pinning" do NOT
+// appear in the default UI. A user should see a list of files with
+// human names, sizes, dates; a drag-drop area; an Upload button;
+// and a "Copy share link" button that hides the CID behind it.
+// Power users can flip Settings → Advanced to get CID-level tools.
 import { Theme } from "../theme.slint";
 
+// File row data — matches `citrate_desktop_app::services::storage_service::FileEntry`.
+// Rust → Slint via VecModel<FileEntry>.
+export struct FileEntry {
+    name: string,        // friendly name (user-rename friendly)
+    size: string,        // pre-formatted "1.2 MB"
+    mime-icon: string,   // short icon glyph based on mime type ("📄" / "🖼" / ...)
+    uploaded: string,    // pre-formatted "2 min ago" / "2026-04-22"
+    cid: string,         // exposed via "Copy share link" only
+}
+
+// ---------------------------------------------------------------------------
+// One row in the file list — icon · name · size · when · ⋯ menu
+// ---------------------------------------------------------------------------
+component FileRow inherits Rectangle {
+    in property <string> name;
+    in property <string> size;
+    in property <string> mime-icon;
+    in property <string> uploaded;
+    in property <string> cid;
+    callback copy-link(string);
+    callback remove;
+
+    height: 48px;
+    background: row-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+    animate background { duration: Theme.duration-fast; }
+
+    row-touch := TouchArea { }
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        Text {
+            text: root.mime-icon;
+            font-size: 22px;
+            width: 28px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.name;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.size;
+            color: Theme.text-muted;
+            font-size: 11px;
+            min-width: 80px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        Text {
+            text: root.uploaded;
+            color: Theme.text-muted;
+            font-size: 11px;
+            min-width: 100px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+
+        // Copy-share-link button. Opacity fades in on row hover so the
+        // list stays clean when not hovered.
+        Rectangle {
+            width: 92px; height: 26px; y: 11px;
+            border-radius: Theme.radius-sm;
+            background: link-touch.pressed ? Theme.bg-secondary
+                : (link-touch.has-hover ? Theme.accent.darker(0.2) : transparent);
+            border-width: link-touch.has-hover ? 0px : 1px;
+            border-color: Theme.border-subtle;
+            opacity: row-touch.has-hover || link-touch.has-hover ? 1.0 : 0.5;
+            animate opacity { duration: Theme.duration-fast; }
+            animate background { duration: Theme.duration-fast; }
+
+            Text {
+                text: "Copy link";
+                color: link-touch.has-hover ? #000000 : Theme.text-secondary;
+                font-size: 10px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            link-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.copy-link(root.cid); }
+            }
+        }
+
+        // Remove button — shows only on hover to avoid visual noise.
+        Rectangle {
+            width: 26px; height: 26px; y: 11px;
+            border-radius: Theme.radius-sm;
+            background: rm-touch.pressed ? Theme.error.darker(0.3)
+                : (rm-touch.has-hover ? Theme.error.darker(0.5) : transparent);
+            opacity: row-touch.has-hover || rm-touch.has-hover ? 1.0 : 0;
+            animate opacity { duration: Theme.duration-fast; }
+            animate background { duration: Theme.duration-fast; }
+
+            Text {
+                text: "✕";
+                color: rm-touch.has-hover ? Theme.text : Theme.text-muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            rm-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.remove(); }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main panel
+// ---------------------------------------------------------------------------
 export component StorageView inherits Rectangle {
     // Daemon state
     in property <bool> daemon-running: false;
@@ -11,15 +136,28 @@ export component StorageView inherits Rectangle {
     in property <string> repo-size: "0 MB";
     in property <string> daemon-version: "";
 
-    // Tab state
-    in-out property <string> active-tab: "files";
+    // File list — populated from the Rust side on every refresh.
+    in property <[FileEntry]> files: [];
+
+    // Upload state
+    in property <bool> uploading: false;
+    in property <string> upload-status: "";
+
+    // Drag-drop hover highlight (toggled from Rust when winit emits
+    // HoveredFile / HoveredFileCancelled on the window).
+    in property <bool> drag-hovering: false;
+
+    // "Advanced" toggle — when true, show CID-level tools (paste CID,
+    // manual pin). Default false so new users don't see IPFS jargon.
+    in-out property <bool> show-advanced: false;
 
     // Callbacks
     callback start-daemon;
     callback stop-daemon;
     callback upload-file;
-    callback pin-cid(string);
-    callback unpin-cid(string);
+    callback remove-file(string);          // remove by CID (unpin + files.json entry drop)
+    callback copy-share-link(string);      // emits to unified clipboard flow
+    callback pin-cid(string);              // advanced: manual pin
     callback refresh;
 
     background: Theme.bg;
@@ -29,16 +167,22 @@ export component StorageView inherits Rectangle {
             padding: Theme.space-lg;
             spacing: Theme.space-lg;
 
-            // Header
+            // ── Header ─────────────────────────────────────────────
             HorizontalLayout {
                 alignment: space-between;
 
-                Text { text: "Storage"; color: Theme.text; font-size: 24px; font-weight: 600; vertical-alignment: center; }
+                Text {
+                    text: "Files";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
 
                 HorizontalLayout {
                     spacing: Theme.space-sm;
 
-                    // Status indicator
+                    // Status pill
                     HorizontalLayout {
                         spacing: Theme.space-xs;
                         Rectangle {
@@ -46,21 +190,29 @@ export component StorageView inherits Rectangle {
                             background: root.daemon-running ? Theme.success : Theme.text-muted;
                         }
                         Text {
-                            text: root.daemon-running ? "Online" : "Offline";
-                            color: root.daemon-running ? Theme.success : Theme.text-muted;
-                            font-size: 12px; vertical-alignment: center;
+                            text: root.daemon-running
+                                ? (root.peer-count + " peers · " + root.repo-size)
+                                : "Offline";
+                            color: root.daemon-running ? Theme.text-secondary : Theme.text-muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
                         }
                     }
 
-                    // Start/Stop button
+                    // Start/Stop button — smaller, less prominent than in the old UI
                     Rectangle {
-                        height: 32px; width: 80px;
+                        height: 30px; width: 70px;
                         border-radius: Theme.radius-md;
-                        background: root.daemon-running ? Theme.error : Theme.success;
+                        border-width: 1px;
+                        border-color: root.daemon-running ? Theme.error.darker(0.3) : Theme.accent;
+                        background: transparent;
                         Text {
                             text: root.daemon-running ? "Stop" : "Start";
-                            color: #000000; font-size: 12px; font-weight: 600;
-                            horizontal-alignment: center; vertical-alignment: center;
+                            color: root.daemon-running ? Theme.error : Theme.accent;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                         TouchArea {
                             clicked => {
@@ -72,183 +224,223 @@ export component StorageView inherits Rectangle {
                 }
             }
 
-            // Stats cards
-            HorizontalLayout {
-                spacing: Theme.space-md;
+            // ── Upload + drag-drop zone ────────────────────────────
+            Rectangle {
+                height: 96px;
+                border-radius: Theme.radius-lg;
+                border-width: 2px;
+                border-color: root.drag-hovering ? Theme.accent : Theme.border-subtle;
+                background: root.drag-hovering ? Theme.bg-tertiary.brighter(0.3) : Theme.surface;
+                animate border-color { duration: Theme.duration-fast; }
+                animate background { duration: Theme.duration-fast; }
 
-                // Peers
-                Rectangle {
-                    horizontal-stretch: 1; height: 72px;
-                    border-radius: Theme.radius-lg;
-                    background: Theme.surface;
-                    border-width: 1px; border-color: Theme.border-subtle;
-                    clip: true;
-                    VerticalLayout {
-                        padding: Theme.space-md;
-                        spacing: Theme.space-xs;
-                        Text { text: "PEERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                        Text { text: root.peer-count; color: Theme.text; font-size: 20px; font-weight: 600; }
-                    }
-                }
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-xs;
+                    alignment: center;
 
-                // Pinned files
-                Rectangle {
-                    horizontal-stretch: 1; height: 72px;
-                    border-radius: Theme.radius-lg;
-                    background: Theme.surface;
-                    border-width: 1px; border-color: Theme.border-subtle;
-                    clip: true;
-                    VerticalLayout {
-                        padding: Theme.space-md;
-                        spacing: Theme.space-xs;
-                        Text { text: "PINNED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                        Text { text: root.pin-count; color: Theme.text; font-size: 20px; font-weight: 600; }
-                    }
-                }
-
-                // Repo size
-                Rectangle {
-                    horizontal-stretch: 1; height: 72px;
-                    border-radius: Theme.radius-lg;
-                    background: Theme.surface;
-                    border-width: 1px; border-color: Theme.border-subtle;
-                    clip: true;
-                    VerticalLayout {
-                        padding: Theme.space-md;
-                        spacing: Theme.space-xs;
-                        Text { text: "REPO SIZE"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                        Text { text: root.repo-size; color: Theme.text; font-size: 20px; font-weight: 600; overflow: elide; }
-                    }
-                }
-            }
-
-            // Tab bar
-            HorizontalLayout {
-                spacing: Theme.space-xs;
-
-                for tab-name in ["files", "pins", "peers"] : Rectangle {
-                    height: 32px; min-width: 70px;
-                    border-radius: Theme.radius-md;
-                    border-width: 1px;
-                    border-color: root.active-tab == tab-name ? Theme.accent : Theme.border;
-                    background: root.active-tab == tab-name ? Theme.accent : transparent;
                     Text {
-                        text: tab-name == "files" ? "Files" : (tab-name == "pins" ? "Pins" : "Peers");
-                        color: root.active-tab == tab-name ? #000000 : Theme.text-secondary;
-                        font-size: 12px; font-weight: 500;
-                        horizontal-alignment: center; vertical-alignment: center;
+                        text: root.uploading
+                            ? root.upload-status
+                            : (root.drag-hovering ? "Drop to upload" : "Drag files here or click Upload");
+                        color: root.drag-hovering ? Theme.accent : Theme.text;
+                        font-size: 13px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
                     }
-                    TouchArea { clicked => { root.active-tab = tab-name; } }
-                }
+                    Text {
+                        text: root.daemon-running
+                            ? "Files are stored on IPFS and shared via a copy-paste link."
+                            : "Start the storage daemon to upload files.";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                    }
 
-                Rectangle { horizontal-stretch: 1; }
+                    // Upload button — stays visible even during drag-hover
+                    // so users who prefer clicking over dragging aren't
+                    // left without an affordance.
+                    Rectangle {
+                        width: 120px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: up-touch.pressed ? Theme.accent.darker(0.2)
+                            : (up-touch.has-hover ? Theme.accent.brighter(0.15) : Theme.accent);
+                        animate background { duration: Theme.duration-fast; }
+                        opacity: root.daemon-running && !root.uploading ? 1.0 : 0.5;
 
-                // Refresh button
-                Rectangle {
-                    height: 32px; width: 70px;
-                    border-radius: Theme.radius-md;
-                    border-width: 1px; border-color: Theme.border;
-                    Text { text: "Refresh"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { clicked => { root.refresh(); } }
+                        Text {
+                            text: root.uploading ? "Uploading…" : "Upload";
+                            color: #000000;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        up-touch := TouchArea {
+                            mouse-cursor: root.daemon-running ? pointer : default;
+                            clicked => {
+                                if root.daemon-running && !root.uploading {
+                                    root.upload-file();
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Content area
+            // ── File list ──────────────────────────────────────────
             Rectangle {
                 border-radius: Theme.radius-lg;
                 background: Theme.surface;
-                border-width: 1px; border-color: Theme.border-subtle;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
                 vertical-stretch: 1;
-                min-height: 200px;
+                min-height: 180px;
                 clip: true;
 
                 if !root.daemon-running : VerticalLayout {
                     alignment: center;
-                    spacing: Theme.space-md;
                     padding: Theme.space-xl;
-
-                    Text { text: "Storage daemon is offline"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
-                    Text { text: "Start the daemon to manage files, pins, and peers."; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: "Storage is offline";
+                        color: Theme.text-muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Click Start above to boot the daemon.";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                    }
                 }
 
-                // Files tab
-                if root.daemon-running && root.active-tab == "files" : VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
+                if root.daemon-running && root.files.length == 0 : VerticalLayout {
+                    alignment: center;
+                    padding: Theme.space-xl;
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: "No files yet";
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Drag a file onto the box above, or click Upload.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+                }
 
-                    // Upload section — file dialog not yet available in Slint 1.9
+                if root.daemon-running && root.files.length > 0 : VerticalLayout {
+                    // Column header
+                    Rectangle {
+                        height: 28px;
+                        background: Theme.bg-secondary;
+                        HorizontalLayout {
+                            padding-left: Theme.space-lg;
+                            padding-right: Theme.space-lg;
+                            spacing: Theme.space-md;
+                            Rectangle { width: 28px; }
+                            Text { text: "NAME"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 1; }
+                            Text { text: "SIZE"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; min-width: 80px; vertical-alignment: center; horizontal-alignment: right; }
+                            Text { text: "ADDED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; min-width: 100px; vertical-alignment: center; horizontal-alignment: right; }
+                            Rectangle { width: 92px; }
+                            Rectangle { width: 26px; }
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                    // Rows
+                    Flickable {
+                        VerticalLayout {
+                            for f in root.files : FileRow {
+                                name: f.name;
+                                size: f.size;
+                                mime-icon: f.mime-icon;
+                                uploaded: f.uploaded;
+                                cid: f.cid;
+                                copy-link(text) => { root.copy-share-link(text); }
+                                remove => { root.remove-file(f.cid); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Advanced (collapsed by default) ────────────────────
+            if root.daemon-running : Rectangle {
+                border-radius: Theme.radius-md;
+                background: transparent;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-sm;
+
                     HorizontalLayout {
-                        spacing: Theme.space-sm;
-
-                        Rectangle {
-                            height: 36px; horizontal-stretch: 1;
-                            border-radius: Theme.radius-md;
-                            background: Theme.text-muted;
-                            opacity: 0.5;
-                            Text { text: "Upload File (coming soon)"; color: #000000; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        alignment: space-between;
+                        Text {
+                            text: root.show-advanced
+                                ? "▾  Advanced (hide)"
+                                : "▸  Advanced — pin by CID, pin count, repo stats";
+                            color: Theme.text-muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => { root.show-advanced = !root.show-advanced; }
+                            mouse-cursor: pointer;
+                            width: 100%;
                         }
                     }
 
-                    Text { text: "File upload requires a native file dialog (coming in a future release)."; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    Text { text: "Use the Pins tab to pin content by CID, or upload via the IPFS CLI:"; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    Text { text: "  ipfs add <file>"; color: Theme.accent; font-size: 11px; font-family: "monospace"; }
-                }
-
-                // Pins tab
-                if root.daemon-running && root.active-tab == "pins" : VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
-
-                    Text { text: "Pinned Content"; color: Theme.text; font-size: 14px; font-weight: 500; }
-
-                    if root.pin-count == 0 : Text {
-                        text: "No pinned content. Upload a file or pin a CID to get started.";
-                        color: Theme.text-muted; font-size: 12px;
-                        wrap: word-wrap;
-                    }
-
-                    // Pin by CID input
-                    HorizontalLayout {
+                    if root.show-advanced : VerticalLayout {
                         spacing: Theme.space-sm;
 
-                        Rectangle {
-                            height: 36px; horizontal-stretch: 1;
-                            border-radius: Theme.radius-md;
-                            border-width: 1px; border-color: Theme.border;
-                            background: Theme.bg;
-                            pin-input := TextInput {
-                                font-size: 11px; color: Theme.text;
-                                x: Theme.space-md; width: parent.width - Theme.space-2xl;
-                                vertical-alignment: center;
+                        Text {
+                            text: "Pinned CIDs: " + root.pin-count + "  ·  Repo: " + root.repo-size;
+                            color: Theme.text-secondary;
+                            font-size: 11px;
+                        }
+
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Rectangle {
+                                height: 32px;
+                                horizontal-stretch: 1;
+                                border-radius: Theme.radius-sm;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                background: Theme.bg;
+                                pin-input := TextInput {
+                                    font-size: 11px;
+                                    color: Theme.text;
+                                    x: Theme.space-md;
+                                    width: parent.width - Theme.space-2xl;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Rectangle {
+                                height: 32px; width: 52px;
+                                border-radius: Theme.radius-sm;
+                                border-width: 1px;
+                                border-color: Theme.accent;
+                                Text { text: "Pin"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { clicked => { root.pin-cid(pin-input.text); pin-input.text = ""; } }
                             }
                         }
 
-                        Rectangle {
-                            height: 36px; width: 50px;
-                            border-radius: Theme.radius-md;
-                            border-width: 1px; border-color: Theme.accent;
-                            Text { text: "Pin"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                            TouchArea { clicked => { root.pin-cid(pin-input.text); pin-input.text = ""; } }
+                        Text {
+                            text: "Pin a CID to keep it locally, even if no one else has it.";
+                            color: Theme.text-muted;
+                            font-size: 10px;
+                            wrap: word-wrap;
                         }
-                    }
-                }
-
-                // Peers tab
-                if root.daemon-running && root.active-tab == "peers" : VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
-
-                    Text { text: "Connected Peers"; color: Theme.text; font-size: 14px; font-weight: 500; }
-
-                    if root.peer-count == 0 : Text {
-                        text: "No peers connected. The daemon may still be discovering the network.";
-                        color: Theme.text-muted; font-size: 12px;
-                        wrap: word-wrap;
-                    }
-
-                    if root.peer-count > 0 : Text {
-                        text: root.peer-count + " peers connected to the IPFS network";
-                        color: Theme.success; font-size: 12px;
                     }
                 }
             }
