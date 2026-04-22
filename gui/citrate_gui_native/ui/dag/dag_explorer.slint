@@ -56,6 +56,7 @@ export component DagExplorer inherits Rectangle {
     callback search(string);
     callback select-block(int);
     callback back-to-list;
+    callback copy-text(string);
 
     background: Theme.bg;
 
@@ -148,13 +149,57 @@ export component DagExplorer inherits Rectangle {
                 VerticalLayout {
                     spacing: Theme.space-sm;
 
-                    HorizontalLayout { Text { text: "Hash"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-hash; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                    // Hash + Parent + Proposer are clickable-to-copy.
+                    // TouchArea wraps the whole row and fires `copy-text`.
+                    Rectangle {
+                        background: hash-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                        animate background { duration: Theme.duration-fast; }
+                        border-radius: Theme.radius-sm;
+                        HorizontalLayout {
+                            padding: 4px;
+                            Text { text: "Hash"; color: Theme.text-muted; font-size: 12px; min-width: 120px; }
+                            Text { text: root.detail-hash; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: hash-touch.has-hover ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; horizontal-alignment: right; }
+                        }
+                        hash-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.copy-text(root.detail-hash); }
+                        }
+                    }
                     HorizontalLayout { Text { text: "Height"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-height; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
                     HorizontalLayout { Text { text: "Timestamp"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-timestamp; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
                     HorizontalLayout { Text { text: "Transactions"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-tx-count; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
-                    HorizontalLayout { Text { text: "Selected Parent"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-parent; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                    Rectangle {
+                        background: parent-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                        animate background { duration: Theme.duration-fast; }
+                        border-radius: Theme.radius-sm;
+                        HorizontalLayout {
+                            padding: 4px;
+                            Text { text: "Selected Parent"; color: Theme.text-muted; font-size: 12px; min-width: 120px; }
+                            Text { text: root.detail-parent; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: parent-touch.has-hover ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; horizontal-alignment: right; }
+                        }
+                        parent-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.copy-text(root.detail-parent); }
+                        }
+                    }
                     HorizontalLayout { Text { text: "Blue Score"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-blue-score; color: Theme.text; font-size: 12px; horizontal-stretch: 1; } }
-                    HorizontalLayout { Text { text: "Proposer"; color: Theme.text-muted; font-size: 12px; min-width: 120px; } Text { text: root.detail-proposer; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; } }
+                    Rectangle {
+                        background: prop-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                        animate background { duration: Theme.duration-fast; }
+                        border-radius: Theme.radius-sm;
+                        HorizontalLayout {
+                            padding: 4px;
+                            Text { text: "Proposer"; color: Theme.text-muted; font-size: 12px; min-width: 120px; }
+                            Text { text: root.detail-proposer; color: Theme.text; font-size: 12px; overflow: elide; horizontal-stretch: 1; }
+                            Text { text: prop-touch.has-hover ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; horizontal-alignment: right; }
+                        }
+                        prop-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.copy-text(root.detail-proposer); }
+                        }
+                    }
                 }
             }
         }

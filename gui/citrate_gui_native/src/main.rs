@@ -201,6 +201,31 @@ async fn ipfs_fetch_stats(client: &reqwest::Client) -> IpfsStats {
 }
 
 /// Format a byte count into a human-readable string (B, KB, MB, GB, TB).
+/// Convert a decimal wei string (what eth_getBalance returns) to a
+/// human-readable SALT string with 4 fractional digits. Handles either
+/// "0x…" hex or plain decimal input.
+///
+/// Returns "0" on any parse failure rather than crashing the chat flow.
+fn wei_str_to_salt(wei: &str) -> String {
+    let w = wei.trim();
+    let bytes: Option<u128> = if let Some(hex) = w.strip_prefix("0x").or_else(|| w.strip_prefix("0X")) {
+        u128::from_str_radix(hex, 16).ok()
+    } else {
+        w.parse::<u128>().ok()
+    };
+    let Some(n) = bytes else { return "0".to_string(); };
+    // 10^18 wei per SALT.
+    let whole = n / 1_000_000_000_000_000_000u128;
+    let frac = n % 1_000_000_000_000_000_000u128;
+    // Keep 4 fractional digits — plenty for "balance" context in chat.
+    let frac_4 = frac / 100_000_000_000_000u128; // = 10^14
+    if frac_4 == 0 {
+        format!("{}", whole)
+    } else {
+        format!("{}.{:04}", whole, frac_4)
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
@@ -598,6 +623,54 @@ fn main() {
             ui.set_show_onboarding(true);
         }
     });
+
+    // --- Generic copy-to-clipboard ---
+    // Panels (chat, wallet, dag, contracts, ...) emit `copy-to-clipboard(text)`
+    // and this handler writes to the OS clipboard via arboard, then sets
+    // the `clipboard-toast` property so the shell can flash a "Copied"
+    // banner. Toast clears after 1.5s.
+    {
+        let ui_w = ui.as_weak();
+        ui.on_copy_to_clipboard(move |text| {
+            let text = text.to_string();
+            let preview: String = text.chars().take(40).collect();
+            let label = if text.chars().count() > 40 {
+                format!("Copied: {}…", preview)
+            } else if text.is_empty() {
+                "Copied (empty)".to_string()
+            } else {
+                format!("Copied: {}", preview)
+            };
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => {
+                    if let Err(e) = clipboard.set_text(&text) {
+                        tracing::warn!("Clipboard write failed: {}", e);
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_clipboard_toast("Copy failed".into());
+                        }
+                        return;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Clipboard not available: {}", e);
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_clipboard_toast("Copy unavailable".into());
+                    }
+                    return;
+                }
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_clipboard_toast(label.into());
+            }
+            // Clear the toast after 1.5s.
+            let ui_for_clear = ui_w.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(1500), move || {
+                if let Some(ui) = ui_for_clear.upgrade() {
+                    ui.set_clipboard_toast("".into());
+                }
+            });
+        });
+    }
 
     // --- Tab Switching ---
     let ui_w = ui.as_weak();
@@ -1586,7 +1659,15 @@ fn main() {
                 || msg_lower.contains("transaction") || msg_lower.contains("contract")
                 || msg_lower.contains("model") || msg_lower.contains("file")
                 || msg_lower.contains("git") || msg_lower.contains("run")
-                || msg_lower.contains("execute") || msg_lower.contains("search");
+                || msg_lower.contains("execute") || msg_lower.contains("search")
+                // P960-A WP-A.2: trigger chain-state tools on natural phrases.
+                || msg_lower.contains("block") || msg_lower.contains("height")
+                || msg_lower.contains("peer") || msg_lower.contains("network")
+                || msg_lower.contains("chain") || msg_lower.contains("sync")
+                || msg_lower.contains("mempool") || msg_lower.contains("tip")
+                || msg_lower.contains("recent") || msg_lower.contains("history")
+                || msg_lower.contains("explain") || msg_lower.contains(" tx ")
+                || msg_lower.contains(" 0x");
             let tool_defs = if needs_tools {
                 core.tool_registry.tool_definitions().await
             } else {
@@ -1599,6 +1680,10 @@ fn main() {
             let active_req_id = active_req_for_chat.clone();
             let events_for_tools = core.events.clone();
             let wallet_for_tools = core.wallet.clone();
+            // P960-A WP-A.2: capture node + block services so the tool
+            // executor can read real chain state instead of stubs.
+            let node_for_tools = core.node.clone();
+            let blocks_for_tools = core.blocks.clone();
 
             // Use streaming variant for incremental UI updates
             let ui_for_stream = ui_w.clone();
@@ -1611,6 +1696,8 @@ fn main() {
                     let active_req_id = active_req_id.clone();
                     let events = events_for_tools.clone();
                     let wallet = wallet_for_tools.clone();
+                    let node = node_for_tools.clone();
+                    let blocks = blocks_for_tools.clone();
                     async move {
                         let start_time = std::time::Instant::now();
                         tracing::info!("Tool call: {} with {:?}", tool_name, params);
@@ -1703,25 +1790,155 @@ fn main() {
                             }
                         }
 
-                        // Execute the tool
+                        // P960-A WP-A.2: Execute the tool against real backends.
+                        // Each branch names its data source (Rule 11). Tools
+                        // return JSON strings the LLM can cite in its reply.
                         let result = match tool_name.as_str() {
+                            // -------------------------------------------------
+                            // check_balance — eth_getBalance via NodeService
+                            // -------------------------------------------------
                             "check_balance" => {
-                                let addr = params.get("address")
-                                    .and_then(|a| a.as_str())
-                                    .unwrap_or("default");
-                                Ok(format!("Balance for {}: check the Wallet tab for your current SALT balance", addr))
+                                let addr_owned: String = match params.get("address").and_then(|a| a.as_str()) {
+                                    Some(s) if !s.is_empty() && s != "default" => s.to_string(),
+                                    _ => {
+                                        // Fall back to primary wallet account
+                                        let accounts = wallet.list_accounts().await;
+                                        accounts.first().map(|a| a.address.clone())
+                                            .unwrap_or_default()
+                                    }
+                                };
+                                if addr_owned.is_empty() {
+                                    Err("No address provided and no wallet account available".to_string())
+                                } else {
+                                    match node.get_balance(&addr_owned).await {
+                                        Ok(balance_wei) => {
+                                            // Convert wei string to SALT (18 decimals)
+                                            let salt = wei_str_to_salt(&balance_wei);
+                                            Ok(serde_json::json!({
+                                                "address": addr_owned,
+                                                "balance_wei": balance_wei,
+                                                "balance_salt": salt,
+                                            }).to_string())
+                                        }
+                                        Err(e) => Err(format!("get_balance failed: {}", e)),
+                                    }
+                                }
                             }
+                            // -------------------------------------------------
+                            // get_block_height — NodeService.get_status()
+                            // -------------------------------------------------
+                            "get_block_height" => {
+                                let st = node.get_status().await;
+                                Ok(serde_json::json!({
+                                    "height": st.block_height,
+                                    "chain_id": st.chain_id,
+                                    "syncing": st.syncing,
+                                }).to_string())
+                            }
+                            // -------------------------------------------------
+                            // get_peer_count — NodeService.get_status()
+                            // -------------------------------------------------
+                            "get_peer_count" => {
+                                let st = node.get_status().await;
+                                Ok(serde_json::json!({
+                                    "peers": st.peer_count,
+                                    "mempool_size": st.mempool_size,
+                                    "dag_tips": st.dag_tips,
+                                }).to_string())
+                            }
+                            // -------------------------------------------------
+                            // explain_tx — BlockService.get_transaction()
+                            // (eth_getTransactionByHash + eth_getTransactionReceipt)
+                            // -------------------------------------------------
+                            "explain_tx" => {
+                                let tx_hash = params.get("tx_hash")
+                                    .or_else(|| params.get("hash"))
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| "Missing 'tx_hash'".to_string())?;
+                                match blocks.get_transaction(tx_hash).await {
+                                    Ok(tx) => Ok(serde_json::json!({
+                                        "hash": tx.hash,
+                                        "from": tx.from,
+                                        "to": tx.to,
+                                        "value_wei": tx.value,
+                                        "value_salt": wei_str_to_salt(&tx.value),
+                                        "status": tx.status,
+                                        "block_height": tx.block_height,
+                                        "tx_type": tx.tx_type,
+                                    }).to_string()),
+                                    Err(e) => Err(format!("tx not found: {}", e)),
+                                }
+                            }
+                            // -------------------------------------------------
+                            // get_recent_blocks — NodeService.get_recent_blocks()
+                            // -------------------------------------------------
+                            "get_recent_blocks" => {
+                                let count = params.get("count")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n.clamp(1, 50) as usize)
+                                    .unwrap_or(10);
+                                match node.get_recent_blocks(count).await {
+                                    Ok(list) => {
+                                        let arr: Vec<_> = list.into_iter().map(|b| serde_json::json!({
+                                            "height": b.height,
+                                            "hash": b.hash,
+                                            "tx_count": b.tx_count,
+                                            "timestamp": b.timestamp,
+                                            "blue_score": b.blue_score,
+                                        })).collect();
+                                        Ok(serde_json::json!({ "blocks": arr }).to_string())
+                                    }
+                                    Err(e) => Err(format!("get_recent_blocks failed: {}", e)),
+                                }
+                            }
+                            // -------------------------------------------------
+                            // get_tx_history — NodeService.get_transactions_for_address()
+                            // -------------------------------------------------
+                            "get_tx_history" => {
+                                let addr_owned: String = match params.get("address").and_then(|v| v.as_str()) {
+                                    Some(s) if !s.is_empty() && s != "default" => s.to_string(),
+                                    _ => {
+                                        let accounts = wallet.list_accounts().await;
+                                        accounts.first().map(|a| a.address.clone())
+                                            .unwrap_or_default()
+                                    }
+                                };
+                                if addr_owned.is_empty() {
+                                    Err("No address provided and no wallet account available".to_string())
+                                } else {
+                                    let limit = params.get("count")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|n| n.clamp(1, 100) as usize)
+                                        .unwrap_or(20);
+                                    let list = node.get_transactions_for_address(&addr_owned, limit).await;
+                                    let arr: Vec<_> = list.into_iter().map(|t| serde_json::json!({
+                                        "hash": t.hash,
+                                        "tx_type": t.tx_type,
+                                        "amount": t.amount,
+                                        "counterparty": t.counterparty,
+                                        "status": t.status,
+                                        "timestamp": t.timestamp,
+                                    })).collect();
+                                    Ok(serde_json::json!({
+                                        "address": addr_owned,
+                                        "count": arr.len(),
+                                        "transactions": arr,
+                                    }).to_string())
+                                }
+                            }
+                            // -------------------------------------------------
+                            // send_tx — WalletService.send_transaction()
+                            // (unchanged — already real)
+                            // -------------------------------------------------
                             "send_tx" => {
                                 let to = params.get("to").and_then(|v| v.as_str())
                                     .ok_or_else(|| "Missing 'to' address".to_string())?;
                                 let amount = params.get("amount").and_then(|v| v.as_str())
                                     .ok_or_else(|| "Missing 'amount'".to_string())?;
-                                // Convert SALT to wei (amount * 10^18)
                                 let amount_f64: f64 = amount.parse()
                                     .map_err(|_| format!("Invalid amount: {}", amount))?;
                                 let wei = (amount_f64 * 1e18) as u128;
                                 let value_wei = wei.to_string();
-                                // Use the active wallet account
                                 let accounts = wallet.list_accounts().await;
                                 let from = accounts.first()
                                     .map(|a| a.address.clone())
@@ -1838,6 +2055,30 @@ fn main() {
                 .unwrap_or_else(|_| "0".to_string());
             let height = core.node.get_status().await.block_height;
             core.chat.set_context(&address, &balance, &config_network, height).await;
+
+            // P960-A WP-A.3: keep the chat system prompt live. Without
+            // this the LLM sees block_height=0 and stale balance forever,
+            // so "what's the current height" gets answered from the
+            // snapshot taken at wallet unlock. 10s cadence matches the
+            // dashboard poll — cheap, and tests show no lock contention
+            // with the ChatService RwLock.
+            let core_ctx = core.clone();
+            let ctx_network = config_network.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                // Skip the first immediate tick — we just set context above.
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    let addr = core_ctx.wallet.get_primary_address().await
+                        .unwrap_or_else(|| "not connected".to_string());
+                    let bal = core_ctx.node.get_balance(&addr).await
+                        .unwrap_or_else(|_| "0".to_string());
+                    let h = core_ctx.node.get_status().await.block_height;
+                    core_ctx.chat.set_context(&addr, &bal, &ctx_network, h).await;
+                }
+            });
 
             // Auto-detect local AI backend: Ollama (preferred) → local GGUF → none
             // This is local-first: only localhost:11434 and filesystem are checked.
