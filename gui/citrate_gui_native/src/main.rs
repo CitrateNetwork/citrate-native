@@ -10,6 +10,7 @@ slint::include_modules!();
 mod app_binder;
 mod storage_service;
 mod compute_service;
+mod marketplace_client;
 
 #[cfg(test)]
 mod ui_visual_tests;
@@ -437,6 +438,16 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
 /// "0x…" hex or plain decimal input.
 ///
 /// Returns "0" on any parse failure rather than crashing the chat flow.
+/// Shorten a 0x-prefixed hex hash or address for compact display
+/// in status text. `0xabcdef…123456` form.
+fn short_hash(hex: &str) -> String {
+    let s = hex.strip_prefix("0x").unwrap_or(hex);
+    if s.len() < 12 {
+        return format!("0x{}", s);
+    }
+    format!("0x{}…{}", &s[..6], &s[s.len() - 4..])
+}
+
 fn wei_str_to_salt(wei: &str) -> String {
     let w = wei.trim();
     let bytes: Option<u128> = if let Some(hex) = w.strip_prefix("0x").or_else(|| w.strip_prefix("0X")) {
@@ -1348,6 +1359,93 @@ fn main() {
                                 }
                                 // Update changed file count as a proxy for git status
                                 let _ = file_count; // Will push GitFileData model in next iteration
+                            }
+                        });
+                    }
+                }
+
+                // P960-D WP-D.4: compute provider + earnings poll.
+                // Every 30s (10 × 3s ticks) when compute tab is active.
+                // Data sources:
+                //   - ComputeMarketplace.getProvider(self) → active jobs,
+                //     stake, registration state
+                //   - ContributionAccounting.claimable(self) → settled earnings
+                //     ready to claim
+                if tick_counter % 10 == 0 {
+                    let active_tab = ui_handle.upgrade()
+                        .map(|ui| ui.get_active_tab().to_string());
+                    if active_tab.as_deref() == Some("compute") {
+                        let chain_id = rt_handle.block_on(core.config.read()).chain_id;
+                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
+                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                        let accounts = rt_handle.block_on(core.wallet.list_accounts());
+                        let self_addr = accounts.first().map(|a| a.address.clone());
+
+                        let market_addr = marketplace_client::compute_marketplace_address(chain_id);
+                        let accounting_addr = marketplace_client::contribution_accounting_address(chain_id);
+
+                        // Fetch provider state
+                        let provider: Option<marketplace_client::ProviderProfile> =
+                            if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
+                                if let Some(data) = marketplace_client::encode_get_provider(addr) {
+                                    rt_handle
+                                        .block_on(marketplace_client::eth_call(&rpc_url, m, &data))
+                                        .ok()
+                                        .and_then(|r| marketplace_client::decode_provider_profile(&r))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                        // Fetch claimable earnings
+                        let claimable_wei: Option<u128> =
+                            if let (Some(a), Some(addr)) = (accounting_addr, self_addr.as_deref()) {
+                                if let Some(data) = marketplace_client::encode_claimable(addr) {
+                                    rt_handle
+                                        .block_on(marketplace_client::eth_call(&rpc_url, a, &data))
+                                        .ok()
+                                        .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                        // Compose status line. Three mutually-exclusive cases.
+                        let has_addresses = market_addr.is_some() && accounting_addr.is_some();
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            let Some(ui) = ui_h.upgrade() else { return; };
+                            if !has_addresses {
+                                ui.set_compute_contract_status("Marketplace not deployed on this network".into());
+                                ui.set_compute_provider_status("—".into());
+                                ui.set_compute_active_jobs(0);
+                                ui.set_compute_earned("0".into());
+                                return;
+                            }
+                            ui.set_compute_contract_status("Marketplace live".into());
+                            if let Some(p) = provider {
+                                ui.set_compute_active_jobs(p.current_active_jobs as i32);
+                                let status = if p.is_registered {
+                                    format!(
+                                        "Registered · {} SALT staked · {} completed / {} failed · {} bps rep",
+                                        marketplace_client::wei_to_salt_display(p.stake_wei),
+                                        p.total_jobs_completed,
+                                        p.total_jobs_failed,
+                                        p.reputation_bps,
+                                    )
+                                } else {
+                                    "Not registered".to_string()
+                                };
+                                ui.set_compute_provider_status(status.into());
+                            } else {
+                                ui.set_compute_provider_status("Query failed — retry in 30s".into());
+                            }
+                            if let Some(wei) = claimable_wei {
+                                ui.set_compute_earned(marketplace_client::wei_to_salt_display(wei).into());
                             }
                         });
                     }
@@ -3208,9 +3306,13 @@ fn main() {
         });
     });
 
-    // --- Compute: Register Provider ---
-    // Data source: ComputeMarketplace.registerProvider(string,string,uint32,uint256) — sends tx
-    // Contract: not yet deployed (address TBD from forge script output)
+    // --- Compute: Register Provider (P960-D WP-D.3) ---
+    // Data source: ComputeMarketplace.registerProvider(bytes32[])
+    //   payable, MIN_PROVIDER_STAKE = 1000 SALT
+    //   — ComputeMarketplace.sol:273
+    // Address lookup: marketplace_client::compute_marketplace_address(chain_id)
+    // V1 passes a single bytes32 sentinel keccak256("any") for supported
+    // models. A future WP will let the user enumerate specific model IDs.
     let core = app_core.clone();
     let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
@@ -3218,33 +3320,138 @@ fn main() {
         let core = core.clone();
         let ui_w = ui_w.clone();
         tracing::info!("Compute: register provider requested");
-        // P960-D WP-D.3 is behind a "coming soon" pill in the UI,
-        // so registration doesn't fire a tx yet. This handler flips
-        // the toast so the user gets visible feedback.
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_clipboard_toast("Provider registration opens after the ComputeMarketplace.registerProvider wiring lands — your opt-in prefs are saved locally".into());
-            let ui_for_clear = ui_w.clone();
-            slint::Timer::single_shot(std::time::Duration::from_millis(3500), move || {
-                if let Some(ui) = ui_for_clear.upgrade() {
-                    ui.set_clipboard_toast("".into());
+        spawn_async(&rt_h, async move {
+            let chain_id = core.config.read().await.chain_id;
+            let Some(market_addr) = marketplace_client::compute_marketplace_address(chain_id) else {
+                let msg = format!("ComputeMarketplace not deployed on chain {}", chain_id);
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_compute_provider_status(msg.into());
+                        }
+                    }
+                });
+                return;
+            };
+
+            // Get the active wallet account. Without one, registration is
+            // meaningless — surface a clear error in the provider-status
+            // line rather than silently failing.
+            let accounts = core.wallet.list_accounts().await;
+            let from = match accounts.first() {
+                Some(a) => a.address.clone(),
+                None => {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_compute_provider_status(
+                                    "Create a wallet before registering as a provider".into(),
+                                );
+                            }
+                        }
+                    });
+                    return;
+                }
+            };
+
+            // Build the call data: one "any-model" sentinel, 1000 SALT stake.
+            let data = marketplace_client::encode_register_provider(
+                &[marketplace_client::any_model_hash()],
+            );
+            let stake_wei = marketplace_client::MIN_PROVIDER_STAKE_WEI.to_string();
+
+            // Flip UI to a "submitting..." state so double-clicks are harmless.
+            let _ = slint::invoke_from_event_loop({
+                let ui_w = ui_w.clone();
+                move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_compute_provider_status("Submitting registration tx…".into());
+                    }
                 }
             });
-        }
-        spawn_async(&rt_h, async move {
-            match core.compute.list_providers().await {
-                Ok(providers) => {
-                    let count = providers.len() as i32;
-                    tracing::info!("Compute: {} providers on-chain", count);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_compute_providers(count);
-                            if count == 0 {
-                                ui.set_compute_provider_status("Contracts not yet deployed".into());
+
+            match core
+                .wallet
+                .send_transaction_with_data(&from, market_addr, &stake_wei, data, "")
+                .await
+            {
+                Ok(tx_hash) => {
+                    tracing::info!("Compute: registerProvider tx={}", tx_hash);
+                    let status_msg = format!("Registration submitted — tx {}", short_hash(&tx_hash));
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_compute_provider_status(status_msg.into());
+                            }
+                        }
+                    });
+
+                    // Poll for receipt (up to 40s at 2s interval).
+                    let config = core.config.read().await;
+                    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+                    drop(config);
+                    let client = reqwest::Client::new();
+                    let mut confirmed = false;
+                    let mut failed_reason: Option<String> = None;
+                    for _ in 0..20 {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let body = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "eth_getTransactionReceipt",
+                            "params": [&tx_hash],
+                            "id": 1,
+                        });
+                        if let Ok(resp) = client.post(&rpc_url).json(&body).send().await {
+                            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                                if let Some(result) = json.get("result") {
+                                    if !result.is_null() {
+                                        let status = result["status"].as_str().unwrap_or("0x0");
+                                        if status == "0x1" {
+                                            confirmed = true;
+                                        } else {
+                                            failed_reason = Some(
+                                                "Transaction reverted — check MIN_PROVIDER_STAKE and supportedModels"
+                                                    .to_string(),
+                                            );
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let final_msg = if confirmed {
+                        "Registered — provider active".to_string()
+                    } else if let Some(r) = failed_reason {
+                        format!("Registration failed: {}", r)
+                    } else {
+                        format!("Registration pending — tx {} not yet mined", short_hash(&tx_hash))
+                    };
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_compute_provider_status(final_msg.into());
                             }
                         }
                     });
                 }
-                Err(e) => tracing::error!("Compute: query failed: {}", e),
+                Err(e) => {
+                    tracing::error!("Compute: registerProvider send failed: {}", e);
+                    let err_msg = format!("Registration tx failed: {}", e);
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_compute_provider_status(err_msg.into());
+                            }
+                        }
+                    });
+                }
             }
         });
     });
@@ -3273,6 +3480,69 @@ fn main() {
             "Compute settings: enabled={} alloc={}% schedule={}",
             settings.enabled, settings.allocation_percent, settings.schedule,
         );
+    });
+
+    // --- Compute: Claim Earnings (P960-D WP-D.4) ---
+    // Data source: ContributionAccounting.claimRewards() — sends tx,
+    // transfers msg.sender's `claimable` balance out. Visible-only when
+    // the polling loop has written a non-zero `compute-earned`.
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_compute_claim_earnings(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        spawn_async(&rt_h, async move {
+            let chain_id = core.config.read().await.chain_id;
+            let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id) else {
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_clipboard_toast(
+                                format!("Claim unavailable — no accounting contract on chain {}", chain_id).into(),
+                            );
+                        }
+                    }
+                });
+                return;
+            };
+            let accounts = core.wallet.list_accounts().await;
+            let Some(from) = accounts.first().map(|a| a.address.clone()) else {
+                return;
+            };
+            let data = marketplace_client::encode_claim_rewards();
+            match core
+                .wallet
+                .send_transaction_with_data(&from, acc_addr, "0", data, "")
+                .await
+            {
+                Ok(tx) => {
+                    tracing::info!("Compute: claimRewards tx={}", tx);
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_clipboard_toast(
+                                    format!("Claim submitted — tx {}", short_hash(&tx)).into(),
+                                );
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("Compute: claimRewards failed: {}", e);
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_clipboard_toast(format!("Claim failed: {}", e).into());
+                            }
+                        }
+                    });
+                }
+            }
+        });
     });
 
     // --- Compute: Refresh ---

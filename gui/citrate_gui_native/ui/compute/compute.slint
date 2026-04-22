@@ -41,7 +41,8 @@ export component ComputeView inherits Rectangle {
 
     // Callbacks
     callback settings-changed;   // emitted after enabled / allocation / schedule change
-    callback register-provider;  // disabled-for-now; fires the "coming soon" modal
+    callback register-provider;  // fires ComputeMarketplace.registerProvider (P960-D WP-D.3)
+    callback claim-earnings;     // fires ContributionAccounting.claimRewards (P960-D WP-D.4)
     callback refresh;
 
     background: Theme.bg;
@@ -340,17 +341,18 @@ export component ComputeView inherits Rectangle {
                             font-weight: 600;
                             horizontal-stretch: 1;
                         }
-                        // Contract status pill
+                        // Contract status pill — green when the marketplace
+                        // is deployed on the active chain, amber otherwise.
                         Rectangle {
                             width: 110px; height: 22px;
                             border-radius: 11px;
-                            background: root.contract-status == "live" ? Theme.success.darker(0.3)
-                                : root.contract-status == "empty" ? Theme.warning.darker(0.3)
-                                : Theme.error.darker(0.3);
+                            background: root.contract-status == "Marketplace live"
+                                ? Theme.success.darker(0.3)
+                                : Theme.warning.darker(0.3);
                             Text {
-                                text: root.contract-status == "live" ? "● live"
-                                    : root.contract-status == "empty" ? "● empty"
-                                    : "● not deployed";
+                                text: root.contract-status == "Marketplace live"
+                                    ? "● live"
+                                    : "● offline";
                                 color: Theme.text;
                                 font-size: 10px;
                                 font-weight: 600;
@@ -390,58 +392,103 @@ export component ComputeView inherits Rectangle {
                             font-size: 11px;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
+                            overflow: elide;
                         }
 
-                        // Register button — disabled with a "coming soon"
-                        // pill until the `ComputeMarketplace.registerProvider`
-                        // ABI call lands (tracked in P960-D WP-D.3).
+                        // Register — live when the marketplace is deployed on
+                        // this network. Disabled with a tooltip when not.
                         Rectangle {
                             width: 140px; height: 32px;
                             border-radius: Theme.radius-md;
-                            background: Theme.bg-tertiary;
+                            background: root.contract-status == "Marketplace live"
+                                ? (reg-ta.has-hover ? Theme.accent-hover : Theme.accent)
+                                : Theme.bg-tertiary;
                             border-width: 1px;
-                            border-color: Theme.border-subtle;
-                            opacity: 0.65;
+                            border-color: Theme.border;
+                            opacity: root.contract-status == "Marketplace live" ? 1.0 : 0.55;
+                            animate background { duration: 120ms; }
 
-                            HorizontalLayout {
-                                padding-left: Theme.space-sm;
-                                padding-right: Theme.space-sm;
-                                spacing: Theme.space-xs;
-                                alignment: center;
-                                Text {
-                                    text: "Register";
-                                    color: Theme.text-muted;
-                                    font-size: 11px;
-                                    font-weight: 600;
-                                    vertical-alignment: center;
-                                }
-                                Rectangle {
-                                    width: 62px; height: 16px;
-                                    border-radius: 8px;
-                                    background: Theme.warning.darker(0.3);
-                                    Text {
-                                        text: "soon";
-                                        color: Theme.text;
-                                        font-size: 9px;
-                                        font-weight: 600;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-                                }
+                            Text {
+                                text: "Register provider";
+                                color: root.contract-status == "Marketplace live"
+                                    ? #000000 : Theme.text-muted;
+                                font-size: 11px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
                             }
 
-                            TouchArea {
+                            reg-ta := TouchArea {
                                 mouse-cursor: pointer;
+                                enabled: root.contract-status == "Marketplace live";
                                 clicked => { root.register-provider(); }
+                            }
+                        }
+
+                        // Claim earnings — visible only when there's
+                        // actually something to claim (total-compute-earned > "0")
+                        Rectangle {
+                            width: 130px; height: 32px;
+                            border-radius: Theme.radius-md;
+                            background: claim-ta.has-hover ? Theme.success.darker(0.2) : Theme.success.darker(0.4);
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            visible: root.total-compute-earned != "0";
+                            animate background { duration: 120ms; }
+
+                            Text {
+                                text: "Claim " + root.total-compute-earned + " SALT";
+                                color: Theme.text;
+                                font-size: 11px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            claim-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.claim-earnings(); }
                             }
                         }
                     }
 
-                    Text {
-                        text: "Registration opens once the `ComputeMarketplace.registerProvider` tx flow ships. Your opt-in preferences above are saved locally in the meantime.";
-                        color: Theme.text-muted;
-                        font-size: 10px;
-                        wrap: word-wrap;
+                    // Deploy-status banner — shown when the ComputeMarketplace
+                    // isn't deployed on the active network. Keeps the user
+                    // honest about what surface is real today.
+                    if root.contract-status != "Marketplace live" : Rectangle {
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.warning.darker(0.4);
+                        border-width: 1px;
+                        border-color: Theme.warning;
+
+                        HorizontalLayout {
+                            padding: Theme.space-sm;
+                            spacing: Theme.space-sm;
+                            alignment: start;
+                            Text {
+                                text: "⚠";
+                                color: Theme.warning;
+                                font-size: 18px;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: root.contract-status;
+                                    color: Theme.text;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: "Your opt-in preferences are saved locally and will activate once the marketplace is live on this network.";
+                                    color: Theme.text-secondary;
+                                    font-size: 10px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                     }
                 }
             }
