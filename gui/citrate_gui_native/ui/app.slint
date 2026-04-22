@@ -16,7 +16,7 @@ import { LearningView } from "learning/learning.slint";
 import { EduPanel } from "learning/edu_panel.slint";
 import { ComputeView } from "compute/compute.slint";
 import { ContractsPanel } from "contracts/contracts_panel.slint";
-import { StorageView } from "storage/storage.slint";
+import { StorageView, FileEntry } from "storage/storage.slint";
 import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
 import { FileTreeNodeData, EditorTabData, StyledLineData, StyledSpanData,
          TerminalRowData, TerminalCellData, GitFileData, DiagnosticData } from "ide/ide_structs.slint";
@@ -72,6 +72,11 @@ export component App inherits Window {
     in property <int> storage-peer-count: 0;
     in property <int> storage-pin-count: 0;
     in property <string> storage-repo-size: "0 B";
+    // P960-C: file-list model + upload state + drag-drop flag
+    in property <[FileEntry]> storage-files: [];
+    in property <bool> storage-uploading: false;
+    in property <string> storage-upload-status: "";
+    in-out property <bool> storage-drag-hovering: false;
 
     // DAG Explorer detail state
     in-out property <bool> dag-show-detail: false;
@@ -207,6 +212,8 @@ export component App inherits Window {
     callback storage-start-daemon;
     callback storage-stop-daemon;
     callback storage-upload-file;
+    callback storage-remove-file(string);       // P960-C: unpin + drop from files.json by CID
+    callback storage-copy-share-link(string);   // P960-C: CID → clipboard + toast
     callback storage-pin-cid(string);
     callback storage-refresh;
 
@@ -657,9 +664,15 @@ export component App inherits Window {
                     peer-count: root.storage-peer-count;
                     pin-count: root.storage-pin-count;
                     repo-size: root.storage-repo-size;
+                    files: root.storage-files;
+                    uploading: root.storage-uploading;
+                    upload-status: root.storage-upload-status;
+                    drag-hovering: root.storage-drag-hovering;
                     start-daemon => { root.storage-start-daemon(); }
                     stop-daemon => { root.storage-stop-daemon(); }
                     upload-file => { root.storage-upload-file(); }
+                    remove-file(cid) => { root.storage-remove-file(cid); }
+                    copy-share-link(cid) => { root.storage-copy-share-link(cid); }
                     pin-cid(cid) => { root.storage-pin-cid(cid); }
                     refresh => { root.storage-refresh(); }
                 }
