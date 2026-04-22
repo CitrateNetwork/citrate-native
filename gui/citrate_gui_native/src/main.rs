@@ -817,6 +817,14 @@ fn main() {
         std::thread::spawn(move || {
             let mut tick_counter: u32 = 0;
             let mut baseline_balance_wei: Option<u128> = None;
+            // WP-E.2: track which reward txs we've already notified on
+            // so every new reward (≠ previously-seen hash) fires a toast
+            // exactly once. We seed this set on the first tick after
+            // unlock (treat prior rewards as "already shown") so we
+            // don't spam a toast storm for historical rewards.
+            let mut seen_reward_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut reward_seed_done = false;
+            let mut last_reward_toast_ms: u128 = 0;
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 tick_counter += 1;
@@ -967,23 +975,74 @@ fn main() {
                 };
 
                 // Fetch tx history every 10th tick (~50s) to avoid storage churn
-                let tx_list: Vec<TxData> = if tick_counter % 10 == 0 {
+                let tx_list_raw: Vec<_> = if tick_counter % 10 == 0 {
                     if let Some(ref addr) = pri_addr {
-                        let txs = rt_handle.block_on(core.node.get_transactions_for_address(addr, 20));
-                        txs.into_iter().map(|t| TxData {
-                            hash: t.hash.into(),
-                            tx_type: t.tx_type.into(),
-                            amount: t.amount.into(),
-                            counterparty: t.counterparty.into(),
-                            status: t.status.into(),
-                            timestamp: t.timestamp.into(),
-                        }).collect()
+                        rt_handle.block_on(core.node.get_transactions_for_address(addr, 20))
                     } else {
                         vec![]
                     }
                 } else {
                     vec![]
                 };
+
+                // WP-E.2: derive a reward-toast string BEFORE consuming tx_list_raw.
+                // First pass after unlock: seed the seen set with all existing
+                // reward hashes so we don't toast for historical rewards.
+                // Subsequent passes: any reward hash not in the set → new reward
+                // → emit a toast (throttled to 1 per 15s even if multiple land).
+                let reward_toast: Option<String> = if tick_counter % 10 == 0 && !tx_list_raw.is_empty() {
+                    if !reward_seed_done {
+                        for t in &tx_list_raw {
+                            if t.tx_type == "reward" {
+                                seen_reward_hashes.insert(t.hash.clone());
+                            }
+                        }
+                        reward_seed_done = true;
+                        None
+                    } else {
+                        let mut total_reward_salt = 0.0_f64;
+                        let mut count = 0u32;
+                        for t in &tx_list_raw {
+                            if t.tx_type == "reward" && !seen_reward_hashes.contains(&t.hash) {
+                                seen_reward_hashes.insert(t.hash.clone());
+                                // `amount` is already SALT-formatted (e.g. "10.0000").
+                                if let Ok(v) = t.amount.parse::<f64>() {
+                                    total_reward_salt += v;
+                                }
+                                count += 1;
+                            }
+                        }
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0);
+                        // Throttle: at most one toast per 15 seconds. When a batch
+                        // lands within the throttle window we swallow it — the next
+                        // toast will cover the cumulative delta on the next unthrottled
+                        // tick.
+                        if count > 0 && now_ms.saturating_sub(last_reward_toast_ms) > 15_000 {
+                            last_reward_toast_ms = now_ms;
+                            Some(if count == 1 {
+                                format!("+{:.2} SALT reward", total_reward_salt)
+                            } else {
+                                format!("+{:.2} SALT ({} rewards)", total_reward_salt, count)
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let tx_list: Vec<TxData> = tx_list_raw.into_iter().map(|t| TxData {
+                    hash: t.hash.into(),
+                    tx_type: t.tx_type.into(),
+                    amount: t.amount.into(),
+                    counterparty: t.counterparty.into(),
+                    status: t.status.into(),
+                    timestamp: t.timestamp.into(),
+                }).collect();
                 let has_tx_update = tick_counter % 10 == 0;
 
                 let ui_for_main = ui_handle.clone();
@@ -1002,6 +1061,20 @@ fn main() {
                         if has_tx_update && !tx_list.is_empty() {
                             let model = std::rc::Rc::new(slint::VecModel::from(tx_list));
                             ui.set_wallet_transactions(model.into());
+                        }
+                        // WP-E.2: reward notification toast. Reuses the
+                        // clipboard-toast pill (same overlay position), so
+                        // users get a single consistent notification style
+                        // across "Copied" + "Reward earned" events. Toast
+                        // auto-clears on its existing 1.5s timer.
+                        if let Some(ref msg) = reward_toast {
+                            ui.set_clipboard_toast(msg.clone().into());
+                            let ui_for_clear = ui_for_main.clone();
+                            slint::Timer::single_shot(std::time::Duration::from_millis(2500), move || {
+                                if let Some(ui) = ui_for_clear.upgrade() {
+                                    ui.set_clipboard_toast("".into());
+                                }
+                            });
                         }
                         // Session timer
                         ui.set_wallet_session_active(session_active);

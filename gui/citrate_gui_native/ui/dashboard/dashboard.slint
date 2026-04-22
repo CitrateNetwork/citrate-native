@@ -119,21 +119,55 @@ export component Dashboard inherits Rectangle {
                     }
                 }
 
-                // Balance card
-                Rectangle {
-                    border-radius: Theme.radius-lg;
-                    background: Theme.surface;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
-                    min-height: 80px;
-                    clip: true;
+                // Balance + earnings side-by-side so users can see
+                // validation rewards accumulating alongside their
+                // current balance. `earned` is the delta from the
+                // baseline captured at wallet unlock (session total).
+                HorizontalLayout {
+                    spacing: Theme.space-md;
 
-                    VerticalLayout {
-                        padding: Theme.space-xl;
-                        spacing: Theme.space-sm;
+                    Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        min-height: 80px;
+                        horizontal-stretch: 2;
+                        clip: true;
 
-                        Text { text: "TOTAL BALANCE"; color: Theme.text-muted; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
-                        Text { text: root.balance + " SALT"; color: Theme.text; font-size: 32px; font-weight: 600; overflow: elide; }
+                        VerticalLayout {
+                            padding: Theme.space-xl;
+                            spacing: Theme.space-sm;
+
+                            Text { text: "TOTAL BALANCE"; color: Theme.text-muted; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
+                            Text { text: root.balance + " SALT"; color: Theme.text; font-size: 32px; font-weight: 600; overflow: elide; }
+                        }
+                    }
+
+                    Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        min-height: 80px;
+                        horizontal-stretch: 1;
+                        clip: true;
+
+                        VerticalLayout {
+                            padding: Theme.space-xl;
+                            spacing: Theme.space-sm;
+
+                            Text { text: "EARNED THIS SESSION"; color: Theme.text-muted; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
+                            Text {
+                                // Show + prefix when we've earned anything (> 0).
+                                // Parse-free check: any non-zero + non-"0.0000" is a delta.
+                                text: (root.earned != "0" && root.earned != "0.0000" ? "+" : "") + root.earned + " SALT";
+                                color: root.earned != "0" && root.earned != "0.0000" ? Theme.chamois : Theme.text-muted;
+                                font-size: 24px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                        }
                     }
                 }
 
