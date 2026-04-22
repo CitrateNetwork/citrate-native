@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 slint::include_modules!();
 
 mod app_binder;
+mod storage_service;
 
 #[cfg(test)]
 mod ui_visual_tests;
@@ -201,6 +202,126 @@ async fn ipfs_fetch_stats(client: &reqwest::Client) -> IpfsStats {
 }
 
 /// Format a byte count into a human-readable string (B, KB, MB, GB, TB).
+/// P960-C WP-C.1/C.3: Upload a batch of paths to the local IPFS
+/// daemon, persist each result into `files.json`, and push the
+/// updated list into the Slint UI.
+///
+/// Called from both the file-picker callback and the winit
+/// drag-drop handler so the upload flow is identical in both cases.
+///
+/// Side effects:
+/// - Sets `storage-uploading` + `storage-upload-status` on the UI
+///   during the batch, clears them when done.
+/// - Writes to `~/.local/share/citrate-gui/files.json` atomically.
+/// - Pushes a fresh `FileEntry` list into `storage-files`.
+async fn upload_paths_to_ipfs(
+    rt_handle: &tokio::runtime::Handle,
+    ui_w: slint::Weak<App>,
+    paths: Vec<std::path::PathBuf>,
+) {
+    let _ = rt_handle; // Present for symmetry + future streaming use.
+
+    let client = reqwest::Client::new();
+    let total = paths.len();
+    let index_path = storage_service::FilesIndex::default_path();
+    let mut index = index_path.as_ref()
+        .map(|p| storage_service::FilesIndex::load(p))
+        .unwrap_or_default();
+    if index.version == 0 {
+        index.version = 1;
+    }
+
+    for (i, path) in paths.iter().enumerate() {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("untitled")
+            .to_string();
+        let status = format!("Uploading {} of {}: {}", i + 1, total, name);
+        {
+            let ui_w2 = ui_w.clone();
+            let status_clone = status.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w2.upgrade() {
+                    ui.set_storage_upload_status(status_clone.into());
+                }
+            });
+        }
+
+        match storage_service::ipfs_add_file(&client, path).await {
+            Ok((cid, size)) => {
+                let mime = mime_guess::from_path(path)
+                    .first_raw()
+                    .unwrap_or("application/octet-stream")
+                    .to_string();
+                let uploaded_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let rec = storage_service::FileRecord {
+                    cid,
+                    name,
+                    size_bytes: size,
+                    uploaded_at,
+                    mime,
+                };
+                index.upsert(rec);
+            }
+            Err(e) => {
+                tracing::error!("ipfs add {} failed: {}", path.display(), e);
+                let ui_w2 = ui_w.clone();
+                let emsg = format!("Failed: {} — {}", name, e);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w2.upgrade() {
+                        ui.set_storage_upload_status(emsg.into());
+                    }
+                });
+            }
+        }
+    }
+
+    if let Some(ref p) = index_path {
+        if let Err(e) = index.save(p) {
+            tracing::warn!("files.json save failed: {}", e);
+        }
+    }
+
+    let entries = build_file_entries(&index);
+    let ui_w_final = ui_w.clone();
+    let done_msg = if total == 1 { "Uploaded 1 file".to_string() } else { format!("Uploaded {} files", total) };
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = ui_w_final.upgrade() {
+            let model = std::rc::Rc::new(slint::VecModel::from(entries));
+            ui.set_storage_files(model.into());
+            ui.set_storage_uploading(false);
+            ui.set_storage_upload_status("".into());
+            ui.set_clipboard_toast(done_msg.into());
+            let ui_for_clear = ui_w_final.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(1800), move || {
+                if let Some(ui) = ui_for_clear.upgrade() {
+                    ui.set_clipboard_toast("".into());
+                }
+            });
+        }
+    });
+}
+
+/// Turn a `FilesIndex` into Slint `FileEntry` rows with pre-formatted
+/// display strings. Called on upload, refresh, and removal.
+fn build_file_entries(index: &storage_service::FilesIndex) -> Vec<FileEntry> {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    index.files.iter().map(|f| FileEntry {
+        name: f.name.clone().into(),
+        size: f.size_display().into(),
+        mime_icon: f.mime_icon().into(),
+        uploaded: f.uploaded_display(now_secs).into(),
+        cid: f.cid.clone().into(),
+    }).collect()
+}
+
 /// P960-A WP-A.4: Pretty-format a tool-result JSON string so it reads
 /// naturally in the chat thread. Chain data is structured —
 /// `{"blocks": [...]}` etc. — and dumping raw JSON into a conversation
@@ -3761,8 +3882,80 @@ fn main() {
         });
     });
 
+    // P960-C WP-C.1: native file picker via `rfd` + IPFS upload.
+    // The heavy lifting lives in `upload_paths_to_ipfs` so drag-drop
+    // (WP-C.2) can reuse the same flow.
+    let rt_h = rt.handle().clone();
+    let ui_w = ui.as_weak();
     ui.on_storage_upload_file(move || {
-        tracing::info!("Storage: upload file requested — file dialog not yet available in Slint");
+        let ui_w = ui_w.clone();
+        tracing::info!("Storage: upload-file dialog open");
+
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_storage_uploading(true);
+            ui.set_storage_upload_status("Choosing files…".into());
+        }
+
+        let rt_h_inner = rt_h.clone();
+        spawn_async(&rt_h, async move {
+            let chosen = rfd::AsyncFileDialog::new()
+                .set_title("Upload to Citrate Storage")
+                .pick_files()
+                .await;
+            let paths: Vec<std::path::PathBuf> = match chosen {
+                Some(files) => files.into_iter().map(|f| f.path().to_path_buf()).collect(),
+                None => {
+                    // User cancelled — clear the upload-state UI.
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_storage_uploading(false);
+                            ui.set_storage_upload_status("".into());
+                        }
+                    });
+                    return;
+                }
+            };
+            upload_paths_to_ipfs(&rt_h_inner, ui_w, paths).await;
+        });
+    });
+
+    // P960-C WP-C.3: Copy share-link flows through the unified
+    // clipboard callback that was added in earlier work (flashes the
+    // "✓ Copied: …" toast).
+    let ui_w = ui.as_weak();
+    ui.on_storage_copy_share_link(move |cid| {
+        if let Some(ui) = ui_w.upgrade() {
+            let link = storage_service::share_link(&cid);
+            ui.invoke_copy_to_clipboard(link.into());
+        }
+    });
+
+    // P960-C WP-C.3: Remove from files.json + unpin on IPFS side.
+    let rt_h = rt.handle().clone();
+    let ui_w = ui.as_weak();
+    ui.on_storage_remove_file(move |cid| {
+        let cid_str = cid.to_string();
+        let ui_w = ui_w.clone();
+        tracing::info!("Storage: remove-file cid={}", cid_str);
+        spawn_async(&rt_h, async move {
+            let client = reqwest::Client::new();
+            let _ = storage_service::ipfs_unpin(&client, &cid_str).await;
+
+            if let Some(path) = storage_service::FilesIndex::default_path() {
+                let mut idx = storage_service::FilesIndex::load(&path);
+                idx.remove(&cid_str);
+                if let Err(e) = idx.save(&path) {
+                    tracing::warn!("files.json save failed: {}", e);
+                }
+                let entries = build_file_entries(&idx);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        let model = std::rc::Rc::new(slint::VecModel::from(entries));
+                        ui.set_storage_files(model.into());
+                    }
+                });
+            }
+        });
     });
 
     let rt_h = rt.handle().clone();
@@ -3861,12 +4054,19 @@ fn main() {
                         "Storage: auto-detect — {} peers, {} pins, repo {}",
                         stats.peer_count, stats.pin_count, stats.repo_size
                     );
+                    // P960-C: also hydrate the persisted file list so
+                    // users see previously-uploaded files on boot.
+                    let entries = storage_service::FilesIndex::default_path()
+                        .map(|p| build_file_entries(&storage_service::FilesIndex::load(&p)))
+                        .unwrap_or_default();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_storage_daemon_online(true);
                             ui.set_storage_peer_count(stats.peer_count);
                             ui.set_storage_pin_count(stats.pin_count);
                             ui.set_storage_repo_size(stats.repo_size.into());
+                            let model = std::rc::Rc::new(slint::VecModel::from(entries));
+                            ui.set_storage_files(model.into());
                         }
                     });
                 }

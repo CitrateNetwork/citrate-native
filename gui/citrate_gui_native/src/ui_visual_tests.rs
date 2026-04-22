@@ -101,10 +101,12 @@ fn configure_chat(app: &App) {
         ChatMessageData {
             role: "user".into(),
             content: "What's my balance?".into(),
+            tool_name: "".into(),
         },
         ChatMessageData {
             role: "assistant".into(),
             content: "Your balance is 42 SALT.".into(),
+            tool_name: "".into(),
         },
     ];
     let model = Rc::new(VecModel::from(messages));
