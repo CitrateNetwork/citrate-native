@@ -116,8 +116,7 @@ export component Sidebar inherits Rectangle {
             title: "DEVELOPER";
             NavItem { label: "Contracts"; active: root.active-tab == "contracts"; clicked => { root.tab-changed("contracts"); } }
             NavItem { label: "Compute"; active: root.active-tab == "compute"; clicked => { root.tab-changed("compute"); } }
-            NavItem { label: "Storage"; active: root.active-tab == "storage"; clicked => { root.tab-changed("storage"); } }
-            NavItem { label: "Studio"; active: root.active-tab == "studio"; clicked => { root.tab-changed("studio"); } }
+            NavItem { label: "Files"; active: root.active-tab == "storage"; clicked => { root.tab-changed("storage"); } }
         }
 
         // Learning group

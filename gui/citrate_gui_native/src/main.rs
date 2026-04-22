@@ -912,8 +912,8 @@ fn main() {
         if let Some(ui) = ui_w.upgrade() {
             ui.set_active_tab(tab.clone());
         }
-        // Initialize Studio/Contracts services on first visit
-        if tab_str == "studio" || tab_str == "contracts" {
+        // Initialize Contracts IDE services on first visit
+        if tab_str == "contracts" {
             let core = core.clone();
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
@@ -922,10 +922,10 @@ fn main() {
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let root_str = project_root.to_string_lossy().to_string();
                 if let Err(e) = core.file_explorer.set_root(&project_root).await {
-                    tracing::warn!("Studio: file tree root set failed: {}", e);
+                    tracing::warn!("Contracts IDE: file tree root set failed: {}", e);
                 } else {
                     let nodes = core.file_explorer.get_tree().await;
-                    tracing::info!("Studio: loaded {} file tree nodes from {}", nodes.len(), root_str);
+                    tracing::info!("Contracts IDE: loaded {} file tree nodes from {}", nodes.len(), root_str);
                     let ui_w2 = ui_w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w2.upgrade() {
@@ -937,18 +937,18 @@ fn main() {
                 // Terminal initialization
                 match core.terminal.create_default_session().await {
                     Ok(session_id) => {
-                        tracing::info!("Studio: terminal session created: {}", session_id);
+                        tracing::info!("Contracts IDE: terminal session created: {}", session_id);
                     }
-                    Err(e) => tracing::warn!("Studio: terminal init failed: {}", e),
+                    Err(e) => tracing::warn!("Contracts IDE: terminal init failed: {}", e),
                 }
 
                 // Git status
                 if let Err(e) = core.git.open_repo(&std::path::PathBuf::from(".")).await {
-                    tracing::debug!("Studio: git repo open: {}", e);
+                    tracing::debug!("Contracts IDE: git repo open: {}", e);
                 }
                 let branch = core.git.current_branch().await;
                 if !branch.is_empty() {
-                    tracing::info!("Studio: git branch={}", branch);
+                    tracing::info!("Contracts IDE: git branch={}", branch);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_ide_git_branch(branch.into());
@@ -1277,7 +1277,7 @@ fn main() {
                 let has_tx_update = tick_counter % 10 == 0;
 
                 let ui_for_main = ui_handle.clone();
-                let ui_for_studio = ui_handle.clone();
+                let ui_for_ide = ui_handle.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_for_main.upgrade() {
                         ui.set_node_running(status.running);
@@ -1327,12 +1327,12 @@ fn main() {
                     }
                 });
 
-                // Studio hydration — poll terminal and git every 3rd tick (~15s)
-                // Only when studio/contracts tab is active
+                // Contracts IDE hydration — poll terminal and git every 3rd tick (~15s)
+                // Only when contracts tab is active
                 if tick_counter % 3 == 0 {
-                    let active_tab = ui_for_studio.upgrade()
+                    let active_tab = ui_for_ide.upgrade()
                         .map(|ui| ui.get_active_tab().to_string());
-                    if matches!(active_tab.as_deref(), Some("studio") | Some("contracts")) {
+                    if active_tab.as_deref() == Some("contracts") {
                         // Poll terminal output
                         // (Terminal sessions push output via poll_output → feed_bytes)
                         // Poll git branch
@@ -1906,7 +1906,7 @@ fn main() {
         // For now, log the request — this will be wired when we have a standalone IDE binary.
     });
 
-    // Terminal and git init deferred — will initialize on first tab switch to Studio.
+    // Terminal and git init deferred — will initialize on first tab switch to Contracts.
     // This prevents blocking the UI at startup.
 
     // IDE state updates happen through callbacks (file open, edit, etc.)
@@ -3373,6 +3373,19 @@ fn main() {
     // =========================================================================
     // CONTRACTS: Compile + Deploy
     // =========================================================================
+
+    // --- Contracts: Toggle Deploy drawer ---
+    // P960-B: Deploy column is a collapsible drawer. Lets the editor
+    // take the full tab width when the user is just coding.
+    {
+        let ui_w = ui.as_weak();
+        ui.on_contracts_toggle_deploy(move || {
+            if let Some(ui) = ui_w.upgrade() {
+                let cur = ui.get_contracts_deploy_visible();
+                ui.set_contracts_deploy_visible(!cur);
+            }
+        });
+    }
 
     // --- Contracts: Compile ---
     let core = app_core.clone();

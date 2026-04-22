@@ -315,9 +315,14 @@ export component App inherits Window {
     in property <string> contracts-deploy-error: "";
     in property <string> contracts-deployed-address: "";
     in property <string> contracts-deployment-history: "";
+    // Deploy drawer toggle. When false, the IDE gets the full width
+    // and the Deploy column is hidden. A floating "Deploy" button in
+    // the top-right reveals it.
+    in-out property <bool> contracts-deploy-visible: true;
     callback contracts-compile;
     callback contracts-deploy;
     callback contracts-run-tests;
+    callback contracts-toggle-deploy;
 
     // === Operations / Agent Center State ===
     in property <string> ops-session-id: "";
@@ -531,99 +536,101 @@ export component App inherits Window {
                     pin-model-to-ipfs => { root.models-pin-to-ipfs(); }
                 }
 
-                // Contracts IDE — editor + deploy panel
-                if root.active-tab == "contracts" : HorizontalLayout {
-                    IdePanel {
-                        horizontal-stretch: 1;
-                        explorer-root: root.ide-explorer-root;
-                        file-tree-nodes: root.ide-file-tree;
-                        selected-file-path: root.ide-selected-file;
-                        tabs: root.ide-tabs;
-                        visible-lines: root.ide-visible-lines;
-                        total-lines: root.ide-total-lines;
-                        cursor-line: root.ide-cursor-line;
-                        cursor-col: root.ide-cursor-col;
-                        terminal-rows: root.ide-terminal-rows;
-                        terminal-cursor-row: root.ide-terminal-cursor-row;
-                        terminal-cursor-col: root.ide-terminal-cursor-col;
-                        git-branch: root.ide-git-branch;
-                        git-changed-files: root.ide-git-changed-files;
-                        diagnostics: root.ide-diagnostics;
-                        active-language: root.ide-language;
-                        error-count: root.ide-error-count;
-                        warning-count: root.ide-warning-count;
-                        file-opened(path) => { root.ide-file-opened(path); }
-                        dir-toggled(path) => { root.ide-dir-toggled(path); }
-                        tab-clicked(id) => { root.ide-tab-clicked(id); }
-                        tab-closed(id) => { root.ide-tab-closed(id); }
-                        editor-key-pressed(key) => { root.ide-editor-key(key); }
-                        terminal-input(key) => { root.ide-terminal-input(key); }
-                        git-stage(path) => { root.ide-git-stage(path); }
-                        git-unstage(path) => { root.ide-git-unstage(path); }
-                        git-commit(msg) => { root.ide-git-commit(msg); }
-                        git-push => { root.ide-git-push(); }
-                        git-pull => { root.ide-git-pull(); }
-                        save-file => { root.ide-save-file(); }
-                        pop-out => { root.ide-pop-out(); }
-                        command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
-                        search-in-files(query) => { root.ide-search-in-files(query); }
-                        search-results: root.ide-search-results;
+                // Contracts IDE — unified editor / compile / deploy.
+                // The Deploy column is a collapsible drawer toggled by the
+                // pill in the top-right. When collapsed the IDE fills the
+                // whole tab; when open it gets a fixed-width sidecar.
+                if root.active-tab == "contracts" : Rectangle {
+                    HorizontalLayout {
+                        IdePanel {
+                            horizontal-stretch: 1;
+                            explorer-root: root.ide-explorer-root;
+                            file-tree-nodes: root.ide-file-tree;
+                            selected-file-path: root.ide-selected-file;
+                            tabs: root.ide-tabs;
+                            visible-lines: root.ide-visible-lines;
+                            total-lines: root.ide-total-lines;
+                            cursor-line: root.ide-cursor-line;
+                            cursor-col: root.ide-cursor-col;
+                            terminal-rows: root.ide-terminal-rows;
+                            terminal-cursor-row: root.ide-terminal-cursor-row;
+                            terminal-cursor-col: root.ide-terminal-cursor-col;
+                            git-branch: root.ide-git-branch;
+                            git-changed-files: root.ide-git-changed-files;
+                            diagnostics: root.ide-diagnostics;
+                            active-language: root.ide-language;
+                            error-count: root.ide-error-count;
+                            warning-count: root.ide-warning-count;
+                            file-opened(path) => { root.ide-file-opened(path); }
+                            dir-toggled(path) => { root.ide-dir-toggled(path); }
+                            tab-clicked(id) => { root.ide-tab-clicked(id); }
+                            tab-closed(id) => { root.ide-tab-closed(id); }
+                            editor-key-pressed(key) => { root.ide-editor-key(key); }
+                            terminal-input(key) => { root.ide-terminal-input(key); }
+                            git-stage(path) => { root.ide-git-stage(path); }
+                            git-unstage(path) => { root.ide-git-unstage(path); }
+                            git-commit(msg) => { root.ide-git-commit(msg); }
+                            git-push => { root.ide-git-push(); }
+                            git-pull => { root.ide-git-pull(); }
+                            save-file => { root.ide-save-file(); }
+                            pop-out => { root.ide-pop-out(); }
+                            command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
+                            search-in-files(query) => { root.ide-search-in-files(query); }
+                            search-results: root.ide-search-results;
+                        }
+
+                        if root.contracts-deploy-visible : ContractsPanel {
+                            compiler-version: root.contracts-compiler-version;
+                            compile-status: root.contracts-compile-status;
+                            compiling: root.contracts-compiling;
+                            compile-error: root.contracts-compile-error;
+                            selected-contract: root.contracts-selected-contract;
+                            environment: root.environment;
+                            gas-estimate: root.contracts-gas-estimate;
+                            deploying: root.contracts-deploying;
+                            deploy-error: root.contracts-deploy-error;
+                            deployed-address: root.contracts-deployed-address;
+                            deployment-history: root.contracts-deployment-history;
+                            compile => { root.contracts-compile(); }
+                            deploy => { root.contracts-deploy(); }
+                            run-tests => { root.contracts-run-tests(); }
+                        }
                     }
 
-                    ContractsPanel {
-                        compiler-version: root.contracts-compiler-version;
-                        compile-status: root.contracts-compile-status;
-                        compiling: root.contracts-compiling;
-                        compile-error: root.contracts-compile-error;
-                        selected-contract: root.contracts-selected-contract;
-                        environment: root.environment;
-                        gas-estimate: root.contracts-gas-estimate;
-                        deploying: root.contracts-deploying;
-                        deploy-error: root.contracts-deploy-error;
-                        deployed-address: root.contracts-deployed-address;
-                        deployment-history: root.contracts-deployment-history;
-                        compile => { root.contracts-compile(); }
-                        deploy => { root.contracts-deploy(); }
-                        run-tests => { root.contracts-run-tests(); }
+                    // Floating drawer toggle (pill, top-right)
+                    Rectangle {
+                        x: parent.width - self.width - 12px;
+                        y: 10px;
+                        width: 110px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: toggle-ta.has-hover
+                            ? Theme.accent
+                            : (root.contracts-deploy-visible ? Theme.sage : Theme.surface);
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        animate background { duration: 120ms; }
+
+                        Text {
+                            x: 0; y: 0; width: parent.width; height: parent.height;
+                            text: root.contracts-deploy-visible ? "✕  Hide Deploy" : "＋  Deploy";
+                            color: (toggle-ta.has-hover || root.contracts-deploy-visible) ? #000000 : Theme.text;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+
+                        toggle-ta := TouchArea {
+                            clicked => { root.contracts-toggle-deploy(); }
+                            mouse-cursor: pointer;
+                        }
                     }
                 }
 
-                // Studio / IDE (standalone, no deploy panel)
-                if root.active-tab == "studio" : IdePanel {
-                    explorer-root: root.ide-explorer-root;
-                    file-tree-nodes: root.ide-file-tree;
-                    selected-file-path: root.ide-selected-file;
-                    tabs: root.ide-tabs;
-                    visible-lines: root.ide-visible-lines;
-                    total-lines: root.ide-total-lines;
-                    cursor-line: root.ide-cursor-line;
-                    cursor-col: root.ide-cursor-col;
-                    terminal-rows: root.ide-terminal-rows;
-                    terminal-cursor-row: root.ide-terminal-cursor-row;
-                    terminal-cursor-col: root.ide-terminal-cursor-col;
-                    git-branch: root.ide-git-branch;
-                    git-changed-files: root.ide-git-changed-files;
-                    diagnostics: root.ide-diagnostics;
-                    active-language: root.ide-language;
-                    error-count: root.ide-error-count;
-                    warning-count: root.ide-warning-count;
-                    file-opened(path) => { root.ide-file-opened(path); }
-                    dir-toggled(path) => { root.ide-dir-toggled(path); }
-                    tab-clicked(id) => { root.ide-tab-clicked(id); }
-                    tab-closed(id) => { root.ide-tab-closed(id); }
-                    editor-key-pressed(key) => { root.ide-editor-key(key); }
-                    terminal-input(key) => { root.ide-terminal-input(key); }
-                    git-stage(path) => { root.ide-git-stage(path); }
-                    git-unstage(path) => { root.ide-git-unstage(path); }
-                    git-commit(msg) => { root.ide-git-commit(msg); }
-                    git-push => { root.ide-git-push(); }
-                    git-pull => { root.ide-git-pull(); }
-                    save-file => { root.ide-save-file(); }
-                    pop-out => { root.ide-pop-out(); }
-                    command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
-                    search-in-files(query) => { root.ide-search-in-files(query); }
-                    search-results: root.ide-search-results;
-                }
+                // (Studio panel retired 2026-04-22 — the Contracts tab above
+                // is the unified IDE. Sidebar entry removed; no standalone
+                // IDE-without-deploy branch exists.)
 
                 // Learning Center
                 if root.active-tab == "learning" : VerticalLayout {
@@ -734,7 +741,7 @@ export component App inherits Window {
                 }
 
                 // Placeholder for any remaining tabs
-                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "studio" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" && root.active-tab != "operations" : VerticalLayout {
+                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" && root.active-tab != "operations" : VerticalLayout {
                     padding: Theme.space-lg;
 
                     Text {
