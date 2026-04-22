@@ -1,6 +1,12 @@
-// Citrate Design System — Brand-aligned theme tokens
-// Colors from citrate.ai, fonts: Tilt Warp (display), Satoshi (body),
-// JetBrains Mono (code), Instrument Serif (accent)
+// Citrate Design System — Brand-aligned theme tokens.
+// Typography: Space Grotesk (display + body), IBM Plex Mono (code).
+// Fonts are bundled OFL-licensed TTFs under assets/fonts/ — see
+// NOTICE-fonts.md. Slint's `import` directive embeds and registers
+// them at compile time so we don't depend on system fallbacks.
+import "../assets/fonts/SpaceGrotesk-Variable.ttf";
+import "../assets/fonts/IBMPlexMono-Regular.ttf";
+import "../assets/fonts/IBMPlexMono-Medium.ttf";
+import "../assets/fonts/IBMPlexMono-Bold.ttf";
 
 export global Theme {
     // === DARK MODE (default) — Gunmetal black with warm brown undertone ===
@@ -65,6 +71,13 @@ export global Theme {
     out property <int> font-weight-medium: 500;
     out property <int> font-weight-semibold: 600;
     out property <int> font-weight-bold: 700;
+
+    // Font families. `font-body` is the default for every Text unless
+    // overridden. `font-mono` is for hashes, addresses, code, and any
+    // tabular figures where digit alignment matters. Use these instead
+    // of hardcoded "monospace" or "JetBrains Mono" strings.
+    out property <string> font-body: "Space Grotesk";
+    out property <string> font-mono: "IBM Plex Mono";
 
     // ========================================================================
     // Motion tokens (Sprint P950-C, WP-C.1)
