@@ -170,38 +170,69 @@ component EnvironmentCard inherits Rectangle {
     in property <string> name;
     in property <string> description;
     in property <bool> selected: false;
+    in property <bool> disabled: false;
+    in property <string> disabled-badge: "";
     callback clicked;
 
     height: 60px;
     border-radius: Theme.radius-md;
-    background: selected ? Theme.bg-tertiary :
+    background: root.disabled ? Theme.bg-tertiary :
+                selected ? Theme.bg-tertiary :
                 (env-touch.pressed ? Theme.bg-tertiary :
                  (env-touch.has-hover ? Theme.bg-tertiary.brighter(0.4) : Theme.surface));
     animate background { duration: Theme.duration-fast; }
     border-width: selected ? 2px : 1px;
-    border-color: selected ? Theme.accent :
+    border-color: root.disabled ? Theme.border-subtle :
+                  selected ? Theme.accent :
                   (env-touch.has-hover ? Theme.accent.darker(0.3) : Theme.border-subtle);
     animate border-color { duration: Theme.duration-fast; }
+    opacity: root.disabled ? 0.55 : 1.0;
 
-    VerticalLayout {
+    HorizontalLayout {
         padding: Theme.space-md;
-        spacing: 2px;
-        Text {
-            text: root.name;
-            color: selected ? Theme.accent : Theme.text;
-            font-size: Theme.font-size-md;
-            font-weight: Theme.font-weight-semibold;
+        spacing: Theme.space-md;
+        alignment: space-between;
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: root.name;
+                color: selected ? Theme.accent : Theme.text;
+                font-size: Theme.font-size-md;
+                font-weight: Theme.font-weight-semibold;
+            }
+            Text {
+                text: root.description;
+                color: Theme.text-muted;
+                font-size: 11px;
+            }
         }
-        Text {
-            text: root.description;
-            color: Theme.text-muted;
-            font-size: 11px;
+
+        // "Coming soon" / etc. badge — rendered only when disabled-badge
+        // is non-empty so devnet/testnet cards stay visually clean.
+        if root.disabled-badge != "" : Rectangle {
+            vertical-stretch: 0;
+            background: Theme.bg-secondary;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            width: 100px;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            Text {
+                text: root.disabled-badge;
+                color: Theme.text-secondary;
+                font-size: 10px;
+                font-weight: Theme.font-weight-semibold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
     }
 
     env-touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        mouse-cursor: root.disabled ? default : pointer;
+        clicked => { if !root.disabled { root.clicked(); } }
     }
 }
 
@@ -213,7 +244,10 @@ export component Onboarding inherits Rectangle {
     // State
     in-out property <int> current-step: 0;
     in-out property <string> persona: "";
-    in-out property <string> environment: "testnet";
+    // Empty default so the user must explicitly pick a network before
+    // Start Node becomes enabled. Avoids accidentally firing node init
+    // for an environment the user didn't consciously choose.
+    in-out property <string> environment: "";
     in-out property <string> password: "";
     in-out property <string> confirm-password: "";
     in-out property <string> account-label: "Primary Account";
@@ -649,9 +683,21 @@ export component Onboarding inherits Rectangle {
                         clicked => { root.environment = "devnet"; }
                     }
 
+                    EnvironmentCard {
+                        name: "Mainnet";
+                        description: "Production network — launches after testnet graduation";
+                        selected: false;
+                        disabled: true;
+                        disabled-badge: "Coming soon";
+                    }
+
+                    // Start Node is disabled until the user picks a network
+                    // explicitly. Default `root.environment` is "" so nothing
+                    // auto-connects. Mainnet card can't be selected (disabled).
                     OnboardingButton {
                         label: "Start Node";
                         primary: true;
+                        enabled: root.environment == "testnet" || root.environment == "devnet";
                         clicked => {
                             root.start-node(root.environment);
                             root.current-step = 6;
