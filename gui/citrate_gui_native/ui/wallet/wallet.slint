@@ -77,6 +77,8 @@ component TxRow inherits Rectangle {
     in property <string> counterparty;
     in property <string> status;
     in property <string> timestamp;
+    in property <string> hash: "";
+    callback copy-hash(string);
 
     height: 48px;
 
@@ -125,7 +127,35 @@ component TxRow inherits Rectangle {
             color: Theme.text-muted; font-size: 10px;
             min-width: 60px; vertical-alignment: center;
         }
+
+        // Copy-hash icon. Shown faded; hover highlights. Click copies.
+        Rectangle {
+            width: 28px; height: 22px; y: 13px;
+            border-radius: Theme.radius-sm;
+            background: copy-touch.pressed ? Theme.bg-tertiary
+                : (copy-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent);
+            opacity: root.hash != "" ? (copy-touch.has-hover ? 1.0 : 0.6) : 0;
+            animate background { duration: Theme.duration-fast; }
+            animate opacity { duration: Theme.duration-fast; }
+
+            Text {
+                text: "⧉";
+                color: Theme.text-muted;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            copy-touch := TouchArea {
+                mouse-cursor: root.hash != "" ? pointer : default;
+                clicked => {
+                    if root.hash != "" {
+                        root.copy-hash(root.hash);
+                    }
+                }
+            }
+        }
     }
+
 }
 
 export component WalletView inherits Rectangle {
@@ -155,6 +185,10 @@ export component WalletView inherits Rectangle {
     callback lock-clicked;
     callback unlock-clicked;
     callback copy-address;
+    // Generic text copy (tx hashes from the history table, etc.).
+    // Handled at the app level by the global `copy-to-clipboard` flow
+    // which also shows a "Copied" toast.
+    callback copy-text(string);
     callback select-account(int);
     callback create-account(string, string);
     callback import-from-key(string, string);
@@ -451,6 +485,8 @@ export component WalletView inherits Rectangle {
                                 counterparty: tx.counterparty;
                                 status: tx.status;
                                 timestamp: tx.timestamp;
+                                hash: tx.hash;
+                                copy-hash(text) => { root.copy-text(text); }
                             }
                         }
                     }
