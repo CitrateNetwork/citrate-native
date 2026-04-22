@@ -4,20 +4,31 @@ import { Theme } from "../theme.slint";
 import { PrivacyIndicator } from "../shared/feedback.slint";
 
 export struct ChatMessageData {
-    role: string,       // "user" or "assistant"
+    role: string,       // "user", "assistant", or "tool"
     content: string,
+    tool-name: string,  // P960-A WP-A.4: populated when role=="tool"
+                        // (e.g. "get_recent_blocks"); enables distinct
+                        // styling + widget rendering on the UI side.
 }
 
 component MessageBubble inherits Rectangle {
     in property <string> role: "user";
     in property <string> content;
+    in property <string> tool-name: "";
     callback copy-content(string);
+
+    // Tool-role messages get distinct framing — subtle chamois border,
+    // mono font for the body, and a "Tool: get_recent_blocks" header —
+    // so structured chain data is visually separate from chatter.
+    property <bool> is-tool: root.role == "tool";
 
     min-height: 36px;
     border-radius: Theme.radius-lg;
-    background: root.role == "user" ? Theme.bg-tertiary : Theme.surface;
-    border-width: root.role == "assistant" ? 1px : 0px;
-    border-color: Theme.border-subtle;
+    background: root.is-tool ? Theme.bg-secondary
+        : (root.role == "user" ? Theme.bg-tertiary : Theme.surface);
+    border-width: root.is-tool ? 1px
+        : (root.role == "assistant" ? 1px : 0px);
+    border-color: root.is-tool ? Theme.chamois : Theme.border-subtle;
 
     property <bool> copied: false;
 
@@ -30,8 +41,10 @@ component MessageBubble inherits Rectangle {
 
         HorizontalLayout {
             Text {
-                text: root.role == "user" ? "You" : "Citrate AI";
-                color: root.role == "user" ? Theme.text-muted : Theme.accent;
+                text: root.is-tool ? ("Tool: " + root.tool-name)
+                    : (root.role == "user" ? "You" : "Citrate AI");
+                color: root.is-tool ? Theme.chamois
+                    : (root.role == "user" ? Theme.text-muted : Theme.accent);
                 font-size: 10px;
                 font-weight: 600;
                 horizontal-stretch: 1;
@@ -264,6 +277,7 @@ export component ChatView inherits Rectangle {
                     for msg in root.messages : MessageBubble {
                         role: msg.role;
                         content: msg.content;
+                        tool-name: msg.tool-name;
                         copy-content(text) => { root.copy-to-clipboard(text); }
                     }
 
