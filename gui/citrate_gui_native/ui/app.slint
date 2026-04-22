@@ -41,6 +41,11 @@ export component App inherits Window {
     in property <string> lock-lockout-message: "";
     callback unlock-wallet(string);
     callback sign-out;
+
+    // Generic clipboard copy. Any panel emits `copy-to-clipboard(text)`
+    // and the Rust side (arboard) writes it, flashes the toast below.
+    callback copy-to-clipboard(string);
+    in-out property <string> clipboard-toast: "";
     in property <string> active-tab: "dashboard";
     in property <bool> node-running: false;
     in property <string> environment: "TESTNET";
@@ -398,7 +403,15 @@ export component App inherits Window {
                     send-clicked => { root.show-send-dialog = true; }
                     lock-clicked => { root.wallet-lock-clicked(); }
                     unlock-clicked => { root.wallet-unlock-clicked(); }
-                    copy-address => { root.wallet-copy-address(); }
+                    // Route through the unified clipboard flow so the
+                    // "Copied" toast fires. The legacy wallet-copy-address
+                    // callback is still invoked to keep any existing
+                    // Rust-side side-effects working.
+                    copy-address => {
+                        root.copy-to-clipboard(root.wallet-selected-address);
+                        root.wallet-copy-address();
+                    }
+                    copy-text(text) => { root.copy-to-clipboard(text); }
                     create-account(pwd, label) => { root.wallet-create-account(pwd, label); }
                     import-from-mnemonic(mnemonic, pwd) => { root.wallet-import-mnemonic(mnemonic, pwd); }
                     import-from-key(key, pwd) => { root.wallet-import-mnemonic(key, pwd); }
@@ -423,6 +436,7 @@ export component App inherits Window {
                     search(query) => { root.dag-search(query); }
                     select-block(height) => { root.dag-select-block(height); }
                     back-to-list => { root.dag-back-to-list(); }
+                    copy-text(text) => { root.copy-to-clipboard(text); }
                 }
 
                 // Settings
@@ -473,6 +487,7 @@ export component App inherits Window {
                     send-message(msg) => { root.chat-send(msg); }
                     approve-tool => { root.chat-approve-tool(); }
                     reject-tool => { root.chat-reject-tool(); }
+                    copy-to-clipboard(text) => { root.copy-to-clipboard(text); }
                 }
 
                 // Models
@@ -700,6 +715,31 @@ export component App inherits Window {
             block-height: root.block-height;
             peer-count: root.peer-count;
             version: root.app-version;
+        }
+    }
+
+    // Clipboard-copy toast — fires from any copy-to-clipboard callback.
+    // Positioned above the status bar so it's visible from any panel
+    // without stealing focus. Auto-clears after 1.5s (Rust side).
+    if root.clipboard-toast != "" : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 80px;
+        width: toast-text.preferred-width + 48px;
+        height: 36px;
+        border-radius: 18px; // pill
+        background: Theme.bg-tertiary;
+        border-width: 1px;
+        border-color: Theme.success;
+        drop-shadow-blur: 18px;
+        drop-shadow-color: #00000055;
+
+        toast-text := Text {
+            text: "✓  " + root.clipboard-toast;
+            color: Theme.text;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 
