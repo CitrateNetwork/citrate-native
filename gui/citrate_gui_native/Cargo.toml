@@ -52,6 +52,13 @@ mime_guess = "2"
 # P960-C WP-C.3: serde for the persisted `files.json` index.
 serde = { version = "1", features = ["derive"] }
 
+# P960-D WP-D.1: hardware detection (CPU / RAM / optional NVIDIA
+# GPU). sysinfo is pure-Rust, cross-platform. nvml-wrapper is
+# NVIDIA-only with a runtime-load check — absence of the libnvml
+# shared lib is handled gracefully (returns "no GPU detected").
+sysinfo = "0.32"
+nvml-wrapper = "0.10"
+
 [dev-dependencies]
 async-trait = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }

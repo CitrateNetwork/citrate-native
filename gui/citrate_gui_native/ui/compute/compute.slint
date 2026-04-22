@@ -1,198 +1,450 @@
-// Compute Marketplace — browse jobs, register provider, GPU management
+// Compute — opt-in GPU/CPU sharing with the Citrate compute
+// marketplace. The ARCHIVE Tauri GPUSettings.tsx is the visual
+// reference; this Slint port keeps the same mental model:
+//
+//   - big Enable toggle up top (default off)
+//   - allocation slider below (disabled until enabled)
+//   - schedule picker (Always / Nights / Weekends)
+//   - detected-hardware card above the toggle so the user knows
+//     exactly what they'd be sharing
+//   - Register button at the bottom, disabled with a "coming soon"
+//     pill until the contract-registration flow lands
+//
+// P960-D WP-D.1 / D.2.
 import { Theme } from "../theme.slint";
 
 export component ComputeView inherits Rectangle {
-    in property <int> active-jobs: 0;
-    in property <int> available-providers: 0;
+    // Detected hardware — populated by the Rust side on tab open.
+    in property <string> hw-summary: "Detecting hardware…";
+    in property <string> hw-cpu: "—";
+    in property <int>    hw-cpu-cores: 0;
+    in property <int>    hw-cpu-threads: 0;
+    in property <int>    hw-ram-gb: 0;
+    in property <bool>   hw-has-gpu: false;
+    in property <string> hw-gpu-name: "";
+    in property <int>    hw-gpu-vram-gb: 0;
+    in property <string> hw-gpu-cc: "";
+    in property <string> hw-gpu-driver: "";
+
+    // User-settable compute prefs (persisted to compute.json)
+    in-out property <bool>   enabled: false;
+    in-out property <int>    allocation-percent: 50;
+    in-out property <string> schedule: "always";
+    in property <string> schedule-description: "Share compute 24/7";
+
+    // Marketplace status (existing contract scaffolding)
+    in property <int>    active-jobs: 0;
+    in property <int>    available-providers: 0;
     in property <string> provider-status: "Not registered";
     in property <string> total-compute-earned: "0";
-    in property <string> contract-status: "unknown"; // "not-deployed", "empty", "live"
+    in property <string> contract-status: "unknown";
 
-    callback post-job;
-    callback register-provider;
+    // Callbacks
+    callback settings-changed;   // emitted after enabled / allocation / schedule change
+    callback register-provider;  // disabled-for-now; fires the "coming soon" modal
     callback refresh;
 
     background: Theme.bg;
 
     Flickable {
-    VerticalLayout {
-        padding-top: Theme.space-lg;
-        padding-bottom: Theme.space-lg;
-        padding-left: Theme.space-lg;
-        padding-right: Theme.space-lg;
-        spacing: Theme.space-lg;
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
 
-        // Header
-        HorizontalLayout {
-            Text {
-                text: "Compute Marketplace";
-                color: Theme.text;
-                font-size: 20px;
-                font-weight: 600;
-                horizontal-stretch: 1;
-            }
-        }
-
-        // Contract status banner
-        Rectangle {
-            height: 44px;
-            border-radius: Theme.radius-md;
-            background: Theme.bg-tertiary;
-            border-width: 1px;
-            border-color: root.contract-status == "live" ? Theme.success
-                : root.contract-status == "empty" ? Theme.warning
-                : Theme.error;
-
+            // ── Header ─────────────────────────────────────────────
             HorizontalLayout {
-                padding-left: Theme.space-lg;
-                padding-right: Theme.space-lg;
-                spacing: Theme.space-sm;
-                Rectangle {
-                    width: 8px; height: 8px; border-radius: 4px;
-                    background: root.contract-status == "live" ? Theme.success
-                        : root.contract-status == "empty" ? Theme.warning
-                        : Theme.error;
-                    y: 18px;
-                }
+                alignment: space-between;
                 Text {
-                    text: root.contract-status == "live" ? "Marketplace active — " + root.available-providers + " providers, " + root.active-jobs + " jobs"
-                        : root.contract-status == "empty" ? "Marketplace deployed — no providers registered yet. Be the first to earn SALT."
-                        : "Marketplace contract not deployed on this network.";
-                    color: Theme.text-muted; font-size: 12px; vertical-alignment: center; wrap: word-wrap;
+                    text: "Compute";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                    vertical-alignment: center;
                 }
-            }
-        }
-
-        // Refresh button row (moved from header to avoid nesting issues)
-        HorizontalLayout {
-
-            Rectangle {
-                width: 80px;
-                height: 30px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.border;
-
-                Text { text: "Refresh"; color: Theme.text-secondary; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.refresh(); } }
-            }
-        }
-
-        // Stats
-        HorizontalLayout {
-            spacing: Theme.space-md;
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-                    Text { text: "ACTIVE JOBS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
-                    Text { text: root.active-jobs; color: Theme.accent; font-size: 18px; font-weight: 600; }
-                }
-            }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-                    Text { text: "PROVIDERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
-                    Text { text: root.available-providers; color: Theme.info; font-size: 18px; font-weight: 600; }
-                }
-            }
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-                    Text { text: "EARNED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; }
-                    Text { text: root.total-compute-earned + " SALT"; color: Theme.success; font-size: 18px; font-weight: 600; overflow: elide; }
-                }
-            }
-        }
-
-        // Provider status
-        Rectangle {
-            height: 48px;
-            border-radius: Theme.radius-lg;
-            background: Theme.bg-secondary;
-            border-width: 1px;
-            border-color: Theme.border-subtle;
-            clip: true;
-
-            HorizontalLayout {
-                padding: Theme.space-md;
-                spacing: Theme.space-md;
-
-                Text { text: "Provider Status:"; color: Theme.text-muted; font-size: 13px; vertical-alignment: center; }
-                Text { text: root.provider-status; color: Theme.text; font-size: 13px; font-weight: 500; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-
                 Rectangle {
-                    width: 120px;
-                    height: 30px;
+                    width: 80px; height: 30px;
                     border-radius: Theme.radius-md;
-                    background: Theme.accent;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    Text { text: "Refresh"; color: Theme.text-secondary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    TouchArea { clicked => { root.refresh(); } }
+                }
+            }
 
-                    Text { text: "Register"; color: #000000; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { clicked => { root.register-provider(); } }
+            // ── Detected hardware card ─────────────────────────────
+            // Always visible so users can see exactly what compute
+            // they'd contribute before deciding to opt in.
+            Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 120px;
+
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Text { text: "🖥"; font-size: 18px; vertical-alignment: center; }
+                        Text {
+                            text: "Your machine";
+                            color: Theme.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    // GPU detail, or a friendly "no GPU detected" line
+                    if root.hw-has-gpu : VerticalLayout {
+                        spacing: 2px;
+                        HorizontalLayout {
+                            Text { text: "GPU"; color: Theme.text-muted; font-size: 11px; min-width: 88px; }
+                            Text { text: root.hw-gpu-name + "  ·  " + root.hw-gpu-vram-gb + " GB VRAM"; color: Theme.text; font-size: 12px; }
+                        }
+                        HorizontalLayout {
+                            Text { text: "CUDA"; color: Theme.text-muted; font-size: 11px; min-width: 88px; }
+                            Text {
+                                text: "compute capability " + root.hw-gpu-cc + "  ·  driver " + root.hw-gpu-driver;
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                            }
+                        }
+                    }
+                    if !root.hw-has-gpu : Text {
+                        text: "No NVIDIA GPU detected. CPU-only sharing is still supported but earns less.";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        Text { text: "CPU"; color: Theme.text-muted; font-size: 11px; min-width: 88px; }
+                        Text { text: root.hw-cpu + "  ·  " + root.hw-cpu-cores + " cores / " + root.hw-cpu-threads + " threads"; color: Theme.text; font-size: 12px; overflow: elide; }
+                    }
+                    HorizontalLayout {
+                        Text { text: "Memory"; color: Theme.text-muted; font-size: 11px; min-width: 88px; }
+                        Text { text: root.hw-ram-gb + " GB"; color: Theme.text; font-size: 12px; }
+                    }
+                }
+            }
+
+            // ── Opt-in toggle ──────────────────────────────────────
+            Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: root.enabled ? Theme.accent : Theme.border-subtle;
+                animate border-color { duration: Theme.duration-fast; }
+
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text { text: "Enable compute sharing"; color: Theme.text; font-size: 14px; font-weight: 600; }
+                            Text {
+                                text: "Earn SALT by running compute jobs from the marketplace. Off by default — no data leaves your machine until you turn this on.";
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        // iOS-style switch
+                        Rectangle {
+                            width: 44px; height: 24px;
+                            border-radius: 12px;
+                            background: root.enabled ? Theme.accent : Theme.bg-tertiary;
+                            animate background { duration: Theme.duration-fast; }
+                            y: 8px;
+
+                            Rectangle {
+                                width: 20px; height: 20px;
+                                border-radius: 10px;
+                                background: #ffffff;
+                                y: 2px;
+                                x: root.enabled ? 22px : 2px;
+                                animate x { duration: Theme.duration-fast; easing: ease-in-out; }
+                            }
+
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.enabled = !root.enabled;
+                                    root.settings-changed();
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Allocation slider (disabled until enabled) ─────
+                    Rectangle {
+                        height: 64px;
+                        opacity: root.enabled ? 1.0 : 0.4;
+
+                        VerticalLayout {
+                            spacing: Theme.space-sm;
+
+                            HorizontalLayout {
+                                Text { text: "⚡"; font-size: 13px; vertical-alignment: center; }
+                                Text { text: "Allocation"; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                                Text { text: root.allocation-percent + "%"; color: Theme.accent; font-size: 13px; font-weight: 700; }
+                            }
+
+                            // Custom slider — Slint's built-in Slider
+                            // gives acceptable behavior on software renderer;
+                            // keep it simple.
+                            Rectangle {
+                                height: 24px;
+
+                                // Track
+                                Rectangle {
+                                    height: 6px;
+                                    y: 9px;
+                                    border-radius: 3px;
+                                    background: Theme.bg-tertiary;
+
+                                    // Fill
+                                    Rectangle {
+                                        x: 0;
+                                        y: 0;
+                                        width: parent.width * (root.allocation-percent / 100);
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Theme.accent;
+                                        animate width { duration: Theme.duration-fast; }
+                                    }
+                                }
+
+                                // Thumb — click anywhere on the row to set %
+                                slider-area := TouchArea {
+                                    enabled: root.enabled;
+                                    mouse-cursor: root.enabled ? pointer : default;
+                                    clicked => {
+                                        // Clamp to 0..100 step 5
+                                        if (root.enabled) {
+                                            // TouchArea.mouse-x is relative to the touch area
+                                            if (self.width > 0) {
+                                                // Compute raw percent, snap to step 5
+                                                root.allocation-percent = Math.round(
+                                                    (self.mouse-x / self.width) * 100 / 5
+                                                ) * 5;
+                                                if (root.allocation-percent < 0) { root.allocation-percent = 0; }
+                                                if (root.allocation-percent > 100) { root.allocation-percent = 100; }
+                                                root.settings-changed();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Thumb visual — sits on top, positioned to allocation
+                                Rectangle {
+                                    width: 16px; height: 16px;
+                                    y: 4px;
+                                    x: parent.width * (root.allocation-percent / 100) - 8px;
+                                    border-radius: 8px;
+                                    background: root.enabled ? #ffffff : Theme.text-muted;
+                                    border-width: 2px;
+                                    border-color: Theme.accent;
+                                    animate x { duration: Theme.duration-fast; }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Schedule picker ────────────────────────────
+                    Rectangle {
+                        height: 78px;
+                        opacity: root.enabled ? 1.0 : 0.4;
+
+                        VerticalLayout {
+                            spacing: Theme.space-sm;
+
+                            HorizontalLayout {
+                                Text { text: "🕐"; font-size: 13px; vertical-alignment: center; }
+                                Text { text: "Schedule"; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                            }
+
+                            HorizontalLayout {
+                                spacing: Theme.space-sm;
+
+                                for s[idx] in ["always", "nights", "weekends"] : Rectangle {
+                                    height: 32px;
+                                    horizontal-stretch: 1;
+                                    border-radius: Theme.radius-md;
+                                    background: root.schedule == s ? Theme.accent : Theme.bg-tertiary;
+                                    border-width: 1px;
+                                    border-color: root.schedule == s ? Theme.accent : Theme.border-subtle;
+                                    animate background { duration: Theme.duration-fast; }
+                                    animate border-color { duration: Theme.duration-fast; }
+
+                                    Text {
+                                        text: s == "always" ? "Always"
+                                            : s == "nights" ? "Nights"
+                                            : "Weekends";
+                                        color: root.schedule == s ? #000000 : Theme.text-secondary;
+                                        font-size: 11px;
+                                        font-weight: root.schedule == s ? 700 : 500;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    TouchArea {
+                                        enabled: root.enabled;
+                                        mouse-cursor: root.enabled ? pointer : default;
+                                        clicked => {
+                                            if (root.enabled) {
+                                                root.schedule = s;
+                                                root.settings-changed();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: root.schedule-description;
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Marketplace status + registration ──────────────────
+            Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 120px;
+
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        Text {
+                            text: "Marketplace";
+                            color: Theme.text;
+                            font-size: 14px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                        }
+                        // Contract status pill
+                        Rectangle {
+                            width: 110px; height: 22px;
+                            border-radius: 11px;
+                            background: root.contract-status == "live" ? Theme.success.darker(0.3)
+                                : root.contract-status == "empty" ? Theme.warning.darker(0.3)
+                                : Theme.error.darker(0.3);
+                            Text {
+                                text: root.contract-status == "live" ? "● live"
+                                    : root.contract-status == "empty" ? "● empty"
+                                    : "● not deployed";
+                                color: Theme.text;
+                                font-size: 10px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-lg;
+
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "ACTIVE JOBS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.active-jobs; color: Theme.accent; font-size: 18px; font-weight: 700; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "PROVIDERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.available-providers; color: Theme.info; font-size: 18px; font-weight: 700; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text { text: "YOUR EARNINGS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.total-compute-earned + " SALT"; color: Theme.success; font-size: 18px; font-weight: 700; overflow: elide; }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+
+                        Text {
+                            text: "Status: " + root.provider-status;
+                            color: Theme.text-muted;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        // Register button — disabled with a "coming soon"
+                        // pill until the `ComputeMarketplace.registerProvider`
+                        // ABI call lands (tracked in P960-D WP-D.3).
+                        Rectangle {
+                            width: 140px; height: 32px;
+                            border-radius: Theme.radius-md;
+                            background: Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
+                            opacity: 0.65;
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-sm;
+                                padding-right: Theme.space-sm;
+                                spacing: Theme.space-xs;
+                                alignment: center;
+                                Text {
+                                    text: "Register";
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: 62px; height: 16px;
+                                    border-radius: 8px;
+                                    background: Theme.warning.darker(0.3);
+                                    Text {
+                                        text: "soon";
+                                        color: Theme.text;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.register-provider(); }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Registration opens once the `ComputeMarketplace.registerProvider` tx flow ships. Your opt-in preferences above are saved locally in the meantime.";
+                        color: Theme.text-muted;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
                 }
             }
         }
-
-        // Actions
-        HorizontalLayout {
-            spacing: Theme.space-sm;
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 40px;
-                border-radius: Theme.radius-md;
-                background: Theme.accent;
-
-                Text { text: "Post Compute Job"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.post-job(); } }
-            }
-        }
-
-        // Job list placeholder
-        Rectangle {
-            vertical-stretch: 1;
-            border-radius: Theme.radius-lg;
-            background: Theme.bg-secondary;
-            border-width: 2px;
-            border-color: Theme.border-subtle;
-
-            VerticalLayout {
-                alignment: center;
-                spacing: Theme.space-sm;
-
-                Text { text: "Job Browser"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
-                Text { text: "Active compute jobs will appear here"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
-            }
-        }
-    }
     }
 }

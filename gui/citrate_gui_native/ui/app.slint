@@ -131,6 +131,23 @@ export component App inherits Window {
     in property <string> compute-provider-status: "Not registered";
     in property <string> compute-contract-status: "unknown";
 
+    // P960-D WP-D.1: detected hardware card
+    in property <string> compute-hw-cpu: "—";
+    in property <int>    compute-hw-cpu-cores: 0;
+    in property <int>    compute-hw-cpu-threads: 0;
+    in property <int>    compute-hw-ram-gb: 0;
+    in property <bool>   compute-hw-has-gpu: false;
+    in property <string> compute-hw-gpu-name: "";
+    in property <int>    compute-hw-gpu-vram-gb: 0;
+    in property <string> compute-hw-gpu-cc: "";
+    in property <string> compute-hw-gpu-driver: "";
+
+    // P960-D WP-D.2: opt-in user prefs
+    in-out property <bool>   compute-enabled: false;
+    in-out property <int>    compute-allocation: 50;
+    in-out property <string> compute-schedule: "always";
+    in property <string> compute-schedule-description: "Share compute 24/7";
+
     // Chat tool approval state
     in property <bool> chat-tool-pending: false;
     in property <string> chat-tool-name: "";
@@ -198,6 +215,7 @@ export component App inherits Window {
     callback compute-post-job;
     callback compute-register-provider;
     callback compute-refresh;
+    callback compute-settings-changed;      // P960-D WP-D.2
 
     // Chat tool approval
     callback chat-approve-tool;
@@ -653,7 +671,26 @@ export component App inherits Window {
                     total-compute-earned: root.compute-earned;
                     provider-status: root.compute-provider-status;
                     contract-status: root.compute-contract-status;
-                    post-job => { root.compute-post-job(); }
+
+                    hw-summary: (root.compute-hw-has-gpu
+                        ? (root.compute-hw-gpu-name + " · " + root.compute-hw-gpu-vram-gb + " GB VRAM · " + root.compute-hw-cpu-cores + " cores · " + root.compute-hw-ram-gb + " GB RAM")
+                        : ("No GPU · " + root.compute-hw-cpu-cores + " cores · " + root.compute-hw-ram-gb + " GB RAM"));
+                    hw-cpu: root.compute-hw-cpu;
+                    hw-cpu-cores: root.compute-hw-cpu-cores;
+                    hw-cpu-threads: root.compute-hw-cpu-threads;
+                    hw-ram-gb: root.compute-hw-ram-gb;
+                    hw-has-gpu: root.compute-hw-has-gpu;
+                    hw-gpu-name: root.compute-hw-gpu-name;
+                    hw-gpu-vram-gb: root.compute-hw-gpu-vram-gb;
+                    hw-gpu-cc: root.compute-hw-gpu-cc;
+                    hw-gpu-driver: root.compute-hw-gpu-driver;
+
+                    enabled <=> root.compute-enabled;
+                    allocation-percent <=> root.compute-allocation;
+                    schedule <=> root.compute-schedule;
+                    schedule-description: root.compute-schedule-description;
+
+                    settings-changed => { root.compute-settings-changed(); }
                     register-provider => { root.compute-register-provider(); }
                     refresh => { root.compute-refresh(); }
                 }
