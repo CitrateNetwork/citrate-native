@@ -217,11 +217,14 @@ fn e2e_all_surfaces() {
         app.set_contracts_deployed_address("".into());
     });
 
-    // ── 14. Studio tab (welcome) ──
-    check!("studio_welcome", {
-        app.set_active_tab("studio".into());
-        assert_eq!(app.get_active_tab().to_string(), "studio");
-        save_snapshot(&app, "14_studio_welcome");
+    // ── 14. Contracts IDE with deploy drawer collapsed ──
+    check!("contracts_deploy_collapsed", {
+        app.set_active_tab("contracts".into());
+        app.set_contracts_deploy_visible(false);
+        assert_eq!(app.get_active_tab().to_string(), "contracts");
+        assert!(!app.get_contracts_deploy_visible());
+        save_snapshot(&app, "14_contracts_deploy_collapsed");
+        app.set_contracts_deploy_visible(true);
     });
 
     // ── 15. Operations tab (default) ──

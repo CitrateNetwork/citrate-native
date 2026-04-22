@@ -126,8 +126,11 @@ fn configure_contracts(app: &App) {
     app.set_ide_git_branch("main".into());
 }
 
-fn configure_studio(app: &App) {
-    app.set_active_tab("studio".into());
+fn configure_contracts_editor_only(app: &App) {
+    // Contracts tab with the Deploy drawer collapsed — covers the
+    // "editor-fills-tab" visual case that used to live on Studio.
+    app.set_active_tab("contracts".into());
+    app.set_contracts_deploy_visible(false);
     app.set_ide_explorer_root("/workspace".into());
     app.set_ide_git_branch("main".into());
 }
@@ -225,7 +228,7 @@ fn ui_visual_proof_suite() {
             ("wallet", configure_wallet),
             ("chat", configure_chat),
             ("contracts", configure_contracts),
-            ("studio", configure_studio),
+            ("contracts_editor_only", configure_contracts_editor_only),
             ("models", configure_models),
             ("compute", configure_compute),
             ("operations", configure_operations),
