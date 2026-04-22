@@ -624,6 +624,54 @@ fn main() {
         }
     });
 
+    // --- Generic copy-to-clipboard ---
+    // Panels (chat, wallet, dag, contracts, ...) emit `copy-to-clipboard(text)`
+    // and this handler writes to the OS clipboard via arboard, then sets
+    // the `clipboard-toast` property so the shell can flash a "Copied"
+    // banner. Toast clears after 1.5s.
+    {
+        let ui_w = ui.as_weak();
+        ui.on_copy_to_clipboard(move |text| {
+            let text = text.to_string();
+            let preview: String = text.chars().take(40).collect();
+            let label = if text.chars().count() > 40 {
+                format!("Copied: {}…", preview)
+            } else if text.is_empty() {
+                "Copied (empty)".to_string()
+            } else {
+                format!("Copied: {}", preview)
+            };
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => {
+                    if let Err(e) = clipboard.set_text(&text) {
+                        tracing::warn!("Clipboard write failed: {}", e);
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_clipboard_toast("Copy failed".into());
+                        }
+                        return;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Clipboard not available: {}", e);
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_clipboard_toast("Copy unavailable".into());
+                    }
+                    return;
+                }
+            }
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_clipboard_toast(label.into());
+            }
+            // Clear the toast after 1.5s.
+            let ui_for_clear = ui_w.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(1500), move || {
+                if let Some(ui) = ui_for_clear.upgrade() {
+                    ui.set_clipboard_toast("".into());
+                }
+            });
+        });
+    }
+
     // --- Tab Switching ---
     let ui_w = ui.as_weak();
     let core = app_core.clone();
