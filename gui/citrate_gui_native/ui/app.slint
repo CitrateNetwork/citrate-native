@@ -214,6 +214,7 @@ export component App inherits Window {
     // Compute callbacks
     callback compute-post-job;
     callback compute-register-provider;
+    callback compute-claim-earnings;        // P960-D WP-D.4
     callback compute-refresh;
     callback compute-settings-changed;      // P960-D WP-D.2
 
@@ -699,6 +700,7 @@ export component App inherits Window {
 
                     settings-changed => { root.compute-settings-changed(); }
                     register-provider => { root.compute-register-provider(); }
+                    claim-earnings => { root.compute-claim-earnings(); }
                     refresh => { root.compute-refresh(); }
                 }
 
