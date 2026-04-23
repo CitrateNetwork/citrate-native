@@ -1826,6 +1826,22 @@ fn main() {
                                     .unwrap_or(0)
                             } else { 0 };
 
+                        // T2-8: Pool detail — getPool(current_pool_id).
+                        // Only fetch when the pool actually exists (pool_count > current).
+                        let pool_info: Option<marketplace_client::PoolInfo> =
+                            if let Some(p) = pool_addr {
+                                if pool_count > 0 && current_pool_id < pool_count {
+                                    let data = marketplace_client::encode_get_pool(current_pool_id);
+                                    rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &data))
+                                        .ok()
+                                        .and_then(|r| marketplace_client::decode_pool_info(&r))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
                         let has_pool_addr = pool_addr.is_some();
                         let has_acc_addr = acc_addr.is_some();
                         let ui_h = ui_handle.clone();
@@ -1847,6 +1863,53 @@ fn main() {
                                 ui.set_learning_earnings(
                                     marketplace_client::wei_to_salt_display(claimable_wei).into()
                                 );
+                            }
+                            // T2-8: surface pool details if present
+                            if let Some(p) = pool_info {
+                                let state_label = match p.state {
+                                    0 => "Active",
+                                    1 => "Closed",
+                                    2 => "InCycle",
+                                    _ => "Unknown",
+                                };
+                                let access_label = match p.access {
+                                    0 => "Open",
+                                    1 => "Invite",
+                                    2 => "Apply",
+                                    _ => "Unknown",
+                                };
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs()).unwrap_or(0);
+                                let age = if p.created_at > 0 && now > p.created_at {
+                                    let secs = now - p.created_at;
+                                    if secs < 60 { format!("{}s ago", secs) }
+                                    else if secs < 3600 { format!("{}m ago", secs / 60) }
+                                    else if secs < 86400 { format!("{}h ago", secs / 3600) }
+                                    else { format!("{}d ago", secs / 86400) }
+                                } else {
+                                    "—".to_string()
+                                };
+                                ui.set_learning_pool_name(p.name.into());
+                                ui.set_learning_pool_description(p.description.into());
+                                ui.set_learning_pool_creator(p.creator.into());
+                                ui.set_learning_pool_state_label(state_label.into());
+                                ui.set_learning_pool_access_label(access_label.into());
+                                ui.set_learning_pool_min_stake(
+                                    marketplace_client::wei_to_salt_display(p.min_stake_wei).into()
+                                );
+                                ui.set_learning_pool_member_count(p.member_count as i32);
+                                ui.set_learning_pool_created_ago(age.into());
+                            } else {
+                                // Clear the card when no pool selected / no data
+                                ui.set_learning_pool_name("".into());
+                                ui.set_learning_pool_description("".into());
+                                ui.set_learning_pool_creator("".into());
+                                ui.set_learning_pool_state_label("".into());
+                                ui.set_learning_pool_access_label("".into());
+                                ui.set_learning_pool_min_stake("".into());
+                                ui.set_learning_pool_member_count(0);
+                                ui.set_learning_pool_created_ago("".into());
                             }
                             // Status line — concise summary of state
                             let status = if !has_pool_addr {
@@ -2289,23 +2352,29 @@ fn main() {
 
         // Send async WITH tool execution — the live chat path uses send_message_with_tools
         spawn_async(&rt_h, async move {
-            // Only include tool definitions when the message looks like it needs tools.
-            // This avoids burdening the model with tool schemas on casual conversation.
+            // T2-11: keyword triggers that suggest the user wants a
+            // tool invocation. Extracted from the old inline `||`
+            // chain into a data-driven table so future tools can
+            // append to this list (or, in a follow-up, each Tool
+            // trait impl can expose its own triggers and we union
+            // them at registry-load time).
+            //
+            // The triggers are deliberately loose — a false positive
+            // just means the model sees tool defs on a conversational
+            // turn, which is cheap; a false negative means the user
+            // asks "what's my balance" and the model can't answer.
+            const TOOL_TRIGGERS: &[&str] = &[
+                // Wallet / money
+                "balance", "send", "deploy", "check", "transaction", "contract",
+                // Agent / local
+                "model", "file", "git", "run", "execute", "search",
+                // Chain-state (P960-A WP-A.2 natural phrases)
+                "block", "height", "peer", "network", "chain", "sync",
+                "mempool", "tip", "recent", "history", "explain",
+                " tx ", " 0x",
+            ];
             let msg_lower = msg.to_lowercase();
-            let needs_tools = msg_lower.contains("balance") || msg_lower.contains("send")
-                || msg_lower.contains("deploy") || msg_lower.contains("check")
-                || msg_lower.contains("transaction") || msg_lower.contains("contract")
-                || msg_lower.contains("model") || msg_lower.contains("file")
-                || msg_lower.contains("git") || msg_lower.contains("run")
-                || msg_lower.contains("execute") || msg_lower.contains("search")
-                // P960-A WP-A.2: trigger chain-state tools on natural phrases.
-                || msg_lower.contains("block") || msg_lower.contains("height")
-                || msg_lower.contains("peer") || msg_lower.contains("network")
-                || msg_lower.contains("chain") || msg_lower.contains("sync")
-                || msg_lower.contains("mempool") || msg_lower.contains("tip")
-                || msg_lower.contains("recent") || msg_lower.contains("history")
-                || msg_lower.contains("explain") || msg_lower.contains(" tx ")
-                || msg_lower.contains(" 0x");
+            let needs_tools = TOOL_TRIGGERS.iter().any(|t| msg_lower.contains(t));
             let tool_defs = if needs_tools {
                 core.tool_registry.tool_definitions().await
             } else {

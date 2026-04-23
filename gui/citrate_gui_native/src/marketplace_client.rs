@@ -283,6 +283,114 @@ pub fn encode_stakes(pool_id: u64, addr: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// T2-8: Parsed Pool struct from `getPool(uint256)` return.
+/// Maps directly to `LearningPool.Pool` in the Solidity source.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]  // consumed by the Learning panel hydration
+pub struct PoolInfo {
+    pub id: u64,
+    pub name: String,
+    pub description: String,
+    pub creator: String,     // 0x-prefixed EIP-55 checksum-less hex
+    pub state: u8,           // 0=Active, 1=Closed, 2=ActiveCycle
+    pub access: u8,          // 0=Open, 1=InviteOnly, 2=ApplicationRequired
+    pub min_stake_wei: u128,
+    pub member_count: u64,
+    pub created_at: u64,     // unix seconds
+}
+
+/// Encode `getPool(uint256 poolId) → Pool` view call.
+pub fn encode_get_pool(pool_id: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(36);
+    out.extend_from_slice(&selector("getPool(uint256)"));
+    let mut id_word = [0u8; 32];
+    id_word[24..].copy_from_slice(&pool_id.to_be_bytes());
+    out.extend_from_slice(&id_word);
+    out
+}
+
+/// Decode a `getPool()` return — a single Pool struct. Solidity
+/// encodes this as an offset pointing at the tuple, followed by
+/// the tuple contents (9 head words, then the two string tails).
+///
+/// Layout after the 0x20 outer offset:
+///   slot 0  id              (uint256)
+///   slot 1  offset_to_name  (uint256, relative to tuple start)
+///   slot 2  offset_to_desc  (uint256, relative to tuple start)
+///   slot 3  creator         (address, 20 bytes right-aligned)
+///   slot 4  state           (uint8)
+///   slot 5  access          (uint8)
+///   slot 6  minStake        (uint256)
+///   slot 7  memberCount     (uint256)
+///   slot 8  createdAt       (uint256)
+///   tail    name length + data (padded to 32)
+///   tail    desc length + data (padded to 32)
+pub fn decode_pool_info(hex_result: &str) -> Option<PoolInfo> {
+    let s = hex_result.strip_prefix("0x").unwrap_or(hex_result);
+    let bytes = hex::decode(s).ok()?;
+    if bytes.len() < 32 + 32 * 9 {
+        return None;
+    }
+    // Outer offset — should be 0x20. We tolerate anything and just
+    // use it as the tuple start.
+    let tuple_start = u64::from_be_bytes(bytes[24..32].try_into().ok()?) as usize;
+    if bytes.len() < tuple_start + 32 * 9 {
+        return None;
+    }
+
+    // Head reads
+    let slot = |i: usize| -> &[u8] { &bytes[tuple_start + i * 32..tuple_start + (i + 1) * 32] };
+    let read_u64 = |i: usize| -> u64 {
+        let s = slot(i);
+        u64::from_be_bytes(s[24..32].try_into().unwrap_or([0u8; 8]))
+    };
+    let read_u128 = |i: usize| -> u128 {
+        let s = slot(i);
+        u128::from_be_bytes(s[16..32].try_into().unwrap_or([0u8; 16]))
+    };
+    let read_u8 = |i: usize| -> u8 { slot(i)[31] };
+    let read_address = |i: usize| -> String {
+        let s = slot(i);
+        format!("0x{}", hex::encode(&s[12..32]))
+    };
+
+    let id = read_u64(0);
+    let name_offset = u64::from_be_bytes(slot(1)[24..32].try_into().ok()?) as usize;
+    let desc_offset = u64::from_be_bytes(slot(2)[24..32].try_into().ok()?) as usize;
+    let creator = read_address(3);
+    let state = read_u8(4);
+    let access = read_u8(5);
+    let min_stake_wei = read_u128(6);
+    let member_count = read_u64(7);
+    let created_at = read_u64(8);
+
+    // Helper: read a length-prefixed UTF-8 string at `tuple_start + offset`
+    let read_string = |offset: usize| -> Option<String> {
+        let pos = tuple_start + offset;
+        if bytes.len() < pos + 32 { return None; }
+        let len = u64::from_be_bytes(bytes[pos + 24..pos + 32].try_into().ok()?) as usize;
+        if bytes.len() < pos + 32 + len { return None; }
+        let raw = &bytes[pos + 32..pos + 32 + len];
+        // UTF-8 decode — lossy fallback so a broken string doesn't nuke
+        // the whole row.
+        Some(String::from_utf8_lossy(raw).into_owned())
+    };
+    let name = read_string(name_offset)?;
+    let description = read_string(desc_offset)?;
+
+    Some(PoolInfo {
+        id,
+        name,
+        description,
+        creator,
+        state,
+        access,
+        min_stake_wei,
+        member_count,
+        created_at,
+    })
+}
+
 /// Encode `createPool(string name, string description, uint8 access, uint256 minStake)`
 /// payable. Returns the bytes32 pool id but the GUI doesn't need it
 /// (the polling loop refreshes the list and finds the new one).
@@ -739,6 +847,74 @@ mod tests {
     fn encode_create_pool_access_byte() {
         let data = encode_create_pool("p", "q", 2, 1000); // ApplicationRequired
         assert_eq!(data[4 + 64 + 31], 2);
+    }
+
+    #[test]
+    fn get_pool_selector() {
+        let got = selector("getPool(uint256)");
+        assert_eq!(got.len(), 4);
+    }
+
+    #[test]
+    fn encode_get_pool_layout() {
+        let data = encode_get_pool(5);
+        assert_eq!(data.len(), 36);
+        assert_eq!(data[35], 5);
+    }
+
+    #[test]
+    fn decode_pool_info_roundtrip() {
+        // Hand-build a Pool encoding:
+        //   outer offset = 0x20
+        //   head (9 × 32):
+        //     id=7
+        //     name_offset (relative to tuple start)
+        //     desc_offset
+        //     creator=0x1234...5678
+        //     state=0 access=0 minStake=1000e18 memberCount=3 createdAt=1700000000
+        //   tail:
+        //     name "MyPool" (6 bytes)  → len + 32 padded data
+        //     desc "A cool pool" (11 bytes) → len + 32 padded data
+        //
+        // Head size = 9 * 32 = 288 bytes.
+        // name_offset = 288 (first byte of tail). After name: +32 (len) + 32 (padded) = 64
+        // desc_offset = 288 + 64 = 352
+        let mut hex_s = String::from("0x");
+        hex_s.push_str(&format!("{:064x}", 0x20)); // outer offset
+        // Head
+        hex_s.push_str(&format!("{:064x}", 7u64));    // id
+        hex_s.push_str(&format!("{:064x}", 288u64));  // name_offset
+        hex_s.push_str(&format!("{:064x}", 352u64));  // desc_offset
+        // creator
+        hex_s.push_str("000000000000000000000000");
+        hex_s.push_str("1234567890123456789012345678901234567890");
+        hex_s.push_str(&format!("{:064x}", 0u64));    // state
+        hex_s.push_str(&format!("{:064x}", 0u64));    // access
+        hex_s.push_str(&format!("{:064x}", MIN_PROVIDER_STAKE_WEI));
+        hex_s.push_str(&format!("{:064x}", 3u64));    // memberCount
+        hex_s.push_str(&format!("{:064x}", 1700000000u64));
+        // Tail: name
+        hex_s.push_str(&format!("{:064x}", 6u64));    // name length
+        hex_s.push_str("4d79506f6f6c"); // "MyPool" hex
+        hex_s.push_str(&"0".repeat(52)); // pad to 32
+        // Tail: description
+        hex_s.push_str(&format!("{:064x}", 11u64));   // desc length
+        hex_s.push_str("4120636f6f6c20706f6f6c"); // "A cool pool" hex
+        hex_s.push_str(&"0".repeat(42)); // pad to 32
+
+        let pool = decode_pool_info(&hex_s).expect("decode ok");
+        assert_eq!(pool.id, 7);
+        assert_eq!(pool.name, "MyPool");
+        assert_eq!(pool.description, "A cool pool");
+        assert_eq!(pool.creator, "0x1234567890123456789012345678901234567890");
+        assert_eq!(pool.min_stake_wei, MIN_PROVIDER_STAKE_WEI);
+        assert_eq!(pool.member_count, 3);
+        assert_eq!(pool.created_at, 1700000000);
+    }
+
+    #[test]
+    fn decode_pool_info_rejects_short() {
+        assert!(decode_pool_info("0x00").is_none());
     }
 
     #[test]

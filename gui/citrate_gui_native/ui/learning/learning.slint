@@ -28,6 +28,19 @@ export component LearningView inherits Rectangle {
     in property <string> contract-status: "Checking…";
     in property <bool>   is-member: false;
     in-out property <int> current-pool-id: 0;      // pool the buttons act on (default 0)
+    // T2-8: Pool detail fields — populated by the polling loop when
+    // the current pool exists. Empty strings mean "no data yet /
+    // pool doesn't exist". State/access are human-readable strings
+    // derived Rust-side (the enum integers don't mean anything to
+    // the user).
+    in property <string> pool-name: "";
+    in property <string> pool-description: "";
+    in property <string> pool-creator: "";
+    in property <string> pool-state-label: "";
+    in property <string> pool-access-label: "";
+    in property <string> pool-min-stake: "";
+    in property <int>    pool-member-count: 0;
+    in property <string> pool-created-ago: "";
 
     callback join-pool;
     callback leave-pool;
@@ -254,6 +267,96 @@ export component LearningView inherits Rectangle {
                     font-size: 10px;
                     vertical-alignment: center;
                     horizontal-stretch: 1;
+                }
+            }
+
+            // ── T2-8: Pool detail card — visible when we have a name ──
+            if root.pool-name != "" : Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-sm;
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: root.pool-name;
+                            color: Theme.text;
+                            font-size: 15px;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        // State pill
+                        Rectangle {
+                            width: 76px; height: 20px;
+                            y: 3px;
+                            border-radius: 10px;
+                            background: root.pool-state-label == "Closed"
+                                ? Theme.error.darker(0.3)
+                                : Theme.success.darker(0.3);
+                            Text {
+                                text: root.pool-state-label;
+                                color: Theme.text;
+                                font-size: 10px; font-weight: 600;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                        // Access pill
+                        Rectangle {
+                            width: 80px; height: 20px;
+                            y: 3px;
+                            border-radius: 10px;
+                            background: Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
+                            Text {
+                                text: root.pool-access-label;
+                                color: Theme.text-secondary;
+                                font-size: 10px; font-weight: 600;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if root.pool-description != "" : Text {
+                        text: root.pool-description;
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-xl;
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "MEMBERS"; color: Theme.text-muted; font-size: 9px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.pool-member-count; color: Theme.text; font-size: 13px; font-weight: 600; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "MIN STAKE"; color: Theme.text-muted; font-size: 9px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.pool-min-stake + " SALT"; color: Theme.text; font-size: 13px; font-weight: 600; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text { text: "CREATED"; color: Theme.text-muted; font-size: 9px; font-weight: 600; letter-spacing: 0.5px; }
+                            Text { text: root.pool-created-ago; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                        }
+                    }
+                    if root.pool-creator != "" : HorizontalLayout {
+                        spacing: Theme.space-xs;
+                        Text { text: "Creator:"; color: Theme.text-muted; font-size: 10px; vertical-alignment: center; }
+                        Text {
+                            text: root.pool-creator;
+                            color: Theme.text-muted;
+                            font-size: 10px;
+                            font-family: Theme.font-mono;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
                 }
             }
 

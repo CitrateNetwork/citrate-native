@@ -116,6 +116,15 @@ export component App inherits Window {
     in property <string> learning-contract-status: "Checking…";
     in property <bool>   learning-is-member: false;
     in-out property <int> learning-current-pool-id: 0;
+    // T2-8: pool detail (LearningPool.getPool decode)
+    in property <string> learning-pool-name: "";
+    in property <string> learning-pool-description: "";
+    in property <string> learning-pool-creator: "";
+    in property <string> learning-pool-state-label: "";
+    in property <string> learning-pool-access-label: "";
+    in property <string> learning-pool-min-stake: "";
+    in property <int>    learning-pool-member-count: 0;
+    in property <string> learning-pool-created-ago: "";
     callback learning-leave-pool;
 
     // Education state
@@ -566,7 +575,15 @@ export component App inherits Window {
                         peer-count: root.peer-count;
                         contract-status: root.learning-contract-status;
                         is-member: root.learning-is-member;
-                        current-pool-id: root.learning-current-pool-id;
+                        current-pool-id <=> root.learning-current-pool-id;
+                        pool-name: root.learning-pool-name;
+                        pool-description: root.learning-pool-description;
+                        pool-creator: root.learning-pool-creator;
+                        pool-state-label: root.learning-pool-state-label;
+                        pool-access-label: root.learning-pool-access-label;
+                        pool-min-stake: root.learning-pool-min-stake;
+                        pool-member-count: root.learning-pool-member-count;
+                        pool-created-ago: root.learning-pool-created-ago;
                         join-pool => { root.learning-join-pool(); }
                         leave-pool => { root.learning-leave-pool(); }
                         claim-earnings => { root.learning-claim-earnings(); }
