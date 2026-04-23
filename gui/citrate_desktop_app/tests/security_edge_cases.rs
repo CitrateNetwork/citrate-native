@@ -44,11 +44,6 @@ fn test_app_core() -> AppCore {
         config.clone(), events.clone(), Arc::new(LocalTestNodeBackend),
     ));
     let wallet = Arc::new(citrate_desktop_app::services::WalletService::new(events.clone()));
-    let editor = Arc::new(citrate_desktop_app::services::EditorService::new(events.clone()));
-    let file_explorer = Arc::new(citrate_desktop_app::services::FileExplorerService::new(events.clone()));
-    let git = Arc::new(citrate_desktop_app::services::GitService::new(events.clone()));
-    let compiler = Arc::new(citrate_desktop_app::services::CompilerService::new(events.clone()));
-    let terminal = Arc::new(citrate_desktop_app::services::TerminalService::new(events.clone()));
     let chat = Arc::new(citrate_desktop_app::services::ChatService::new(events.clone(), "https://rpc.citrate.ai"));
     let models = Arc::new(citrate_desktop_app::services::ModelService::new(events.clone(), "https://rpc.citrate.ai"));
     let blocks = Arc::new(citrate_desktop_app::services::BlockService::new(events.clone(), "https://rpc.citrate.ai"));
@@ -57,7 +52,7 @@ fn test_app_core() -> AppCore {
     let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new("test-session", None));
     let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
     let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
-    AppCore { node, wallet, editor, file_explorer, git, compiler, terminal, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
+    AppCore { node, wallet, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
 }
 
 /// Local test wallet backend for integration tests.

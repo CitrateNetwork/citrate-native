@@ -28,16 +28,10 @@ pub struct AppCore {
     pub node: Arc<services::NodeService>,
     /// Wallet operations
     pub wallet: Arc<services::WalletService>,
-    /// Code editor — rope buffer, syntax highlighting, undo/redo
-    pub editor: Arc<services::EditorService>,
-    /// File explorer — directory tree, gitignore-aware traversal
-    pub file_explorer: Arc<services::FileExplorerService>,
-    /// Git operations — status, diff, commit, branch, push/pull
-    pub git: Arc<services::GitService>,
-    /// Solidity compiler — forge/solc integration, diagnostics
-    pub compiler: Arc<services::CompilerService>,
-    /// Terminal — PTY sessions, ANSI parsing, cell grid
-    pub terminal: Arc<services::TerminalService>,
+    // (editor / file_explorer / git / compiler / terminal services
+    // were retired in P960-H along with the Contracts surface that
+    // consumed them. If a future panel needs them, lift them back
+    // from git history rather than carrying dead infrastructure.)
     /// AI chat — conversation with on-chain AI via citrate_chatCompletion
     pub chat: Arc<services::ChatService>,
     /// Model registry — browse, deploy, and run inference on AI models
@@ -231,11 +225,6 @@ impl AppCore {
             events.clone(),
         ));
         let wallet = Arc::new(services::WalletService::new(events.clone()));
-        let editor = Arc::new(services::EditorService::new(events.clone()));
-        let file_explorer = Arc::new(services::FileExplorerService::new(events.clone()));
-        let git = Arc::new(services::GitService::new(events.clone()));
-        let compiler = Arc::new(services::CompilerService::new(events.clone()));
-        let terminal = Arc::new(services::TerminalService::new(events.clone()));
         // Chat: local-first, private-by-default
         // Ollama primary (fast local GPU, localhost:11434) → node GGUF RPC fallback (slow CPU)
         // Never sends data externally unless the user explicitly configures an API key.
@@ -296,11 +285,6 @@ impl AppCore {
         Self {
             node,
             wallet,
-            editor,
-            file_explorer,
-            git,
-            compiler,
-            terminal,
             chat,
             models,
             blocks,
