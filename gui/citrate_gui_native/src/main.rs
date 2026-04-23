@@ -98,8 +98,11 @@ fn clean_markdown(text: &str) -> String {
 /// Set to 0 when locked. Background thread uses this to compute remaining session time.
 static SESSION_UNLOCK_EPOCH: AtomicI64 = AtomicI64::new(0);
 
-/// Session timeout duration in seconds (matches wallet_service::unlock which sets 3600).
-const SESSION_TIMEOUT_SECS: i64 = 3600;
+/// Session timeout duration in seconds. 8 hours so a typical work
+/// session never expires mid-flow. The backend's `session.is_active`
+/// is the authoritative gate; this constant only controls the GUI
+/// countdown display + the moment we clear SESSION_UNLOCK_EPOCH.
+const SESSION_TIMEOUT_SECS: i64 = 8 * 3600;
 
 /// Push wallet accounts to the Slint UI as a VecModel.
 /// Applies EIP-55 checksum encoding to all addresses for display.
@@ -438,6 +441,71 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
 /// "0x…" hex or plain decimal input.
 ///
 /// Returns "0" on any parse failure rather than crashing the chat flow.
+/// Path to the contracts/src directory relative to the workspace.
+/// We pick this with a small walk: start at cwd, then climb until
+/// we find a sibling `contracts/src/` (so it works whether the
+/// binary is run from the repo root or from a build dir).
+fn contracts_src_root() -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut probe: &std::path::Path = &cwd;
+    loop {
+        let candidate = probe.join("contracts").join("src");
+        if candidate.is_dir() {
+            return candidate;
+        }
+        match probe.parent() {
+            Some(p) => probe = p,
+            None => break,
+        }
+    }
+    cwd.join("contracts").join("src")
+}
+
+/// Enumerate `.sol` files in `root`, returning ContractFileEntry
+/// rows ready to push into a Slint VecModel.
+async fn scan_contract_files(root: &std::path::Path) -> Vec<ContractFileEntry> {
+    let mut out: Vec<ContractFileEntry> = Vec::new();
+    let mut walker = match tokio::fs::read_dir(root).await {
+        Ok(w) => w,
+        Err(_) => return out,
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry)) = walker.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sol") {
+            continue;
+        }
+        let meta = match entry.metadata().await {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let size = meta.len() as i32;
+        let modified_str = meta
+            .modified()
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .map(|d| {
+                let s = d.as_secs();
+                if s < 60 { format!("{}s ago", s) }
+                else if s < 3600 { format!("{}m ago", s / 60) }
+                else if s < 86400 { format!("{}h ago", s / 3600) }
+                else { format!("{}d ago", s / 86400) }
+            })
+            .unwrap_or_else(|| "—".to_string());
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let full = path.to_string_lossy().to_string();
+        out.push(ContractFileEntry {
+            name: name.into(),
+            full_path: full.into(),
+            size_bytes: size,
+            modified: modified_str.into(),
+        });
+    }
+    // Sort alphabetically — easier to find a known file
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// Shorten a 0x-prefixed hex hash or address for compact display
 /// in status text. `0xabcdef…123456` form.
 fn short_hash(hex: &str) -> String {
@@ -552,6 +620,15 @@ fn main() {
             match core.wallet.create_wallet(&pwd).await {
                 Ok(result) => {
                     tracing::info!("Wallet created: {}", result.address);
+                    // Mark the GUI-side session clock active too. The
+                    // backend already activated session.is_active inside
+                    // create_wallet — we mirror that with the unlock
+                    // epoch so the countdown UI shows the right time.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    SESSION_UNLOCK_EPOCH.store(now, Ordering::Relaxed);
                     // Refresh account list after creation
                     let accounts = core.wallet.list_accounts().await;
                     let checksummed = eip55_checksum(&result.address);
@@ -923,49 +1000,27 @@ fn main() {
         if let Some(ui) = ui_w.upgrade() {
             ui.set_active_tab(tab.clone());
         }
-        // Initialize Contracts IDE services on first visit
+        // P960-G: hydrate the Contracts file list on first visit. The
+        // embedded IDE was retired — we just enumerate contracts/src/
+        // and let the user open files in their real editor.
         if tab_str == "contracts" {
-            let core = core.clone();
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
-                // Initialize file tree from project root
-                let project_root = std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let root_str = project_root.to_string_lossy().to_string();
-                if let Err(e) = core.file_explorer.set_root(&project_root).await {
-                    tracing::warn!("Contracts IDE: file tree root set failed: {}", e);
-                } else {
-                    let nodes = core.file_explorer.get_tree().await;
-                    tracing::info!("Contracts IDE: loaded {} file tree nodes from {}", nodes.len(), root_str);
-                    let ui_w2 = ui_w.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w2.upgrade() {
-                            ui.set_ide_explorer_root(root_str.into());
-                        }
-                    });
-                }
-
-                // Terminal initialization
-                match core.terminal.create_default_session().await {
-                    Ok(session_id) => {
-                        tracing::info!("Contracts IDE: terminal session created: {}", session_id);
+                let root = contracts_src_root();
+                let entries = scan_contract_files(&root).await;
+                let root_display = root.to_string_lossy().to_string();
+                tracing::info!(
+                    "Contracts: hydrated file list — {} .sol files in {}",
+                    entries.len(),
+                    root_display
+                );
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        let model = std::rc::Rc::new(slint::VecModel::from(entries));
+                        ui.set_contract_files(model.into());
+                        ui.set_contract_watch_root(root_display.into());
                     }
-                    Err(e) => tracing::warn!("Contracts IDE: terminal init failed: {}", e),
-                }
-
-                // Git status
-                if let Err(e) = core.git.open_repo(&std::path::PathBuf::from(".")).await {
-                    tracing::debug!("Contracts IDE: git repo open: {}", e);
-                }
-                let branch = core.git.current_branch().await;
-                if !branch.is_empty() {
-                    tracing::info!("Contracts IDE: git branch={}", branch);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_ide_git_branch(branch.into());
-                        }
-                    });
-                }
+                });
             });
         }
 
@@ -1288,7 +1343,6 @@ fn main() {
                 let has_tx_update = tick_counter % 10 == 0;
 
                 let ui_for_main = ui_handle.clone();
-                let ui_for_ide = ui_handle.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_for_main.upgrade() {
                         ui.set_node_running(status.running);
@@ -1338,31 +1392,9 @@ fn main() {
                     }
                 });
 
-                // Contracts IDE hydration — poll terminal and git every 3rd tick (~15s)
-                // Only when contracts tab is active
-                if tick_counter % 3 == 0 {
-                    let active_tab = ui_for_ide.upgrade()
-                        .map(|ui| ui.get_active_tab().to_string());
-                    if active_tab.as_deref() == Some("contracts") {
-                        // Poll terminal output
-                        // (Terminal sessions push output via poll_output → feed_bytes)
-                        // Poll git branch
-                        let branch = rt_handle.block_on(core.git.current_branch());
-                        let git_files = rt_handle.block_on(core.git.status());
-                        let file_count = git_files.len() as i32;
-
-                        let ui_h = ui_handle.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_h.upgrade() {
-                                if !branch.is_empty() {
-                                    ui.set_ide_git_branch(branch.into());
-                                }
-                                // Update changed file count as a proxy for git status
-                                let _ = file_count; // Will push GitFileData model in next iteration
-                            }
-                        });
-                    }
-                }
+                // (Contracts IDE hydration retired in P960-G — no
+                // terminal/git polling; users edit in their own editor
+                // and a notify-backed file watcher re-fires compile.)
 
                 // P960-D WP-D.4: compute provider + earnings poll.
                 // Every 30s (10 × 3s ticks) when compute tab is active.
@@ -1454,279 +1486,115 @@ fn main() {
         });
     }
 
+
     // =========================================================================
-    // IDE WIRING — File Explorer, Editor, Terminal, Git, Compiler
+    // CONTRACT FILES (P960-G — replaces the embedded IDE)
     // =========================================================================
+    // Slint is the wrong tool to build a Monaco competitor. The
+    // Contracts panel surfaces files in contracts/src/, opens them
+    // in the user's $EDITOR (or xdg-open), and a notify watcher
+    // re-fires the file list when any of them change.
 
-    // --- IDE: Open file from explorer ---
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_file_opened(move |path| {
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        let path_str = path.to_string();
-        let path_clone = path.clone();
-
-        tracing::info!("IDE: opening file {}", path_str);
-        spawn_async(&rt_h, async move {
-            match core.editor.open_file(std::path::Path::new(&path_str)).await {
-                Ok(buffer_id) => {
-                    tracing::debug!("Opened buffer: {}", buffer_id);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_ide_selected_file(path_clone);
-                        }
-                    });
-                }
-                Err(e) => tracing::error!("Failed to open file: {}", e),
-            }
-        });
-    });
-
-    // --- IDE: Toggle directory in explorer ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_dir_toggled(move |path| {
-        let core = core.clone();
-        let path_str = path.to_string();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.file_explorer.toggle_directory(std::path::Path::new(&path_str)).await {
-                tracing::error!("Failed to toggle directory: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Tab clicked ---
-    ui.on_ide_tab_clicked(move |_tab_id| {
-        // Active tab switch — editor state updates via callbacks
-    });
-
-    // --- IDE: Tab closed ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_tab_closed(move |tab_id| {
-        let core = core.clone();
-        let tab_str = tab_id.to_string();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.editor.close_buffer(&tab_str).await {
-                tracing::error!("Failed to close tab: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Editor key pressed ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_editor_key(move |key| {
-        let key_str = key.to_string();
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            let buffers = core.editor.list_open_buffers().await;
-            if let Some(active) = buffers.first() {
-                let buf_id = active.id.clone();
-                if key_str.len() == 1 && !key_str.is_empty() {
-                    let content = core.editor.get_content(&buf_id).await
-                        .unwrap_or_else(|_| String::new());
-                    let byte_len = content.len();
-                    let _ = core.editor.insert_text(&buf_id, byte_len, &key_str).await;
-                }
-            }
-        });
-    });
-
-    // --- IDE: Terminal input ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_terminal_input(move |key| {
-        let key_bytes = key.as_bytes().to_vec();
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            let sessions = core.terminal.list_sessions().await;
-            if let Some(active) = sessions.first() {
-                let sid = active.session_id.clone();
-                if let Err(e) = core.terminal.write_input(&sid, &key_bytes).await {
-                    tracing::error!("Terminal input failed: {}", e);
-                }
-            }
-        });
-    });
-
-    // --- IDE: Git stage ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_git_stage(move |path| {
-        let core = core.clone();
-        let path_str = path.to_string();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.git.stage(&[std::path::Path::new(&path_str)]).await {
-                tracing::error!("Git stage failed: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Git unstage ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_git_unstage(move |path| {
-        let core = core.clone();
-        let path_str = path.to_string();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.git.unstage(&[std::path::Path::new(&path_str)]).await {
-                tracing::error!("Git unstage failed: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Git commit ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_git_commit(move |message| {
-        let core = core.clone();
-        let msg = message.to_string();
-        spawn_async(&rt_h, async move {
-            match core.git.commit(&msg).await {
-                Ok(hash) => tracing::info!("Committed: {}", hash),
-                Err(e) => tracing::error!("Commit failed: {}", e),
-            }
-        });
-    });
-
-    // --- IDE: Git push ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_git_push(move || {
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.git.push("origin").await {
-                tracing::error!("Push failed: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Git pull ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_git_pull(move || {
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            if let Err(e) = core.git.pull("origin").await {
-                tracing::error!("Pull failed: {}", e);
-            }
-        });
-    });
-
-    // --- IDE: Save file ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_save_file(move || {
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            let buffers = core.editor.list_open_buffers().await;
-            if let Some(active) = buffers.first() {
-                if let Err(e) = core.editor.save_buffer(&active.id).await {
-                    tracing::error!("Save failed: {}", e);
-                } else {
-                    tracing::info!("Saved: {}", active.file_name);
-                }
-            }
-        });
-    });
-
-    // --- IDE: Command Palette Execute ---
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_command_palette_execute(move |cmd| {
-        let cmd_str = cmd.to_string();
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("IDE: command palette: {}", cmd_str);
-        spawn_async(&rt_h, async move {
-            match cmd_str.as_str() {
-                "compile" => {
-                    let contracts_dir = std::path::PathBuf::from("contracts");
-                    match core.compiler.compile(&contracts_dir).await {
-                        Ok(result) => {
-                            let status = if result.success {
-                                format!("Compiled {} contracts", result.artifacts.len())
-                            } else {
-                                format!("{} errors", result.errors.len())
-                            };
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_contracts_compile_status(status.into());
-                                }
-                            });
-                        }
-                        Err(e) => tracing::error!("Command palette compile: {}", e),
-                    }
-                }
-                "terminal" => {
-                    tracing::info!("Command palette: toggle terminal (handled by IDE panel)");
-                }
-                "git" => {
-                    tracing::info!("Command palette: toggle git panel (handled by IDE panel)");
-                }
-                "save" => {
-                    let buffers = core.editor.list_open_buffers().await;
-                    if let Some(active) = buffers.first() {
-                        if let Err(e) = core.editor.save_buffer(&active.id).await {
-                            tracing::error!("Save failed: {}", e);
-                        }
-                    }
-                }
-                _ => tracing::info!("Command palette: unknown command '{}'", cmd_str),
-            }
-        });
-    });
-
-    // --- IDE: Search in Files ---
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_ide_search_in_files(move |query| {
-        let query_str = query.to_string();
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("IDE: search in files: {}", query_str);
-        spawn_async(&rt_h, async move {
-            // Use find_files as the search backend (filename matching)
-            match core.file_explorer.find_files(&query_str).await {
-                Ok(results) => {
-                    tracing::info!("IDE: search found {} results for '{}'", results.len(), query_str);
-                    // Hydrate search results into UI via IDE diagnostics (reused for search display)
-                    let search_diags: Vec<DiagnosticData> = results.iter().map(|r| {
-                        DiagnosticData {
-                            severity: "info".into(),
-                            message: r.name.clone().into(),
-                            file_path: r.path.clone().into(),
-                            line: 0,
-                            column: 0,
-                        }
-                    }).collect();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            let model = std::rc::Rc::new(slint::VecModel::from(search_diags));
-                            ui.set_ide_search_results(model.into());
-                        }
-                    });
-                }
-                Err(e) => tracing::warn!("IDE: search failed: {}", e),
-            }
-        });
-    });
-
-    // --- IDE: Initialize file explorer with current directory ---
+    // --- Open a contract file in the user's editor ---
     {
-        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        ui.on_contract_open_file(move |path| {
+            let path_str = path.to_string();
+            tracing::info!("Contracts: opening {} in editor", path_str);
+            std::thread::spawn(move || {
+                let cmd = std::env::var("EDITOR").unwrap_or_else(|_| "xdg-open".to_string());
+                if let Err(e) = std::process::Command::new(&cmd).arg(&path_str).spawn() {
+                    tracing::warn!("Contracts: failed to launch '{}' for {}: {}", cmd, path_str, e);
+                }
+            });
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_clipboard_toast(format!("Opened {} in editor", path).into());
+                let ui_for_clear = ui_w.clone();
+                slint::Timer::single_shot(std::time::Duration::from_millis(2500), move || {
+                    if let Some(ui) = ui_for_clear.upgrade() {
+                        ui.set_clipboard_toast("".into());
+                    }
+                });
+            }
+        });
+    }
+
+    // --- Open the contracts/src/ folder in the file manager ---
+    ui.on_contract_open_folder(move || {
+        let path = contracts_src_root();
+        tracing::info!("Contracts: opening folder {}", path.display());
+        std::thread::spawn(move || {
+            if let Err(e) = std::process::Command::new("xdg-open").arg(&path).spawn() {
+                tracing::warn!("Contracts: xdg-open failed: {}", e);
+            }
+        });
+    });
+
+    // --- Spawn the file watcher (notify) on contracts/src/ ---
+    // On any .sol change, push the file list back to the UI and
+    // emit an "auto-compile-status" line. Compilation itself is
+    // still triggered by the Compile button — auto-fire is a
+    // follow-up to avoid storming forge on every save.
+    {
+        let ui_w = ui.as_weak();
         let rt_h = rt.handle().clone();
-        let cwd = std::env::current_dir().unwrap_or_default();
-        if let Err(e) = rt_h.block_on(core.file_explorer.set_root(&cwd)) {
-            tracing::warn!("Could not set IDE root to cwd: {}", e);
-        } else {
-            ui.set_ide_explorer_root(cwd.to_string_lossy().to_string().into());
-        }
+        std::thread::spawn(move || {
+            use notify::{RecursiveMode, Watcher};
+            let root = contracts_src_root();
+            if !root.exists() {
+                tracing::info!("Contracts: watch root {} does not exist; skipping watcher", root.display());
+                return;
+            }
+            let (tx, rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
+            let mut watcher = match notify::recommended_watcher(tx) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!("Contracts: failed to create watcher: {}", e);
+                    return;
+                }
+            };
+            if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
+                tracing::warn!("Contracts: failed to watch {}: {}", root.display(), e);
+                return;
+            }
+            tracing::info!("Contracts: watching {} for .sol changes", root.display());
+            // Mark watch as active in the UI on first successful arm.
+            let ui_arm = ui_w.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_arm.upgrade() {
+                    ui.set_contract_watch_active(true);
+                }
+            });
+            // Drain events; refresh the file list on .sol changes,
+            // debounced to once per second.
+            let mut last_refresh = std::time::Instant::now() - std::time::Duration::from_secs(2);
+            for ev in rx {
+                let Ok(ev) = ev else { continue; };
+                let touched_sol = ev.paths.iter().any(|p| {
+                    p.extension().and_then(|s| s.to_str()) == Some("sol")
+                });
+                if !touched_sol { continue; }
+                if last_refresh.elapsed() < std::time::Duration::from_secs(1) { continue; }
+                last_refresh = std::time::Instant::now();
+                let names: Vec<String> = ev.paths.iter()
+                    .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("sol"))
+                    .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+                    .collect();
+                let summary = format!("Changed: {}", names.join(", "));
+                let ui_w_inner = ui_w.clone();
+                let rt_h_inner = rt_h.clone();
+                rt_h_inner.spawn(async move {
+                    let entries = scan_contract_files(&contracts_src_root()).await;
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w_inner.upgrade() {
+                            let model = std::rc::Rc::new(slint::VecModel::from(entries));
+                            ui.set_contract_files(model.into());
+                            ui.set_contract_auto_compile_status(summary.into());
+                        }
+                    });
+                });
+            }
+        });
     }
 
     // --- Wallet: Create Account (from wallet view, not onboarding) ---
@@ -1996,13 +1864,6 @@ fn main() {
         });
     });
 
-    // --- IDE: Pop out to standalone window ---
-    ui.on_ide_pop_out(move || {
-        tracing::info!("IDE: pop-out requested — launching standalone IDE window");
-        // Slint doesn't support multiple windows from the same process natively.
-        // The production approach: launch a second process with the IDE as the root component.
-        // For now, log the request — this will be wired when we have a standalone IDE binary.
-    });
 
     // Terminal and git init deferred — will initialize on first tab switch to Contracts.
     // This prevents blocking the UI at startup.
@@ -3644,18 +3505,8 @@ fn main() {
     // CONTRACTS: Compile + Deploy
     // =========================================================================
 
-    // --- Contracts: Toggle Deploy drawer ---
-    // P960-B: Deploy column is a collapsible drawer. Lets the editor
-    // take the full tab width when the user is just coding.
-    {
-        let ui_w = ui.as_weak();
-        ui.on_contracts_toggle_deploy(move || {
-            if let Some(ui) = ui_w.upgrade() {
-                let cur = ui.get_contracts_deploy_visible();
-                ui.set_contracts_deploy_visible(!cur);
-            }
-        });
-    }
+    // (P960-G: Toggle-Deploy drawer removed along with the embedded IDE.
+    // The Compile + Deploy panel is always visible below the file list.)
 
     // --- Contracts: Compile ---
     let core = app_core.clone();
@@ -4445,6 +4296,11 @@ fn main() {
     }
 
     tracing::info!("Citrate Desktop ready (full wiring)");
+    // Enter the Tokio runtime on the main thread so winit/zbus calls
+    // made from Slint's event loop can find a reactor. zbus 5.14
+    // (transitive via i-slint-backend-winit on Linux for dark-mode +
+    // portal queries) panics with "no reactor running" without this.
+    let _rt_guard = rt.enter();
     if let Err(err) = ui.run() {
         eprintln!("Slint event loop failed: {err}");
         std::process::exit(1);

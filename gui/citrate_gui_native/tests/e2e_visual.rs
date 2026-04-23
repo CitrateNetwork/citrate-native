@@ -217,14 +217,14 @@ fn e2e_all_surfaces() {
         app.set_contracts_deployed_address("".into());
     });
 
-    // ── 14. Contracts IDE with deploy drawer collapsed ──
-    check!("contracts_deploy_collapsed", {
+    // ── 14. Contracts file list (P960-G) ──
+    check!("contracts_file_list", {
         app.set_active_tab("contracts".into());
-        app.set_contracts_deploy_visible(false);
+        app.set_contract_watch_root("/workspace/contracts/src".into());
+        app.set_contract_watch_active(true);
         assert_eq!(app.get_active_tab().to_string(), "contracts");
-        assert!(!app.get_contracts_deploy_visible());
-        save_snapshot(&app, "14_contracts_deploy_collapsed");
-        app.set_contracts_deploy_visible(true);
+        assert!(app.get_contract_watch_active());
+        save_snapshot(&app, "14_contracts_file_list");
     });
 
     // ── 15. Operations tab (default) ──

@@ -1,0 +1,195 @@
+// Contract file list — replaces the embedded editor (P960-G).
+//
+// Slint is the wrong tool to build a Monaco competitor. We surface
+// the contracts/src/ folder as a read-only list with an "Open in
+// editor" button per row that shells out to the user's editor of
+// choice ($EDITOR or xdg-open). A notify-backed file watcher in
+// the Rust side re-fires the compile pipeline whenever any of the
+// listed files change on disk, so the user's edit→save→see-output
+// loop happens in their real editor with full LSP, syntax
+// highlighting, vim bindings, and everything else we'd never
+// reproduce.
+
+import { Theme } from "../theme.slint";
+
+export struct ContractFileEntry {
+    name: string,        // relative path from contracts/src/, e.g. "Token.sol"
+    full_path: string,   // absolute path on disk, used by Open-in-editor
+    size_bytes: int,
+    modified: string,    // human-readable mtime, e.g. "2m ago"
+}
+
+export component ContractFiles inherits Rectangle {
+    in property <[ContractFileEntry]> files: [];
+    in property <bool> watching: false;
+    in property <string> watch-root: "";
+    in property <string> auto-compile-status: "";  // last auto-compile event for the user
+    callback open-file(string);                    // arg: full_path
+    callback open-folder();                        // opens watch-root in file manager
+
+    background: Theme.surface;
+    border-color: Theme.border;
+    border-width: 1px;
+    border-radius: Theme.radius-lg;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // Header row — title + watch state
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            alignment: start;
+            Text {
+                text: "Contracts";
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            // Watch indicator — green when notify is firing, dim otherwise
+            Rectangle {
+                width: 110px; height: 22px;
+                border-radius: 11px;
+                background: root.watching ? Theme.success.darker(0.3) : Theme.bg-tertiary;
+                Text {
+                    text: root.watching ? "● auto-compile on" : "○ watch idle";
+                    color: Theme.text;
+                    font-size: 10px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Watch path + open-folder button
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            alignment: start;
+            Text {
+                text: root.watch-root;
+                color: Theme.text-muted;
+                font-size: 10px;
+                font-family: Theme.font-mono;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Rectangle {
+                width: 100px; height: 24px;
+                border-radius: Theme.radius-md;
+                background: of-ta.has-hover ? Theme.bg-tertiary : Theme.bg-secondary;
+                border-width: 1px;
+                border-color: Theme.border;
+                animate background { duration: 120ms; }
+                Text {
+                    text: "Open folder";
+                    color: Theme.text-secondary;
+                    font-size: 10px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                of-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-folder(); }
+                }
+            }
+        }
+
+        // File list — scrollable
+        Flickable {
+            VerticalLayout {
+                spacing: 4px;
+
+                if root.files.length == 0 : Rectangle {
+                    height: 64px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    Text {
+                        text: "No .sol files in contracts/src/. Drop a Solidity file there to start.";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                for entry in root.files : Rectangle {
+                    height: 36px;
+                    border-radius: Theme.radius-md;
+                    background: row-ta.has-hover ? Theme.bg-tertiary : Theme.bg-secondary;
+                    animate background { duration: 100ms; }
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-sm;
+                        spacing: Theme.space-md;
+                        alignment: start;
+
+                        Text {
+                            text: "📄";
+                            color: Theme.accent;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            width: 18px;
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            Text {
+                                text: entry.name;
+                                color: Theme.text;
+                                font-size: 12px;
+                                font-family: Theme.font-mono;
+                                font-weight: 500;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: entry.size_bytes + " B · " + entry.modified;
+                                color: Theme.text-muted;
+                                font-size: 9px;
+                            }
+                        }
+                        Rectangle {
+                            width: 80px; height: 26px;
+                            border-radius: Theme.radius-md;
+                            background: open-ta.has-hover ? Theme.accent : Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            animate background { duration: 100ms; }
+                            Text {
+                                text: "Open ↗";
+                                color: open-ta.has-hover ? #000000 : Theme.text-secondary;
+                                font-size: 10px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            open-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.open-file(entry.full_path); }
+                            }
+                        }
+                    }
+
+                    row-ta := TouchArea {
+                        mouse-cursor: default;
+                    }
+                }
+            }
+        }
+
+        // Auto-compile status line — last event from the watcher
+        if root.auto-compile-status != "" : Text {
+            text: root.auto-compile-status;
+            color: Theme.text-muted;
+            font-size: 10px;
+            font-family: Theme.font-mono;
+            wrap: word-wrap;
+        }
+    }
+}

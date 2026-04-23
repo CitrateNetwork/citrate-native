@@ -52,6 +52,12 @@ mime_guess = "2"
 # P960-C WP-C.3: serde for the persisted `files.json` index.
 serde = { version = "1", features = ["derive"] }
 
+# P960-G: filesystem watcher for the Contracts panel — auto-refresh
+# the file list when the user edits .sol files in their own editor.
+# Already in the workspace tree (slint pulls notify 7), so this is
+# a zero-cost direct dep.
+notify = "7"
+
 # P960-D WP-D.1: hardware detection (CPU / RAM / optional NVIDIA
 # GPU). sysinfo is pure-Rust, cross-platform. nvml-wrapper is
 # NVIDIA-only with a runtime-load check — absence of the libnvml

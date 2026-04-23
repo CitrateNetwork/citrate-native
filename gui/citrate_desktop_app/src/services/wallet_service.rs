@@ -363,6 +363,18 @@ impl WalletService {
         };
 
         self.accounts.write().await.push(account);
+
+        // Activate the session immediately. The user just typed this
+        // password to encrypt the keystore — making them re-type it to
+        // sign the first tx is the source of "Send failed: Session
+        // expired" right after onboarding. Same convention as a fresh
+        // browser-wallet install: create → unlocked.
+        *self.session.write().await = SessionStatus {
+            is_active: true,
+            remaining_seconds: Some(3600),
+            is_locked_out: false,
+        };
+
         Ok(result)
     }
 
@@ -386,6 +398,16 @@ impl WalletService {
         };
 
         self.accounts.write().await.push(account);
+
+        // Activate the session for the same reason create_wallet does:
+        // the password we just validated by decrypting the keystore is
+        // sufficient — don't make the user re-type it for the next op.
+        *self.session.write().await = SessionStatus {
+            is_active: true,
+            remaining_seconds: Some(3600),
+            is_locked_out: false,
+        };
+
         Ok(result)
     }
 

@@ -11,15 +11,13 @@ import { DagExplorer } from "dag/dag_explorer.slint";
 import { SendDialog } from "wallet/send_dialog.slint";
 import { ChatView, ChatMessageData } from "chat/chat.slint";
 import { ModelsView } from "models/models.slint";
-import { IdePanel } from "ide/ide_panel.slint";
 import { LearningView } from "learning/learning.slint";
 import { EduPanel } from "learning/edu_panel.slint";
 import { ComputeView } from "compute/compute.slint";
 import { ContractsPanel } from "contracts/contracts_panel.slint";
+import { ContractFiles, ContractFileEntry } from "contracts/contract_files.slint";
 import { StorageView, FileEntry } from "storage/storage.slint";
 import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
-import { FileTreeNodeData, EditorTabData, StyledLineData, StyledSpanData,
-         TerminalRowData, TerminalCellData, GitFileData, DiagnosticData } from "ide/ide_structs.slint";
 
 export component App inherits Window {
     title: "Citrate — AI-Native Blockchain";
@@ -254,24 +252,11 @@ export component App inherits Window {
     callback copy-mnemonic;
     callback verify-mnemonic-word(/* input */ string);
 
-    // === IDE State ===
-    in property <string> ide-explorer-root: "";
-    in property <[FileTreeNodeData]> ide-file-tree: [];
-    in property <string> ide-selected-file: "";
-    in property <[EditorTabData]> ide-tabs: [];
-    in property <[StyledLineData]> ide-visible-lines: [];
-    in property <int> ide-total-lines: 0;
-    in property <int> ide-cursor-line: 0;
-    in property <int> ide-cursor-col: 0;
-    in property <[TerminalRowData]> ide-terminal-rows: [];
-    in property <int> ide-terminal-cursor-row: 0;
-    in property <int> ide-terminal-cursor-col: 0;
-    in property <string> ide-git-branch: "";
-    in property <[GitFileData]> ide-git-changed-files: [];
-    in property <[DiagnosticData]> ide-diagnostics: [];
-    in property <string> ide-language: "";
-    in property <int> ide-error-count: 0;
-    in property <int> ide-warning-count: 0;
+    // === Contracts file-list state (P960-G — replaces the embedded IDE) ===
+    in property <[ContractFileEntry]> contract-files: [];
+    in property <bool> contract-watch-active: false;
+    in property <string> contract-watch-root: "";
+    in property <string> contract-auto-compile-status: "";
 
     // === Chat State ===
     in property <bool> chat-model-loaded: false;
@@ -290,23 +275,9 @@ export component App inherits Window {
     // Publish state: "local" | "pinned" | "submitted" | "confirmed" | "verified" | "ready" | "failed"
     in property <string> models-publish-state: "local";
 
-    // IDE callbacks
-    callback ide-file-opened(string);
-    callback ide-dir-toggled(string);
-    callback ide-tab-clicked(string);
-    callback ide-tab-closed(string);
-    callback ide-editor-key(string);
-    callback ide-terminal-input(string);
-    callback ide-git-stage(string);
-    callback ide-git-unstage(string);
-    callback ide-git-commit(string);
-    callback ide-git-push;
-    callback ide-git-pull;
-    callback ide-save-file;
-    callback ide-pop-out;
-    callback ide-command-palette-execute(string);
-    callback ide-search-in-files(string);
-    in property <[DiagnosticData]> ide-search-results: [];
+    // Contract files callbacks (P960-G)
+    callback contract-open-file(string);   // shells out to $EDITOR / xdg-open
+    callback contract-open-folder;         // opens contracts/src/ in file manager
 
     // === Contracts State ===
     in property <string> contracts-compiler-version: "forge";
@@ -319,14 +290,9 @@ export component App inherits Window {
     in property <string> contracts-deploy-error: "";
     in property <string> contracts-deployed-address: "";
     in property <string> contracts-deployment-history: "";
-    // Deploy drawer toggle. When false, the IDE gets the full width
-    // and the Deploy column is hidden. A floating "Deploy" button in
-    // the top-right reveals it.
-    in-out property <bool> contracts-deploy-visible: true;
     callback contracts-compile;
     callback contracts-deploy;
     callback contracts-run-tests;
-    callback contracts-toggle-deploy;
 
     // === Operations / Agent Center State ===
     in property <string> ops-session-id: "";
@@ -540,101 +506,44 @@ export component App inherits Window {
                     pin-model-to-ipfs => { root.models-pin-to-ipfs(); }
                 }
 
-                // Contracts IDE — unified editor / compile / deploy.
-                // The Deploy column is a collapsible drawer toggled by the
-                // pill in the top-right. When collapsed the IDE fills the
-                // whole tab; when open it gets a fixed-width sidecar.
-                if root.active-tab == "contracts" : Rectangle {
-                    HorizontalLayout {
-                        IdePanel {
-                            horizontal-stretch: 1;
-                            explorer-root: root.ide-explorer-root;
-                            file-tree-nodes: root.ide-file-tree;
-                            selected-file-path: root.ide-selected-file;
-                            tabs: root.ide-tabs;
-                            visible-lines: root.ide-visible-lines;
-                            total-lines: root.ide-total-lines;
-                            cursor-line: root.ide-cursor-line;
-                            cursor-col: root.ide-cursor-col;
-                            terminal-rows: root.ide-terminal-rows;
-                            terminal-cursor-row: root.ide-terminal-cursor-row;
-                            terminal-cursor-col: root.ide-terminal-cursor-col;
-                            git-branch: root.ide-git-branch;
-                            git-changed-files: root.ide-git-changed-files;
-                            diagnostics: root.ide-diagnostics;
-                            active-language: root.ide-language;
-                            error-count: root.ide-error-count;
-                            warning-count: root.ide-warning-count;
-                            file-opened(path) => { root.ide-file-opened(path); }
-                            dir-toggled(path) => { root.ide-dir-toggled(path); }
-                            tab-clicked(id) => { root.ide-tab-clicked(id); }
-                            tab-closed(id) => { root.ide-tab-closed(id); }
-                            editor-key-pressed(key) => { root.ide-editor-key(key); }
-                            terminal-input(key) => { root.ide-terminal-input(key); }
-                            git-stage(path) => { root.ide-git-stage(path); }
-                            git-unstage(path) => { root.ide-git-unstage(path); }
-                            git-commit(msg) => { root.ide-git-commit(msg); }
-                            git-push => { root.ide-git-push(); }
-                            git-pull => { root.ide-git-pull(); }
-                            save-file => { root.ide-save-file(); }
-                            pop-out => { root.ide-pop-out(); }
-                            command-palette-execute(cmd) => { root.ide-command-palette-execute(cmd); }
-                            search-in-files(query) => { root.ide-search-in-files(query); }
-                            search-results: root.ide-search-results;
-                        }
+                // Contracts panel — file list + compile + deploy.
+                // The embedded IDE was retired 2026-04-23 (P960-G):
+                // building a Monaco competitor in Slint was not the
+                // right battle. Users edit in their real editor; we
+                // watch the folder, auto-compile, and own the
+                // sign-and-deploy step. See contracts/contract_files.slint.
+                if root.active-tab == "contracts" : VerticalLayout {
+                    spacing: Theme.space-md;
+                    padding: Theme.space-lg;
 
-                        if root.contracts-deploy-visible : ContractsPanel {
-                            compiler-version: root.contracts-compiler-version;
-                            compile-status: root.contracts-compile-status;
-                            compiling: root.contracts-compiling;
-                            compile-error: root.contracts-compile-error;
-                            selected-contract: root.contracts-selected-contract;
-                            environment: root.environment;
-                            gas-estimate: root.contracts-gas-estimate;
-                            deploying: root.contracts-deploying;
-                            deploy-error: root.contracts-deploy-error;
-                            deployed-address: root.contracts-deployed-address;
-                            deployment-history: root.contracts-deployment-history;
-                            compile => { root.contracts-compile(); }
-                            deploy => { root.contracts-deploy(); }
-                            run-tests => { root.contracts-run-tests(); }
-                        }
+                    ContractFiles {
+                        vertical-stretch: 0;
+                        files: root.contract-files;
+                        watching: root.contract-watch-active;
+                        watch-root: root.contract-watch-root;
+                        auto-compile-status: root.contract-auto-compile-status;
+                        open-file(path) => { root.contract-open-file(path); }
+                        open-folder => { root.contract-open-folder(); }
                     }
 
-                    // Floating drawer toggle (pill, top-right)
-                    Rectangle {
-                        x: parent.width - self.width - 12px;
-                        y: 10px;
-                        width: 110px;
-                        height: 28px;
-                        border-radius: 14px;
-                        background: toggle-ta.has-hover
-                            ? Theme.accent
-                            : (root.contracts-deploy-visible ? Theme.sage : Theme.surface);
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        animate background { duration: 120ms; }
-
-                        Text {
-                            x: 0; y: 0; width: parent.width; height: parent.height;
-                            text: root.contracts-deploy-visible ? "✕  Hide Deploy" : "＋  Deploy";
-                            color: (toggle-ta.has-hover || root.contracts-deploy-visible) ? #000000 : Theme.text;
-                            font-size: 11px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-
-                        toggle-ta := TouchArea {
-                            clicked => { root.contracts-toggle-deploy(); }
-                            mouse-cursor: pointer;
-                        }
+                    ContractsPanel {
+                        vertical-stretch: 1;
+                        compiler-version: root.contracts-compiler-version;
+                        compile-status: root.contracts-compile-status;
+                        compiling: root.contracts-compiling;
+                        compile-error: root.contracts-compile-error;
+                        selected-contract: root.contracts-selected-contract;
+                        environment: root.environment;
+                        gas-estimate: root.contracts-gas-estimate;
+                        deploying: root.contracts-deploying;
+                        deploy-error: root.contracts-deploy-error;
+                        deployed-address: root.contracts-deployed-address;
+                        deployment-history: root.contracts-deployment-history;
+                        compile => { root.contracts-compile(); }
+                        deploy => { root.contracts-deploy(); }
+                        run-tests => { root.contracts-run-tests(); }
                     }
                 }
-
-                // (Studio panel retired 2026-04-22 — the Contracts tab above
-                // is the unified IDE. Sidebar entry removed; no standalone
-                // IDE-without-deploy branch exists.)
 
                 // Learning Center
                 if root.active-tab == "learning" : VerticalLayout {
