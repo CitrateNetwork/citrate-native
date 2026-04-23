@@ -405,6 +405,7 @@ async fn test_get_recent_blocks_format() {
                 "0x1111111111111111111111111111111111111111111111111111111111111111"
                     .to_string(),
             blue_score: 98,
+            proposer: String::new(),
         },
         BlockSummary {
             hash: "0xfeedface0000000000000000000000000000000000000000000000000000dead"
@@ -416,6 +417,7 @@ async fn test_get_recent_blocks_format() {
                 "0x2222222222222222222222222222222222222222222222222222222222222222"
                     .to_string(),
             blue_score: 97,
+            proposer: String::new(),
         },
     ];
 
@@ -480,6 +482,7 @@ async fn test_get_recent_blocks_respects_count_limit() {
             tx_count: i,
             selected_parent: format!("0x{:064x}", i + 1),
             blue_score: 100 - i as u64,
+            proposer: String::new(),
         });
     }
 
@@ -728,6 +731,7 @@ async fn test_block_summary_fields_for_ui_display() {
             "0x1111111111111111111111111111111111111111111111111111111111111111"
                 .to_string(),
         blue_score: 40,
+        proposer: String::new(),
     };
 
     // All fields used by the Slint UI

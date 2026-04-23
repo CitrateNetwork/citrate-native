@@ -46,6 +46,9 @@ pub struct BlockSummary {
     pub tx_count: usize,
     pub selected_parent: String,
     pub blue_score: u64,
+    /// T2-15: who proposed this block. Full 64-char hex of the
+    /// ed25519 proposer pubkey. UI truncates for display.
+    pub proposer: String,
 }
 
 /// Trait for real node backend implementations.
@@ -674,6 +677,7 @@ impl NodeBackend for EmbeddedNodeBackend {
             if let Some(hash) = hash_opt {
                 let hex_hash = format!("0x{}", hash.to_hex());
                 if let Ok(Some(block)) = storage.blocks.get_block(&hash) {
+                    let proposer_hex = hex::encode(block.header.proposer_pubkey.as_bytes());
                     blocks.push(BlockSummary {
                         hash: hex_hash,
                         height: h,
@@ -681,6 +685,7 @@ impl NodeBackend for EmbeddedNodeBackend {
                         tx_count: block.transactions.len(),
                         selected_parent: format!("0x{}", block.header.selected_parent_hash.to_hex()),
                         blue_score: block.header.blue_score,
+                        proposer: proposer_hex,
                     });
                 } else {
                     // Header exists but full block missing — show what we have
@@ -691,6 +696,7 @@ impl NodeBackend for EmbeddedNodeBackend {
                         tx_count: 0,
                         selected_parent: String::new(),
                         blue_score: 0,
+                        proposer: String::new(),
                     });
                 }
             }
@@ -1247,6 +1253,7 @@ mod tests {
             tx_count: 5,
             selected_parent: "0xdef".to_string(),
             blue_score: 42,
+            proposer: "0xproposer".to_string(),
         };
         assert_eq!(block.height, 100);
         assert_eq!(block.tx_count, 5);
