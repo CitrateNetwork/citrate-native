@@ -42,11 +42,26 @@ export component ComputeView inherits Rectangle {
     // Drives button text/color flip — "List on marketplace" → "✓ Listed".
     in property <bool> is-registered: false;
 
+    // CM-01 listing card — structured view of the provider's listing.
+    // All fields populated from ComputeMarketplace.getProvider() +
+    // ContributionAccounting.claimable() on the background poll.
+    // SALT display values pass through grains_to_salt before arrival —
+    // never raw grains. See listing_visibility.feature scenarios.
+    in property <string> listing-stake: "0";        // "1000" (SALT)
+    in property <string> listing-reputation-pct: "0.0";  // "98.5"
+    in property <string> listing-capacity: "0 / 0"; // "0 / 10"
+    in property <string> listing-models: "—";      // "any (wildcard)"
+    in property <string> listing-claimable: "0";    // "1.5" (SALT)
+    in property <int>    listing-total-completed: 0;
+    in property <int>    listing-total-failed: 0;
+    in property <bool>   listing-connection-ok: true;
+
     // Callbacks
     callback settings-changed;   // emitted after enabled / allocation / schedule change
     callback register-provider;  // fires ComputeMarketplace.registerProvider (P960-D WP-D.3)
     callback claim-earnings;     // fires ContributionAccounting.claimRewards (P960-D WP-D.4)
     callback refresh;
+    callback refresh-listing;    // CM-01: manual bypass of 30s poll cadence
 
     background: Theme.bg;
 
@@ -465,6 +480,201 @@ export component ComputeView inherits Rectangle {
                             claim-ta := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.claim-earnings(); }
+                            }
+                        }
+                    }
+
+                    // ── CM-01: Your listing card ────────────────────
+                    // Visible only when the provider is registered on-chain.
+                    // Structured counterpart to the single-line status
+                    // above. Feature spec:
+                    // citrate_v0.01.1/specs/gherkin/listing_visibility.feature
+                    if root.is-registered : Rectangle {
+                        border-radius: Theme.radius-lg;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        background: Theme.bg-secondary;
+
+                        VerticalLayout {
+                            padding: Theme.space-md;
+                            spacing: Theme.space-sm;
+
+                            // Header row: title + connection indicator + refresh
+                            HorizontalLayout {
+                                spacing: Theme.space-sm;
+                                alignment: space-between;
+
+                                Text {
+                                    text: "YOUR LISTING";
+                                    color: Theme.text-muted;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                    letter-spacing: 0.5px;
+                                    vertical-alignment: center;
+                                }
+
+                                // Connection indicator — shown only when
+                                // the RPC is unreachable so the user knows
+                                // values may be stale.
+                                if !root.listing-connection-ok : Rectangle {
+                                    width: 110px; height: 20px;
+                                    border-radius: 10px;
+                                    background: #2a1f0a;
+                                    border-width: 1px;
+                                    border-color: Theme.warning;
+                                    Text {
+                                        text: "● connection lost";
+                                        color: Theme.warning;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // Refresh — triggers immediate poll,
+                                // bypassing the 30 s background cadence.
+                                Rectangle {
+                                    width: 70px; height: 24px;
+                                    border-radius: Theme.radius-sm;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                    background: refresh-ta.has-hover
+                                        ? Theme.bg-tertiary : transparent;
+                                    animate background { duration: 120ms; }
+                                    Text {
+                                        text: "↻ Refresh";
+                                        color: Theme.text-secondary;
+                                        font-size: 10px;
+                                        font-weight: 500;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                    refresh-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.refresh-listing(); }
+                                    }
+                                }
+                            }
+
+                            // Fields grid: 2 columns × 2 rows
+                            // Row 1: Stake | Reputation
+                            HorizontalLayout {
+                                spacing: Theme.space-lg;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "STAKE";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-stake + " SALT";
+                                        color: Theme.text;
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "REPUTATION";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-reputation-pct + "%";
+                                        color: Theme.success;
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+
+                            // Row 2: Capacity | Models
+                            HorizontalLayout {
+                                spacing: Theme.space-lg;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "CAPACITY";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-capacity + " active jobs";
+                                        color: Theme.text;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "MODELS";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-models;
+                                        color: Theme.text;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+
+                            // Row 3: Job history aggregate
+                            HorizontalLayout {
+                                spacing: Theme.space-lg;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "JOBS COMPLETED / FAILED";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-total-completed + " / " + root.listing-total-failed;
+                                        color: Theme.text;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "CLAIMABLE";
+                                        color: Theme.text-muted;
+                                        font-size: 9px;
+                                        font-weight: 600;
+                                        letter-spacing: 0.3px;
+                                    }
+                                    Text {
+                                        text: root.listing-claimable + " SALT";
+                                        color: root.listing-claimable == "0"
+                                            ? Theme.text-muted : Theme.success;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                    }
+                                }
                             }
                         }
                     }
