@@ -1,195 +1,269 @@
-// Learning Center — pools, staking, training, earnings
+// Learning Center — pools, staking, earnings (P960-I rebuild).
+//
+// All values come from real chain reads on the canonical contracts:
+//   - LearningPool.nextPoolId()        → pool-count
+//   - LearningPool.isMember(poolId,me) → is-member
+//   - LearningPool.stakes(poolId,me)   → staked-amount
+//   - ContributionAccounting.claimable(me) → total-earnings
+//
+// All actions transact via the in-app wallet:
+//   - Join Pool      → LearningPool.joinPool(poolId) payable 1000 SALT
+//   - Leave Pool     → LearningPool.leavePool(poolId) (returns stake)
+//   - Claim Earnings → ContributionAccounting.claimRewards()
+//
+// Buttons surface only when the contract state makes them valid:
+// "Join" only if there's a pool and you're not already in. "Leave"
+// only if you are. "Claim" only if you have earnings > 0. The panel
+// is honest about whether the marketplace contract is reachable.
 import { Theme } from "../theme.slint";
 
 export component LearningView inherits Rectangle {
-    in property <string> view-mode: "home"; // home, network, classroom, earnings
-    in property <string> staked-amount: "0";
-    in property <string> total-earnings: "0";
-    in property <int> pool-count: 0;
-    in property <int> peer-count: 0;
-    in property <int> current-epoch: 0;
-    in property <string> pool-status: "No pool joined";
+    // Read from chain (set by the polling loop in main.rs)
+    in property <string> staked-amount: "0";       // user's stake in the current pool, formatted SALT
+    in property <string> total-earnings: "0";      // claimable from ContributionAccounting, formatted SALT
+    in property <int>    pool-count: 0;            // LearningPool.nextPoolId()
+    in property <string> pool-status: "";          // human description (e.g. "Pool #0 · 3 members")
+    in property <int>    peer-count: 0;
+    in property <int>    current-epoch: 0;
+    in property <string> contract-status: "Checking…";
+    in property <bool>   is-member: false;
+    in property <int>    current-pool-id: 0;       // pool the buttons act on (default 0)
 
     callback join-pool;
-    callback stake;
+    callback leave-pool;
     callback claim-earnings;
 
     background: Theme.bg;
 
     Flickable {
-    VerticalLayout {
-        padding-top: Theme.space-lg;
-        padding-bottom: Theme.space-lg;
-        padding-left: Theme.space-lg;
-        padding-right: Theme.space-lg;
-        spacing: Theme.space-lg;
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
 
-        // Header
-        Text {
-            text: "Learning Center";
-            color: Theme.text;
-            font-size: 20px;
-            font-weight: 600;
-        }
-
-        // Not-deployed banner
-        if root.pool-count == 0 : Rectangle {
-            height: 44px;
-            border-radius: Theme.radius-md;
-            background: Theme.bg-tertiary;
-            border-width: 1px;
-            border-color: Theme.border;
-
+            // ── Header ─────────────────────────────────────────────
             HorizontalLayout {
-                padding-left: Theme.space-lg;
-                spacing: Theme.space-sm;
-                alignment: start;
-
-                Text { text: "Learning contract deployed — 0 pools created yet. Be the first to create a learning pool."; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; wrap: word-wrap; }
-            }
-        }
-
-        // Stats row
-        HorizontalLayout {
-            spacing: Theme.space-md;
-
-            // Earnings card
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-
-                    Text { text: "EARNINGS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                    Text { text: root.total-earnings + " SALT"; color: Theme.success; font-size: 18px; font-weight: 600; overflow: elide; }
+                alignment: space-between;
+                Text {
+                    text: "Learning Center";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                // Contract status pill — green when LearningPool is
+                // deployed on the active network, amber otherwise.
+                Rectangle {
+                    width: 140px; height: 22px;
+                    border-radius: 11px;
+                    background: root.contract-status == "LearningPool live"
+                        ? Theme.success.darker(0.3)
+                        : Theme.warning.darker(0.3);
+                    Text {
+                        text: root.contract-status == "LearningPool live"
+                            ? "● live · " + root.pool-count + " pools"
+                            : "● offline";
+                        color: Theme.text;
+                        font-size: 10px;
+                        font-weight: 600;
+                        font-family: Theme.font-mono;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
             }
 
-            // Staked card
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-
-                    Text { text: "STAKED"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                    Text { text: root.staked-amount + " SALT"; color: Theme.accent; font-size: 18px; font-weight: 600; overflow: elide; }
-                }
-            }
-        }
-
-        // Second row
-        HorizontalLayout {
-            spacing: Theme.space-md;
-
-            // Pools card
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-
-                    Text { text: "POOLS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                    Text { text: root.pool-count; color: Theme.text; font-size: 18px; font-weight: 600; }
-                    Text { text: root.pool-status; color: Theme.text-secondary; font-size: 11px; overflow: elide; }
-                }
-            }
-
-            // Epoch card
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 80px;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                clip: true;
-
-                VerticalLayout {
-                    padding: Theme.space-md;
-                    spacing: Theme.space-xs;
-
-                    Text { text: "EPOCH"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
-                    Text { text: root.current-epoch; color: Theme.text; font-size: 18px; font-weight: 600; }
-                    Text { text: root.peer-count + " peers"; color: Theme.text-secondary; font-size: 11px; }
-                }
-            }
-        }
-
-        // Actions
-        HorizontalLayout {
-            spacing: Theme.space-sm;
-
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 40px;
+            // ── Deploy-status banner — only when contract isn't live ──
+            if root.contract-status != "LearningPool live" : Rectangle {
+                height: 48px;
                 border-radius: Theme.radius-md;
-                background: Theme.accent;
-
-                Text { text: "Join Pool"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.join-pool(); } }
+                background: Theme.warning.darker(0.4);
+                border-width: 1px;
+                border-color: Theme.warning;
+                HorizontalLayout {
+                    padding: Theme.space-sm;
+                    spacing: Theme.space-sm;
+                    Text { text: "⚠"; color: Theme.warning; font-size: 18px; vertical-alignment: center; }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        Text { text: root.contract-status; color: Theme.text; font-size: 11px; font-weight: 600; }
+                        Text {
+                            text: "Switch to a network where LearningPool is deployed (testnet-beta, chain 40204).";
+                            color: Theme.text-secondary; font-size: 10px; wrap: word-wrap;
+                        }
+                    }
+                }
             }
 
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 40px;
+            // ── First-pool empty state ──
+            if root.contract-status == "LearningPool live" && root.pool-count == 0 : Rectangle {
+                height: 56px;
                 border-radius: Theme.radius-md;
+                background: Theme.bg-tertiary;
                 border-width: 1px;
                 border-color: Theme.border;
-
-                Text { text: "Stake SALT"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.stake(); } }
+                HorizontalLayout {
+                    padding: Theme.space-sm;
+                    spacing: Theme.space-sm;
+                    Text { text: "✨"; color: Theme.accent; font-size: 18px; vertical-alignment: center; }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        Text { text: "No pools created yet"; color: Theme.text; font-size: 12px; font-weight: 600; }
+                        Text {
+                            text: "LearningPool.createPool(name, desc, access, minStake) is supported on-chain — pool creation UI lands in a follow-up sprint. For now use `cast send` from the CLI.";
+                            color: Theme.text-muted; font-size: 10px; wrap: word-wrap;
+                        }
+                    }
+                }
             }
 
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 40px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.border;
-
-                Text { text: "Claim"; color: Theme.success; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.claim-earnings(); } }
+            // ── Stats row ──────────────────────────────────────────
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "EARNINGS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.total-earnings + " SALT"; color: Theme.success; font-size: 18px; font-weight: 600; overflow: elide; }
+                        Text { text: "claimable from ContributionAccounting"; color: Theme.text-muted; font-size: 9px; }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 80px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "YOUR STAKE"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.staked-amount + " SALT"; color: Theme.accent; font-size: 18px; font-weight: 600; overflow: elide; }
+                        Text {
+                            text: root.is-member
+                                ? "in pool #" + root.current-pool-id
+                                : "not in any pool";
+                            color: Theme.text-muted; font-size: 9px;
+                        }
+                    }
+                }
             }
-        }
 
-        // Network placeholder
-        Rectangle {
-            vertical-stretch: 1;
-            border-radius: Theme.radius-lg;
-            background: Theme.bg-secondary;
-            border-width: 2px;
-            border-color: Theme.border-subtle;
+            // ── Status line ──
+            if root.pool-status != "" : Text {
+                text: root.pool-status;
+                color: Theme.text-secondary;
+                font-size: 11px;
+                font-family: Theme.font-mono;
+            }
 
-            VerticalLayout {
-                alignment: center;
+            // ── Action buttons — only what's currently valid ──
+            HorizontalLayout {
                 spacing: Theme.space-sm;
 
-                Text { text: "Network View"; color: Theme.text-muted; font-size: 14px; horizontal-alignment: center; }
-                Text { text: "Peer graph and training status will appear here"; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; }
+                // Join — visible when contract live, pool exists, not yet member
+                if root.contract-status == "LearningPool live" && root.pool-count > 0 && !root.is-member : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: join-ta.has-hover ? Theme.accent-hover : Theme.accent;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "Join pool #" + root.current-pool-id + "  ·  1000 SALT";
+                        color: #000000; font-size: 13px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    join-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.join-pool(); }
+                    }
+                }
+
+                // Leave — visible only when member
+                if root.is-member : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: leave-ta.has-hover ? Theme.error.darker(0.2) : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "Leave pool — withdraw " + root.staked-amount + " SALT";
+                        color: leave-ta.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: 12px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    leave-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.leave-pool(); }
+                    }
+                }
+
+                // Claim — visible only when there's something to claim
+                if root.total-earnings != "0" : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: claim-ta.has-hover ? Theme.success.darker(0.2) : Theme.success.darker(0.4);
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "Claim " + root.total-earnings + " SALT";
+                        color: Theme.text; font-size: 13px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    claim-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.claim-earnings(); }
+                    }
+                }
+            }
+
+            // ── Network/epoch metadata ──
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 60px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "EPOCH"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.current-epoch; color: Theme.text; font-size: 14px; font-weight: 600; }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 60px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    VerticalLayout {
+                        padding: Theme.space-md;
+                        spacing: Theme.space-xs;
+                        Text { text: "PEERS"; color: Theme.text-muted; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+                        Text { text: root.peer-count; color: Theme.text; font-size: 14px; font-weight: 600; }
+                    }
+                }
             }
         }
-    }
     }
 }

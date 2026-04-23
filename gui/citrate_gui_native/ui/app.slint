@@ -100,6 +100,11 @@ export component App inherits Window {
     in property <int> learning-pool-count: 0;
     in property <string> learning-pool-status: "No pool joined";
     in property <int> learning-epoch: 0;
+    // P960-I rebuild: real chain state
+    in property <string> learning-contract-status: "Checking…";
+    in property <bool>   learning-is-member: false;
+    in property <int>    learning-current-pool-id: 0;
+    callback learning-leave-pool;
 
     // Education state
     in property <string> edu-user-role: "none";
@@ -207,7 +212,6 @@ export component App inherits Window {
 
     // Learning callbacks
     callback learning-join-pool;
-    callback learning-stake;
     callback learning-claim-earnings;
 
     // Compute callbacks
@@ -500,8 +504,11 @@ export component App inherits Window {
                         pool-status: root.learning-pool-status;
                         current-epoch: root.learning-epoch;
                         peer-count: root.peer-count;
+                        contract-status: root.learning-contract-status;
+                        is-member: root.learning-is-member;
+                        current-pool-id: root.learning-current-pool-id;
                         join-pool => { root.learning-join-pool(); }
-                        stake => { root.learning-stake(); }
+                        leave-pool => { root.learning-leave-pool(); }
                         claim-earnings => { root.learning-claim-earnings(); }
                     }
                     EduPanel {
