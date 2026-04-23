@@ -14,8 +14,6 @@ import { ModelsView } from "models/models.slint";
 import { LearningView } from "learning/learning.slint";
 import { EduPanel } from "learning/edu_panel.slint";
 import { ComputeView } from "compute/compute.slint";
-import { ContractsPanel } from "contracts/contracts_panel.slint";
-import { ContractFiles, ContractFileEntry } from "contracts/contract_files.slint";
 import { StorageView, FileEntry } from "storage/storage.slint";
 import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
 
@@ -252,11 +250,10 @@ export component App inherits Window {
     callback copy-mnemonic;
     callback verify-mnemonic-word(/* input */ string);
 
-    // === Contracts file-list state (P960-G — replaces the embedded IDE) ===
-    in property <[ContractFileEntry]> contract-files: [];
-    in property <bool> contract-watch-active: false;
-    in property <string> contract-watch-root: "";
-    in property <string> contract-auto-compile-status: "";
+    // (Contracts surface retired in P960-H — see sprint doc. The
+    // sidebar entry, the panel, and all backing state were removed.
+    // forge handles compile + deploy from the user's terminal where
+    // the user already has their preferred editor + git workflow.)
 
     // === Chat State ===
     in property <bool> chat-model-loaded: false;
@@ -275,24 +272,6 @@ export component App inherits Window {
     // Publish state: "local" | "pinned" | "submitted" | "confirmed" | "verified" | "ready" | "failed"
     in property <string> models-publish-state: "local";
 
-    // Contract files callbacks (P960-G)
-    callback contract-open-file(string);   // shells out to $EDITOR / xdg-open
-    callback contract-open-folder;         // opens contracts/src/ in file manager
-
-    // === Contracts State ===
-    in property <string> contracts-compiler-version: "forge";
-    in property <string> contracts-compile-status: "Ready";
-    in property <bool> contracts-compiling: false;
-    in property <string> contracts-compile-error: "";
-    in property <string> contracts-selected-contract: "";
-    in property <string> contracts-gas-estimate: "";
-    in property <bool> contracts-deploying: false;
-    in property <string> contracts-deploy-error: "";
-    in property <string> contracts-deployed-address: "";
-    in property <string> contracts-deployment-history: "";
-    callback contracts-compile;
-    callback contracts-deploy;
-    callback contracts-run-tests;
 
     // === Operations / Agent Center State ===
     in property <string> ops-session-id: "";
@@ -506,44 +485,10 @@ export component App inherits Window {
                     pin-model-to-ipfs => { root.models-pin-to-ipfs(); }
                 }
 
-                // Contracts panel — file list + compile + deploy.
-                // The embedded IDE was retired 2026-04-23 (P960-G):
-                // building a Monaco competitor in Slint was not the
-                // right battle. Users edit in their real editor; we
-                // watch the folder, auto-compile, and own the
-                // sign-and-deploy step. See contracts/contract_files.slint.
-                if root.active-tab == "contracts" : VerticalLayout {
-                    spacing: Theme.space-md;
-                    padding: Theme.space-lg;
-
-                    ContractFiles {
-                        vertical-stretch: 0;
-                        files: root.contract-files;
-                        watching: root.contract-watch-active;
-                        watch-root: root.contract-watch-root;
-                        auto-compile-status: root.contract-auto-compile-status;
-                        open-file(path) => { root.contract-open-file(path); }
-                        open-folder => { root.contract-open-folder(); }
-                    }
-
-                    ContractsPanel {
-                        vertical-stretch: 1;
-                        compiler-version: root.contracts-compiler-version;
-                        compile-status: root.contracts-compile-status;
-                        compiling: root.contracts-compiling;
-                        compile-error: root.contracts-compile-error;
-                        selected-contract: root.contracts-selected-contract;
-                        environment: root.environment;
-                        gas-estimate: root.contracts-gas-estimate;
-                        deploying: root.contracts-deploying;
-                        deploy-error: root.contracts-deploy-error;
-                        deployed-address: root.contracts-deployed-address;
-                        deployment-history: root.contracts-deployment-history;
-                        compile => { root.contracts-compile(); }
-                        deploy => { root.contracts-deploy(); }
-                        run-tests => { root.contracts-run-tests(); }
-                    }
-                }
+                // (Contracts tab retired 2026-04-23 — P960-H. Compile +
+                // deploy live in `forge` from the user's terminal where
+                // they already have an editor + git workflow that beats
+                // anything we'd ship in a panel.)
 
                 // Learning Center
                 if root.active-tab == "learning" : VerticalLayout {
@@ -655,7 +600,7 @@ export component App inherits Window {
                 }
 
                 // Placeholder for any remaining tabs
-                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "contracts" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" && root.active-tab != "operations" : VerticalLayout {
+                if root.active-tab != "dashboard" && root.active-tab != "wallet" && root.active-tab != "dag" && root.active-tab != "chat" && root.active-tab != "models" && root.active-tab != "settings" && root.active-tab != "learning" && root.active-tab != "compute" && root.active-tab != "storage" && root.active-tab != "operations" : VerticalLayout {
                     padding: Theme.space-lg;
 
                     Text {
