@@ -297,11 +297,17 @@ pub struct WalletService {
     accounts: Arc<RwLock<Vec<Account>>>,
     session: Arc<RwLock<SessionStatus>>,
     backend: Arc<dyn WalletBackend>,
+    /// Current RPC URL, kept in sync with the backend so callers that
+    /// need to talk to the SAME node the wallet submits to (e.g. receipt
+    /// polling after `send_transaction_with_data`) have a canonical
+    /// source. Updated by `set_rpc_url`.
+    rpc_url: Arc<std::sync::RwLock<String>>,
 }
 
 impl WalletService {
     /// Create with the embedded wallet backend (production).
     pub fn new(events: Arc<EventBus>) -> Self {
+        let initial_url = citrate_wallet_core::WalletConfig::default().rpc_url;
         Self {
             events,
             accounts: Arc::new(RwLock::new(Vec::new())),
@@ -311,11 +317,13 @@ impl WalletService {
                 is_locked_out: false,
             })),
             backend: Arc::new(WalletCoreBackend::new()),
+            rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
         }
     }
 
     /// Create with an injected backend (for testing or alternative wallet).
     pub fn with_backend(events: Arc<EventBus>, backend: Arc<dyn WalletBackend>) -> Self {
+        let initial_url = citrate_wallet_core::WalletConfig::default().rpc_url;
         Self {
             events,
             accounts: Arc::new(RwLock::new(Vec::new())),
@@ -325,6 +333,7 @@ impl WalletService {
                 is_locked_out: false,
             })),
             backend,
+            rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
         }
     }
 
@@ -506,6 +515,21 @@ impl WalletService {
     /// Update the RPC URL target — called on environment switch.
     pub fn set_rpc_url(&self, url: &str) {
         self.backend.set_rpc_url(url);
+        if let Ok(mut guard) = self.rpc_url.write() {
+            *guard = url.to_string();
+        }
+    }
+
+    /// Current RPC URL the wallet is submitting transactions to. Use this
+    /// for receipt polling so the poll targets the SAME node as the
+    /// submission — mismatched URLs cause "rpc transport: error sending
+    /// request" because the receipt lives on the submission node, not
+    /// whatever arbitrary port the caller assumed.
+    pub fn get_rpc_url(&self) -> String {
+        self.rpc_url
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
     }
 
     /// Get the primary account address (for reward configuration)

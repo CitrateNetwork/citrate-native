@@ -598,7 +598,14 @@ impl ChatService {
     }
 
     /// Set the system prompt with wallet context.
-    /// Set chat context with real environment values. Chain ID is derived from network name.
+    /// Chain ID is derived from network name.
+    ///
+    /// **Unit contract:** `balance` MUST be a human-readable SALT value
+    /// (e.g. `"1000000"` or `"1.5"`), NOT raw grains/wei. Callers in
+    /// `gui/citrate_gui_native/src/main.rs` run `grains_str_to_salt`
+    /// against the `eth_getBalance` result before passing it here.
+    /// Feeding raw grains caused the "18 trailing zeros" chat bug — the
+    /// LLM echoed the 25-digit integer back as the user's balance.
     pub async fn set_context(&self, address: &str, balance: &str, network: &str, block_height: u64) {
         let chain_id = crate::chain_id_for_network(network);
         let prompt = format!(
@@ -606,8 +613,12 @@ impl ChatService {
              Current context:\n\
              - Network: {} (chain ID: {})\n\
              - User address: {}\n\
-             - Balance: {} SALT\n\
+             - Balance: {} SALT (already converted — do NOT multiply or divide by 10^18)\n\
              - Block height: {}\n\n\
+             Units: SALT is the native token. Its smallest unit is a \"grain\" \
+             (1 SALT = 10^18 grains, same scale as wei/ETH). All balances and \
+             transaction values presented to you are in SALT; never report a raw \
+             grain integer as the user's balance.\n\n\
              You can help with blockchain operations, checking balances, \
              explaining transactions, and drafting transactions for user approval.",
             network, chain_id, address, balance, block_height
