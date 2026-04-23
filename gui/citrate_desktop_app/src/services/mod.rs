@@ -14,6 +14,7 @@ pub mod model_service;
 pub mod block_service;
 pub mod learning_service;
 pub mod compute_service;
+pub mod mcp_host;
 pub mod edu;
 
 pub use node_service::NodeService;

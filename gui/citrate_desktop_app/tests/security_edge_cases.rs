@@ -52,7 +52,9 @@ fn test_app_core() -> AppCore {
     let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new("test-session", None));
     let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
     let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
-    AppCore { node, wallet, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
+    let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(tool_registry.clone()));
+    let mcp_host = Arc::new(citrate_desktop_app::services::mcp_host::McpHostService::new(mcp.clone()));
+    AppCore { node, wallet, mcp, mcp_host, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
 }
 
 /// Local test wallet backend for integration tests.

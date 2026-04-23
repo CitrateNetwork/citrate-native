@@ -63,8 +63,14 @@ export component OperationsView inherits Rectangle {
     // Integration status
     in property <string> logseq-status: "offline"; // "online", "offline", "disabled"
     in property <string> logseq-path: "";
-    in property <string> hermes-status: "offline"; // "online", "offline", "disabled"
+    // P960-J: hermes-* now reflects the MCP host state instead of a
+    // hardcoded string. status: "online" when axum listener is up,
+    // "offline" when bind failed. endpoint is the http://…/mcp URL.
+    // hermes-session-count is the number of active capability grants.
+    in property <string> hermes-status: "offline";
     in property <string> hermes-endpoint: "";
+    in property <int>    hermes-session-count: 0;
+    callback copy-sidecar-config;
 
     // Grant scope
     in property <string> grant-scope: "guided"; // "read-only", "guided", "operator"
@@ -178,16 +184,35 @@ export component OperationsView inherits Rectangle {
                             spacing: Theme.space-sm;
                             Rectangle {
                                 width: 8px; height: 8px; border-radius: 4px;
-                                background: root.hermes-status == "online" ? Theme.success : root.hermes-status == "disabled" ? Theme.text-muted : Theme.error;
+                                background: root.hermes-status == "online" ? Theme.success : Theme.error;
                                 y: 3px;
                             }
-                            Text { text: "Hermes Sidecar"; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                            Text { text: "MCP Host"; color: Theme.text; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                            // Copy sidecar config button — only when listening
+                            if root.hermes-status == "online" : Rectangle {
+                                width: 110px; height: 22px;
+                                border-radius: Theme.radius-md;
+                                background: copy-ta.has-hover ? Theme.accent : Theme.bg-tertiary;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                animate background { duration: 120ms; }
+                                Text {
+                                    text: "Copy sidecar config";
+                                    color: copy-ta.has-hover ? #000000 : Theme.text-secondary;
+                                    font-size: 10px; font-weight: 600;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                                copy-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.copy-sidecar-config(); }
+                                }
+                            }
                         }
                         Text {
-                            text: root.hermes-status == "online" ? "Connected to " + root.hermes-endpoint
-                                : root.hermes-status == "disabled" ? "Not configured"
-                                : "Offline";
-                            color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
+                            text: root.hermes-status == "online"
+                                ? "Listening on " + root.hermes-endpoint + "  ·  " + root.hermes-session-count + " client(s)"
+                                : "Not running — bind failed";
+                            color: Theme.text-muted; font-size: 11px; font-family: Theme.font-mono; wrap: word-wrap;
                         }
                     }
                 }

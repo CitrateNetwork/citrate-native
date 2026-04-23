@@ -59,6 +59,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Agent substrate
 citrate-agent-core = { path = "../../agent-core" }
 
+# P960-J: MCP host HTTP listener for external agent runtimes (Hermes
+# et al.). axum is already transitive via citrate-api; making it a
+# direct dep so McpHostService owns its own router clearly.
+axum = "0.7"
+
 [dev-dependencies]
 tokio-test = "0.4"
 proptest = "1"

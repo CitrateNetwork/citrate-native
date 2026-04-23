@@ -558,6 +558,22 @@ fn main() {
     let app_core = Arc::new(AppCore::new());
     let is_first_run = rt.block_on(app_core.wallet.is_first_run());
 
+    // P960-J: start the MCP host so external agent runtimes (Hermes)
+    // can discover our tools. Bind failure is non-fatal — we log and
+    // continue; Ops panel will show "MCP host not running" and the
+    // user can retry from settings in a future sprint.
+    {
+        let port = rt.block_on(app_core.config.read()).mcp_port;
+        let port = if port == 0 {
+            citrate_desktop_app::services::mcp_host::DEFAULT_MCP_PORT
+        } else {
+            port
+        };
+        if let Err(e) = rt.block_on(app_core.mcp_host.clone().start(port)) {
+            tracing::warn!("MCP host failed to bind on {}: {}", port, e);
+        }
+    }
+
     let ui = match App::new() {
         Ok(ui) => ui,
         Err(err) => {
@@ -1049,21 +1065,44 @@ fn main() {
                 let logseq_path = core.trail.logseq_path().await;
                 let logseq_status = if logseq_path.is_some() { "online" } else { "disabled" };
 
+                let ui_for_ops = ui_w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_w.upgrade() {
+                    if let Some(ui) = ui_for_ops.upgrade() {
                         ui.set_ops_trail_count(trail_count);
                         ui.set_ops_pending_count(pending_count);
                         ui.set_ops_active_sessions(1); // Current session
                         ui.set_ops_grant_scope("guided".into());
                         ui.set_ops_logseq_status(logseq_status.into());
                         ui.set_ops_logseq_path(logseq_path.unwrap_or_default().into());
-                        ui.set_ops_hermes_status("disabled".into());
-                        ui.set_ops_hermes_endpoint("Not configured".into());
+                        // P960-J: MCP host state is set from the
+                        // separate mcp_host.status() call below —
+                        // we don't overwrite it here because this
+                        // closure runs *before* the status fetch
+                        // completes and would flash the correct
+                        // value back to "offline" for one frame.
 
                         let pending_model = std::rc::Rc::new(slint::VecModel::from(pending_entries));
                         ui.set_ops_pending_approvals(pending_model.into());
                         let trail_model = std::rc::Rc::new(slint::VecModel::from(trail_entries));
                         ui.set_ops_trail_events(trail_model.into());
+                    }
+                });
+
+                // P960-J: MCP host status — separate await so the
+                // main ops hydration doesn't block on mcp_host.
+                let status = core.mcp_host.status().await;
+                let ui_for_mcp = ui_w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_for_mcp.upgrade() {
+                        if status.listening {
+                            ui.set_ops_hermes_status("online".into());
+                            ui.set_ops_hermes_endpoint(status.endpoint.into());
+                            ui.set_ops_hermes_session_count(status.active_sessions.len() as i32);
+                        } else {
+                            ui.set_ops_hermes_status("offline".into());
+                            ui.set_ops_hermes_endpoint("".into());
+                            ui.set_ops_hermes_session_count(0);
+                        }
                     }
                 });
             });
@@ -3643,6 +3682,45 @@ fn main() {
 
     // --- Operations: Refresh Trail ---
     let core = app_core.clone();
+    // --- Ops: Copy sidecar config (P960-J) ---
+    // Writes a Hermes-compatible sidecar config JSON to the clipboard
+    // so users can paste it into their Hermes client.
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_ops_copy_sidecar_config(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let cfg = core.mcp_host.export_sidecar_config(None).await;
+                let json = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            // Reuse the clipboard mechanism via the
+                            // existing copy-to-clipboard callback.
+                            ui.invoke_copy_to_clipboard(json.into());
+                            ui.set_clipboard_toast(
+                                "Sidecar config copied — paste into your Hermes client".into()
+                            );
+                            let ui_for_clear = ui_w.clone();
+                            slint::Timer::single_shot(
+                                std::time::Duration::from_millis(3000),
+                                move || {
+                                    if let Some(ui) = ui_for_clear.upgrade() {
+                                        ui.set_clipboard_toast("".into());
+                                    }
+                                },
+                            );
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_ops_refresh_trail(move || {

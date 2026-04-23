@@ -291,6 +291,8 @@ export component App inherits Window {
     in property <string> ops-logseq-path: "";
     in property <string> ops-hermes-status: "offline";
     in property <string> ops-hermes-endpoint: "";
+    in property <int>    ops-hermes-session-count: 0;
+    callback ops-copy-sidecar-config;
     in property <string> ops-grant-scope: "guided";
     callback ops-emergency-stop;
     callback ops-refresh-trail;
@@ -602,6 +604,8 @@ export component App inherits Window {
                     logseq-path: root.ops-logseq-path;
                     hermes-status: root.ops-hermes-status;
                     hermes-endpoint: root.ops-hermes-endpoint;
+                    hermes-session-count: root.ops-hermes-session-count;
+                    copy-sidecar-config => { root.ops-copy-sidecar-config(); }
                     grant-scope: root.ops-grant-scope;
                     emergency-stop => { root.ops-emergency-stop(); }
                     refresh-trail => { root.ops-refresh-trail(); }
