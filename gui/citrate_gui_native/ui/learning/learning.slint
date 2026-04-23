@@ -27,7 +27,7 @@ export component LearningView inherits Rectangle {
     in property <int>    current-epoch: 0;
     in property <string> contract-status: "Checking…";
     in property <bool>   is-member: false;
-    in property <int>    current-pool-id: 0;       // pool the buttons act on (default 0)
+    in-out property <int> current-pool-id: 0;      // pool the buttons act on (default 0)
 
     callback join-pool;
     callback leave-pool;
@@ -176,6 +176,84 @@ export component LearningView inherits Rectangle {
                             color: Theme.text-muted; font-size: 9px;
                         }
                     }
+                }
+            }
+
+            // ── T2-10 pool selector — only when > 1 pool exists ──
+            if root.pool-count > 1 : HorizontalLayout {
+                spacing: Theme.space-sm;
+                Text {
+                    text: "Viewing pool:";
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 32px; height: 26px;
+                    border-radius: Theme.radius-md;
+                    background: prev-ta.has-hover && root.current-pool-id > 0
+                        ? Theme.bg-tertiary : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    opacity: root.current-pool-id > 0 ? 1.0 : 0.4;
+                    Text {
+                        text: "<";
+                        color: Theme.text;
+                        font-size: 14px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    prev-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        enabled: root.current-pool-id > 0;
+                        clicked => {
+                            if (root.current-pool-id > 0) {
+                                root.current-pool-id = root.current-pool-id - 1;
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 80px; height: 26px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-tertiary;
+                    Text {
+                        text: "#" + root.current-pool-id + " / " + (root.pool-count - 1);
+                        color: Theme.accent;
+                        font-size: 11px; font-weight: 600;
+                        font-family: Theme.font-mono;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    width: 32px; height: 26px;
+                    border-radius: Theme.radius-md;
+                    background: next-ta.has-hover && root.current-pool-id < root.pool-count - 1
+                        ? Theme.bg-tertiary : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    opacity: root.current-pool-id < root.pool-count - 1 ? 1.0 : 0.4;
+                    Text {
+                        text: ">";
+                        color: Theme.text;
+                        font-size: 14px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    next-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        enabled: root.current-pool-id < root.pool-count - 1;
+                        clicked => {
+                            if (root.current-pool-id < root.pool-count - 1) {
+                                root.current-pool-id = root.current-pool-id + 1;
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: "buttons below act on this pool";
+                    color: Theme.text-muted;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
                 }
             }
 

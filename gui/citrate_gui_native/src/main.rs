@@ -1866,6 +1866,50 @@ fn main() {
                                 }
                             });
                         }
+
+                        // T2-13: compute DAG mini-viz dots from recent
+                        // blocks. Normalized x ∈ [0,1] by height
+                        // position, y ∈ [0,1] by (blue_score - min) /
+                        // (max - min). Last block is flagged as tip.
+                        let recent = rt_handle.block_on(core.node.get_recent_blocks(30))
+                            .unwrap_or_default();
+                        if !recent.is_empty() {
+                            let min_h = recent.iter().map(|b| b.height).min().unwrap_or(0);
+                            let max_h = recent.iter().map(|b| b.height).max().unwrap_or(1).max(min_h + 1);
+                            let min_b = recent.iter().map(|b| b.blue_score).min().unwrap_or(0);
+                            let max_b = recent.iter().map(|b| b.blue_score).max().unwrap_or(1).max(min_b + 1);
+                            let h_range = (max_h - min_h) as f32;
+                            let b_range = (max_b - min_b) as f32;
+                            let tip_height = max_h;
+                            let dots: Vec<DagDotData> = recent.iter().map(|b| {
+                                let x = if h_range > 0.0 {
+                                    (b.height - min_h) as f32 / h_range
+                                } else { 0.5 };
+                                let y = if b_range > 0.0 {
+                                    (b.blue_score - min_b) as f32 / b_range
+                                } else { 0.5 };
+                                let short = if b.hash.len() > 12 {
+                                    format!("{}…{}", &b.hash[..6], &b.hash[b.hash.len()-4..])
+                                } else {
+                                    b.hash.clone()
+                                };
+                                DagDotData {
+                                    height: b.height as i32,
+                                    hash_short: short.into(),
+                                    x,
+                                    y,
+                                    tx_count: b.tx_count as i32,
+                                    is_tip: b.height == tip_height,
+                                }
+                            }).collect();
+                            let ui_h = ui_handle.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_h.upgrade() {
+                                    let model = std::rc::Rc::new(slint::VecModel::from(dots));
+                                    ui.set_dag_dots(model.into());
+                                }
+                            });
+                        }
                     }
                 }
             }
