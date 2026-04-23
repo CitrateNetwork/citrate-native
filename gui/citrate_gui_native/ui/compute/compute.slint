@@ -13,6 +13,15 @@
 // P960-D WP-D.1 / D.2.
 import { Theme } from "../theme.slint";
 
+// CM-01 WP-01.5 — one row of the provider's recent activity.
+// Populated from ComputeMarketplace event logs (JobAssigned,
+// JobCompleted, JobFailed) via marketplace_client::fetch_recent_activity.
+export struct ListingActivityRow {
+    job-id: int,
+    block-number: int,
+    status: string,   // "Assigned" | "Completed" | "Failed"
+}
+
 export component ComputeView inherits Rectangle {
     // Detected hardware — populated by the Rust side on tab open.
     in property <string> hw-summary: "Detecting hardware…";
@@ -55,6 +64,12 @@ export component ComputeView inherits Rectangle {
     in property <int>    listing-total-completed: 0;
     in property <int>    listing-total-failed: 0;
     in property <bool>   listing-connection-ok: true;
+
+    // CM-01 WP-01.5 — recent activity list.
+    // Up to 10 rows, newest first, from eth_getLogs on
+    // ComputeMarketplace's JobAssigned / JobCompleted / JobFailed events.
+    // Empty list → friendly empty-state ("No jobs yet…").
+    in property <[ListingActivityRow]> listing-activity: [];
 
     // Callbacks
     callback settings-changed;   // emitted after enabled / allocation / schedule change
@@ -674,6 +689,54 @@ export component ComputeView inherits Rectangle {
                                         font-size: 13px;
                                         font-weight: 500;
                                     }
+                                }
+                            }
+
+                            // ── Recent activity ─────────────────────
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.border-subtle;
+                            }
+                            Text {
+                                text: "RECENT ACTIVITY";
+                                color: Theme.text-muted;
+                                font-size: 9px;
+                                font-weight: 600;
+                                letter-spacing: 0.3px;
+                            }
+                            if root.listing-activity.length == 0 : Text {
+                                text: "No jobs yet — waiting for first assignment";
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                            }
+                            for row in root.listing-activity : HorizontalLayout {
+                                spacing: Theme.space-md;
+                                padding-top: 2px;
+                                padding-bottom: 2px;
+                                Text {
+                                    text: "#" + row.job-id;
+                                    color: Theme.text;
+                                    font-size: 11px;
+                                    font-family: Theme.font-mono;
+                                    min-width: 60px;
+                                }
+                                Text {
+                                    text: "block " + row.block-number;
+                                    color: Theme.text-secondary;
+                                    font-size: 11px;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: row.status;
+                                    color: row.status == "Completed"
+                                        ? Theme.success
+                                        : (row.status == "Failed"
+                                            ? Theme.error
+                                            : Theme.accent);
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    min-width: 80px;
+                                    horizontal-alignment: right;
                                 }
                             }
                         }

@@ -13,7 +13,7 @@ import { ChatView, ChatMessageData } from "chat/chat.slint";
 import { ModelsView } from "models/models.slint";
 import { LearningView } from "learning/learning.slint";
 import { EduPanel } from "learning/edu_panel.slint";
-import { ComputeView } from "compute/compute.slint";
+import { ComputeView, ListingActivityRow } from "compute/compute.slint";
 import { StorageView, FileEntry } from "storage/storage.slint";
 import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
 
@@ -169,6 +169,7 @@ export component App inherits Window {
     in property <int>    compute-listing-total-completed: 0;
     in property <int>    compute-listing-total-failed: 0;
     in property <bool>   compute-listing-connection-ok: true;
+    in property <[ListingActivityRow]> compute-listing-activity: [];
     callback compute-refresh-listing;
 
     // P960-D WP-D.1: detected hardware card
@@ -645,6 +646,7 @@ export component App inherits Window {
                     listing-total-completed: root.compute-listing-total-completed;
                     listing-total-failed: root.compute-listing-total-failed;
                     listing-connection-ok: root.compute-listing-connection-ok;
+                    listing-activity: root.compute-listing-activity;
                     refresh-listing => { root.compute-refresh-listing(); }
 
                     hw-summary: (root.compute-hw-has-gpu

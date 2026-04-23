@@ -1844,6 +1844,26 @@ fn main() {
                                 None
                             };
 
+                        // CM-01 WP-01.5: recent activity via eth_getLogs.
+                        // Only fetched when the provider is registered (query
+                        // is cheap but pointless pre-registration).
+                        // Data source: ComputeMarketplace event logs
+                        // (JobAssigned, JobCompleted, JobFailed).
+                        let activity: Vec<marketplace_client::ActivityEntry> =
+                            if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
+                                if provider.as_ref().is_some_and(|p| p.is_registered) {
+                                    rt_handle
+                                        .block_on(marketplace_client::fetch_recent_activity(
+                                            &rpc_url, m, addr,
+                                        ))
+                                        .unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            };
+
                         // Compose status line. Three mutually-exclusive cases.
                         let has_addresses = market_addr.is_some() && accounting_addr.is_some();
                         let ui_h = ui_handle.clone();
@@ -1910,6 +1930,19 @@ fn main() {
                                 ui.set_compute_earned(salt.clone().into());
                                 ui.set_compute_listing_claimable(salt.into());
                             }
+
+                            // Push recent-activity rows to the listing card.
+                            // Rows already sorted newest-first by the helper.
+                            let rows: Vec<ListingActivityRow> = activity
+                                .into_iter()
+                                .map(|e| ListingActivityRow {
+                                    job_id: e.job_id as i32,
+                                    block_number: e.block_number as i32,
+                                    status: e.status.into(),
+                                })
+                                .collect();
+                            let model = std::rc::Rc::new(slint::VecModel::from(rows));
+                            ui.set_compute_listing_activity(model.into());
                         });
                     }
                 }
@@ -4456,6 +4489,16 @@ fn main() {
                 None
             };
 
+            // Data source: ComputeMarketplace event logs for this provider.
+            // Empty vec on any error — the card falls back to empty-state.
+            let activity = if provider.as_ref().is_some_and(|p| p.is_registered) {
+                marketplace_client::fetch_recent_activity(&rpc_url, market, &addr)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_w.upgrade() else { return; };
                 match (provider, claimable) {
@@ -4476,6 +4519,17 @@ fn main() {
                         ui.set_compute_earned(claim_salt.clone().into());
                         ui.set_compute_listing_claimable(claim_salt.into());
                         ui.set_compute_listing_connection_ok(true);
+
+                        let rows: Vec<ListingActivityRow> = activity
+                            .into_iter()
+                            .map(|e| ListingActivityRow {
+                                job_id: e.job_id as i32,
+                                block_number: e.block_number as i32,
+                                status: e.status.into(),
+                            })
+                            .collect();
+                        let model = std::rc::Rc::new(slint::VecModel::from(rows));
+                        ui.set_compute_listing_activity(model.into());
                     }
                     _ => {
                         ui.set_compute_listing_connection_ok(false);

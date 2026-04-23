@@ -588,6 +588,168 @@ pub async fn eth_call(
         .ok_or_else(|| "rpc missing result".to_string())
 }
 
+// ── CM-01 WP-01.5: Recent activity (eth_getLogs) ────────────────────
+//
+// Queries the three ComputeMarketplace events a provider cares about:
+// JobAssigned, JobCompleted, JobFailed. All three share the shape
+// `(uint256 indexed jobId, address indexed provider, ...)` so we can
+// filter on topic[2] == provider_address_padded across all three
+// event signatures in a single eth_getLogs call.
+//
+// Data source: eth_getLogs (standard JSON-RPC)
+//   - address: ComputeMarketplace (from compute_marketplace_address)
+//   - topics[0]: ANY of the three event sigs (OR filter)
+//   - topics[2]: caller's provider address (left-pad to 32 bytes)
+//   - fromBlock: latest - ACTIVITY_LOOKBACK_BLOCKS (bounded query)
+
+/// How far back to look when fetching recent activity. 10,000 blocks at
+/// 2 s/block ≈ 5.5 hours — enough for a "recent" view without being
+/// expensive on archive nodes.
+pub const ACTIVITY_LOOKBACK_BLOCKS: u64 = 10_000;
+
+/// Maximum number of activity entries returned to the UI.
+pub const ACTIVITY_LIMIT: usize = 10;
+
+/// Compute a keccak256 topic hash for an event signature. Solidity
+/// convention: strip parameter names, keep types; wrap in parens.
+fn event_topic(sig: &str) -> [u8; 32] {
+    let mut h = Keccak256::new();
+    h.update(sig.as_bytes());
+    let out = h.finalize();
+    let mut topic = [0u8; 32];
+    topic.copy_from_slice(&out);
+    topic
+}
+
+fn topic_job_assigned() -> [u8; 32] {
+    event_topic("JobAssigned(uint256,address,uint256)")
+}
+fn topic_job_completed() -> [u8; 32] {
+    event_topic("JobCompleted(uint256,address,uint256,uint256,uint256)")
+}
+fn topic_job_failed() -> [u8; 32] {
+    event_topic("JobFailed(uint256,address)")
+}
+
+/// One row of a provider's recent activity, shaped for UI display.
+/// Order: newest first (descending block number).
+#[derive(Debug, Clone)]
+pub struct ActivityEntry {
+    pub job_id: u64,
+    pub block_number: u64,
+    pub status: String,  // "Assigned", "Completed", or "Failed"
+}
+
+/// Fetch recent activity from ComputeMarketplace. Returns an empty
+/// vec on any error (callers display an empty-state in the UI
+/// regardless of the failure mode). Returns up to ACTIVITY_LIMIT
+/// entries sorted newest-first.
+pub async fn fetch_recent_activity(
+    rpc_url: &str,
+    market_address: &str,
+    provider_address: &str,
+) -> Result<Vec<ActivityEntry>, String> {
+    // Address padded to 32 bytes per EVM log-filter convention.
+    let padded = encode_address_padded(provider_address)
+        .ok_or_else(|| "invalid provider address".to_string())?;
+    let padded_hex = format!("0x{}", hex::encode(padded));
+
+    // Three topic[0] candidates — eth_getLogs `topics[0]` as an array
+    // ORs the values.
+    let t_assigned = format!("0x{}", hex::encode(topic_job_assigned()));
+    let t_completed = format!("0x{}", hex::encode(topic_job_completed()));
+    let t_failed = format!("0x{}", hex::encode(topic_job_failed()));
+
+    // First, resolve `latest` block number to bound the fromBlock
+    // window. Without this, a fresh node with <10k blocks would
+    // return an RPC error on `latest-10000`.
+    let client = reqwest::Client::new();
+    let bn_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": [],
+        "id": 1,
+    });
+    let bn_resp = client
+        .post(rpc_url)
+        .json(&bn_body)
+        .send()
+        .await
+        .map_err(|e| format!("rpc transport: {}", e))?;
+    let bn_json: serde_json::Value = bn_resp.json().await
+        .map_err(|e| format!("rpc decode: {}", e))?;
+    let latest_hex = bn_json.get("result").and_then(|v| v.as_str())
+        .ok_or_else(|| "missing block number".to_string())?;
+    let latest = u64::from_str_radix(latest_hex.trim_start_matches("0x"), 16)
+        .map_err(|e| format!("bad block number: {}", e))?;
+    let from_block = latest.saturating_sub(ACTIVITY_LOOKBACK_BLOCKS);
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getLogs",
+        "params": [{
+            "fromBlock": format!("0x{:x}", from_block),
+            "toBlock": "latest",
+            "address": market_address,
+            "topics": [
+                [t_assigned, t_completed, t_failed],
+                serde_json::Value::Null,
+                padded_hex,
+            ],
+        }],
+        "id": 2,
+    });
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("rpc transport: {}", e))?;
+    let json: serde_json::Value = resp.json().await
+        .map_err(|e| format!("rpc decode: {}", e))?;
+    if let Some(err) = json.get("error") {
+        return Err(format!("rpc error: {}", err));
+    }
+    let logs = json.get("result")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "missing logs array".to_string())?;
+
+    let t_a = topic_job_assigned();
+    let t_c = topic_job_completed();
+    let t_f = topic_job_failed();
+
+    let mut entries: Vec<ActivityEntry> = logs.iter().filter_map(|log| {
+        let topics = log.get("topics")?.as_array()?;
+        if topics.len() < 3 { return None; }
+        let topic0_hex = topics[0].as_str()?.trim_start_matches("0x");
+        let topic0 = hex::decode(topic0_hex).ok()?;
+        if topic0.len() != 32 { return None; }
+        let topic0_arr: [u8; 32] = topic0.try_into().ok()?;
+        let status = if topic0_arr == t_a { "Assigned" }
+            else if topic0_arr == t_c { "Completed" }
+            else if topic0_arr == t_f { "Failed" }
+            else { return None; };
+
+        // topic[1] is the indexed jobId (uint256 → u64 via last 8 bytes).
+        let job_id_hex = topics[1].as_str()?.trim_start_matches("0x");
+        let job_id_bytes = hex::decode(job_id_hex).ok()?;
+        if job_id_bytes.len() != 32 { return None; }
+        let mut job_id_buf = [0u8; 8];
+        job_id_buf.copy_from_slice(&job_id_bytes[24..32]);
+        let job_id = u64::from_be_bytes(job_id_buf);
+
+        let block_hex = log.get("blockNumber")?.as_str()?.trim_start_matches("0x");
+        let block_number = u64::from_str_radix(block_hex, 16).ok()?;
+
+        Some(ActivityEntry { job_id, block_number, status: status.to_string() })
+    }).collect();
+
+    // Descending by block number — newest first.
+    entries.sort_by(|a, b| b.block_number.cmp(&a.block_number));
+    entries.truncate(ACTIVITY_LIMIT);
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +782,79 @@ mod tests {
     fn claim_rewards_selector() {
         let got = selector("claimRewards()");
         assert_eq!(hex::encode(got), "372500ab");
+    }
+
+    // CM-01 WP-01.5 — event topic guards.
+    //
+    // Topic[0] is keccak256 of the Solidity event signature with
+    // parameter names stripped. If any of these three strings drifts
+    // from ComputeMarketplace.sol, eth_getLogs silently returns zero
+    // rows and the Your-listing card looks permanently idle. These
+    // tests lock in the exact sig string we filter on.
+
+    #[test]
+    fn topics_are_distinct_and_stable() {
+        let a = topic_job_assigned();
+        let c = topic_job_completed();
+        let f = topic_job_failed();
+        assert_ne!(a, c);
+        assert_ne!(a, f);
+        assert_ne!(c, f);
+        // Determinism: same input → same output.
+        assert_eq!(a, topic_job_assigned());
+        assert_eq!(c, topic_job_completed());
+        assert_eq!(f, topic_job_failed());
+    }
+
+    #[test]
+    fn topic_job_assigned_signature() {
+        // ComputeMarketplace.sol:192 declares
+        // `event JobAssigned(uint256 indexed jobId, address indexed provider, uint256 price)`.
+        // Topic[0] = keccak256("JobAssigned(uint256,address,uint256)").
+        let t = topic_job_assigned();
+        assert_eq!(t.len(), 32);
+        // Sanity: fresh compute against the SAME sig string must match.
+        assert_eq!(t, event_topic("JobAssigned(uint256,address,uint256)"));
+        // And must NOT match a plausible-but-wrong signature (e.g.,
+        // forgetting the trailing uint256).
+        assert_ne!(t, event_topic("JobAssigned(uint256,address)"));
+    }
+
+    #[test]
+    fn topic_job_completed_signature() {
+        // ComputeMarketplace.sol:206 declares 5 fields.
+        let t = topic_job_completed();
+        assert_eq!(t.len(), 32);
+        assert_eq!(
+            t,
+            event_topic("JobCompleted(uint256,address,uint256,uint256,uint256)")
+        );
+        // Guard against dropping a uint256 by accident.
+        assert_ne!(
+            t,
+            event_topic("JobCompleted(uint256,address,uint256,uint256)")
+        );
+    }
+
+    #[test]
+    fn topic_job_failed_signature() {
+        // ComputeMarketplace.sol:216 declares exactly 2 fields.
+        let t = topic_job_failed();
+        assert_eq!(t.len(), 32);
+        assert_eq!(t, event_topic("JobFailed(uint256,address)"));
+    }
+
+    #[test]
+    fn activity_entry_construction() {
+        // Round-trip a fabricated entry to catch field-order changes.
+        let e = ActivityEntry {
+            job_id: 42,
+            block_number: 1_234_567,
+            status: "Completed".to_string(),
+        };
+        assert_eq!(e.job_id, 42);
+        assert_eq!(e.block_number, 1_234_567);
+        assert_eq!(e.status, "Completed");
     }
 
     #[test]
