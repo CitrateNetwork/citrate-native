@@ -1225,8 +1225,36 @@ fn main() {
                             let secs = remaining % 60;
                             (true, format!("{}:{:02}", mins, secs))
                         } else {
-                            // Session expired — clear it
+                            // T1-3: session timed out. Clear the GUI
+                            // clock AND lock the backend so the next
+                            // send doesn't fail silently with the
+                            // "Session expired" error, it surfaces an
+                            // unlock prompt instead. The backend lock
+                            // is idempotent — safe if we already
+                            // locked from a prior tick.
                             SESSION_UNLOCK_EPOCH.store(0, Ordering::Relaxed);
+                            let _ = rt_handle.block_on(core.wallet.lock());
+                            // Toast once on the transition. If the
+                            // user is on the wallet/chat/compute/learning
+                            // tab they'll see this; if not, they'll
+                            // still hit the lock screen on next send.
+                            let ui_for_toast = ui_handle.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_for_toast.upgrade() {
+                                    ui.set_clipboard_toast(
+                                        "Session expired — unlock your wallet to continue".into()
+                                    );
+                                    let ui_clear = ui_for_toast.clone();
+                                    slint::Timer::single_shot(
+                                        std::time::Duration::from_millis(5000),
+                                        move || {
+                                            if let Some(ui) = ui_clear.upgrade() {
+                                                ui.set_clipboard_toast("".into());
+                                            }
+                                        },
+                                    );
+                                }
+                            });
                             (false, String::new())
                         }
                     } else {
