@@ -441,6 +441,54 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
 /// "0x…" hex or plain decimal input.
 ///
 /// Returns "0" on any parse failure rather than crashing the chat flow.
+/// Outcome of polling `eth_getTransactionReceipt` for a submitted tx.
+///
+/// Ok(Confirmed(block_number_hex)) — status 0x1, tx included in a block.
+/// Ok(Reverted) — status 0x0, tx included but execution reverted.
+/// Ok(Pending) — poll window elapsed without the tx being mined.
+/// Err(String) — transport failure talking to the RPC.
+#[derive(Debug)]
+enum ReceiptOutcome {
+    Confirmed { block_number: String },
+    Reverted,
+    Pending,
+}
+
+/// Poll `eth_getTransactionReceipt` for `tx_hash` at the given RPC URL.
+/// Waits up to 40s total (20 polls × 2s interval). Used by every
+/// transactional handler so the user gets an explicit
+/// success/reverted/pending outcome instead of fire-and-forget.
+/// T1-1 extraction: previously inlined only in on_compute_register_provider.
+async fn poll_tx_receipt(rpc_url: &str, tx_hash: &str) -> Result<ReceiptOutcome, String> {
+    let client = reqwest::Client::new();
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+            "id": 1,
+        });
+        let resp = match client.post(rpc_url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => return Err(format!("rpc transport: {}", e)),
+        };
+        let json: serde_json::Value = match resp.json().await {
+            Ok(j) => j,
+            Err(e) => return Err(format!("rpc decode: {}", e)),
+        };
+        let Some(result) = json.get("result") else { continue; };
+        if result.is_null() { continue; }
+        let status = result["status"].as_str().unwrap_or("0x0");
+        if status == "0x1" {
+            let block = result["blockNumber"].as_str().unwrap_or("0x?").to_string();
+            return Ok(ReceiptOutcome::Confirmed { block_number: block });
+        }
+        return Ok(ReceiptOutcome::Reverted);
+    }
+    Ok(ReceiptOutcome::Pending)
+}
+
 /// Shorten a 0x-prefixed hex hash or address for compact display
 /// in status text. `0xabcdef…123456` form.
 fn short_hash(hex: &str) -> String {
@@ -792,10 +840,35 @@ fn main() {
             match core.wallet.send_transaction(&from_addr, &to_str, &wei_str, &pwd_str).await {
                 Ok(hash) => {
                     tracing::info!("Transaction sent: {}", hash);
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        let hash = hash.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_send_tx_hash(hash.into());
+                                ui.set_send_error("".into());
+                                ui.set_send_receipt_status("Submitted — waiting for receipt…".into());
+                            }
+                        }
+                    });
+                    // T1-1: poll the receipt so the user sees confirmed/reverted/pending
+                    // instead of just a hash and a prayer.
+                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    let final_msg = match poll_tx_receipt(&rpc_url, &hash).await {
+                        Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                            format!("Confirmed in block {}", block_number)
+                        }
+                        Ok(ReceiptOutcome::Reverted) => {
+                            "Reverted — check recipient address and balance".to_string()
+                        }
+                        Ok(ReceiptOutcome::Pending) => {
+                            "Still pending — check explorer in a minute".to_string()
+                        }
+                        Err(e) => format!("Receipt poll failed: {}", e),
+                    };
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
-                            ui.set_send_tx_hash(hash.into());
-                            ui.set_send_error("".into());
+                            ui.set_send_receipt_status(final_msg.into());
                         }
                     });
                 }
@@ -805,6 +878,7 @@ fn main() {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_send_error(err.into());
+                            ui.set_send_receipt_status("".into());
                         }
                     });
                 }
@@ -818,6 +892,7 @@ fn main() {
         if let Some(ui) = ui_w.upgrade() {
             ui.set_send_tx_hash("".into());
             ui.set_send_error("".into());
+            ui.set_send_receipt_status("".into());
         }
     });
 
@@ -2934,12 +3009,34 @@ fn main() {
                 {
                     Ok(tx) => {
                         tracing::info!("Learning: joinPool tx={}", tx);
-                        let msg = format!("Joined pool {} — tx {}", pool_id, short_hash(&tx));
+                        let submitted = format!("Submitted joinPool({}) — tx {}", pool_id, short_hash(&tx));
                         let _ = slint::invoke_from_event_loop({
                             let ui_w = ui_w.clone();
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_learning_pool_status(msg.into());
+                                    ui.set_learning_pool_status(submitted.into());
+                                }
+                            }
+                        });
+                        // T1-1: poll receipt
+                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
+                            Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                                format!("Joined pool {} (block {})", pool_id, block_number)
+                            }
+                            Ok(ReceiptOutcome::Reverted) => {
+                                format!("Join pool {} reverted — below minStake or not Open access?", pool_id)
+                            }
+                            Ok(ReceiptOutcome::Pending) => {
+                                format!("Join pool {} pending — tx {} not yet mined", pool_id, short_hash(&tx))
+                            }
+                            Err(e) => format!("Receipt poll failed: {}", e),
+                        };
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(final_msg.into());
                                 }
                             }
                         });
@@ -2986,12 +3083,34 @@ fn main() {
                 {
                     Ok(tx) => {
                         tracing::info!("Learning: leavePool tx={}", tx);
-                        let msg = format!("Left pool {} — tx {}", pool_id, short_hash(&tx));
+                        let submitted = format!("Submitted leavePool({}) — tx {}", pool_id, short_hash(&tx));
                         let _ = slint::invoke_from_event_loop({
                             let ui_w = ui_w.clone();
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_learning_pool_status(msg.into());
+                                    ui.set_learning_pool_status(submitted.into());
+                                }
+                            }
+                        });
+                        // T1-1: poll receipt
+                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
+                            Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                                format!("Left pool {} (block {})", pool_id, block_number)
+                            }
+                            Ok(ReceiptOutcome::Reverted) => {
+                                format!("Leave pool {} reverted — not a member?", pool_id)
+                            }
+                            Ok(ReceiptOutcome::Pending) => {
+                                format!("Leave pool {} pending — tx {} not yet mined", pool_id, short_hash(&tx))
+                            }
+                            Err(e) => format!("Receipt poll failed: {}", e),
+                        };
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(final_msg.into());
                                 }
                             }
                         });
@@ -3039,11 +3158,34 @@ fn main() {
                         tracing::info!("Learning: claimRewards tx={}", tx);
                         let _ = slint::invoke_from_event_loop({
                             let ui_w = ui_w.clone();
+                            let tx = tx.clone();
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
                                     ui.set_clipboard_toast(
                                         format!("Claim submitted — tx {}", short_hash(&tx)).into()
                                     );
+                                }
+                            }
+                        });
+                        // T1-1: poll receipt
+                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
+                            Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                                format!("Claim confirmed in block {}", block_number)
+                            }
+                            Ok(ReceiptOutcome::Reverted) => {
+                                "Claim reverted — nothing claimable?".to_string()
+                            }
+                            Ok(ReceiptOutcome::Pending) => {
+                                format!("Claim pending — tx {} not yet mined", short_hash(&tx))
+                            }
+                            Err(e) => format!("Receipt poll failed: {}", e),
+                        };
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_clipboard_toast(final_msg.into());
                                 }
                             }
                         });
@@ -3278,47 +3420,19 @@ fn main() {
                         }
                     });
 
-                    // Poll for receipt (up to 40s at 2s interval).
-                    let config = core.config.read().await;
-                    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
-                    drop(config);
-                    let client = reqwest::Client::new();
-                    let mut confirmed = false;
-                    let mut failed_reason: Option<String> = None;
-                    for _ in 0..20 {
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        let body = serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "method": "eth_getTransactionReceipt",
-                            "params": [&tx_hash],
-                            "id": 1,
-                        });
-                        if let Ok(resp) = client.post(&rpc_url).json(&body).send().await {
-                            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                                if let Some(result) = json.get("result") {
-                                    if !result.is_null() {
-                                        let status = result["status"].as_str().unwrap_or("0x0");
-                                        if status == "0x1" {
-                                            confirmed = true;
-                                        } else {
-                                            failed_reason = Some(
-                                                "Transaction reverted — check MIN_PROVIDER_STAKE and supportedModels"
-                                                    .to_string(),
-                                            );
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
+                    // Poll for receipt (up to 40s). T1-1 shared helper.
+                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    let final_msg = match poll_tx_receipt(&rpc_url, &tx_hash).await {
+                        Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                            format!("Registered — provider active (block {})", block_number)
                         }
-                    }
-
-                    let final_msg = if confirmed {
-                        "Registered — provider active".to_string()
-                    } else if let Some(r) = failed_reason {
-                        format!("Registration failed: {}", r)
-                    } else {
-                        format!("Registration pending — tx {} not yet mined", short_hash(&tx_hash))
+                        Ok(ReceiptOutcome::Reverted) => {
+                            "Registration reverted — check MIN_PROVIDER_STAKE and supportedModels".to_string()
+                        }
+                        Ok(ReceiptOutcome::Pending) => {
+                            format!("Registration pending — tx {} not yet mined", short_hash(&tx_hash))
+                        }
+                        Err(e) => format!("Receipt poll failed: {}", e),
                     };
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
@@ -3410,11 +3524,34 @@ fn main() {
                     tracing::info!("Compute: claimRewards tx={}", tx);
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
+                        let tx = tx.clone();
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_clipboard_toast(
                                     format!("Claim submitted — tx {}", short_hash(&tx)).into(),
                                 );
+                            }
+                        }
+                    });
+                    // T1-1: poll receipt and update the toast
+                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
+                        Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                            format!("Claim confirmed in block {}", block_number)
+                        }
+                        Ok(ReceiptOutcome::Reverted) => {
+                            "Claim reverted — nothing to claim?".to_string()
+                        }
+                        Ok(ReceiptOutcome::Pending) => {
+                            format!("Claim pending — tx {} not yet mined", short_hash(&tx))
+                        }
+                        Err(e) => format!("Receipt poll failed: {}", e),
+                    };
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_clipboard_toast(final_msg.into());
                             }
                         }
                     });

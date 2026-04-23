@@ -11,6 +11,9 @@ export component SendDialog inherits Rectangle {
     in property <string> error-message: "";
     in property <bool> sending: false;
     in property <string> tx-hash: "";
+    // T1-1: live receipt outcome — updates from "Submitted — waiting…"
+    // to "Confirmed in block 0x…" (or Reverted / Pending / poll error).
+    in property <string> receipt-status: "";
     in-out property <bool> confirming: false;
 
     callback send(/* to */ string, /* amount */ string, /* password */ string);
@@ -73,7 +76,21 @@ export component SendDialog inherits Rectangle {
                         padding: Theme.space-md;
                         spacing: 2px;
                         Text { text: "Transaction Hash"; color: Theme.text-muted; font-size: 10px; }
-                        Text { text: root.tx-hash; color: Theme.text; font-size: 11px; overflow: elide; }
+                        Text { text: root.tx-hash; color: Theme.text; font-size: 11px; font-family: Theme.font-mono; overflow: elide; }
+                    }
+                }
+
+                // T1-1: receipt poll status. Empty initially, then cycles
+                // "waiting…" → "Confirmed in block N" (or Reverted / Pending).
+                if root.receipt-status != "" : Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-tertiary;
+                    min-height: 36px;
+                    VerticalLayout {
+                        padding: Theme.space-sm;
+                        spacing: 2px;
+                        Text { text: "Receipt"; color: Theme.text-muted; font-size: 10px; }
+                        Text { text: root.receipt-status; color: Theme.text; font-size: 11px; wrap: word-wrap; }
                     }
                 }
 

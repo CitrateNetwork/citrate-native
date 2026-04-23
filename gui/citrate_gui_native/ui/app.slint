@@ -167,6 +167,9 @@ export component App inherits Window {
     in property <string> send-tx-hash: "";
     in property <string> send-error: "";
     in property <bool> send-sending: false;
+    // T1-1: receipt-poll outcome. "" when idle, set to "confirmed",
+    // "reverted", "pending" (or an error) after the background poll.
+    in property <string> send-receipt-status: "";
     callback wallet-send(/* to */ string, /* amount */ string, /* password */ string);
     callback wallet-send-close;
     callback wallet-lock-clicked;
@@ -673,6 +676,7 @@ export component App inherits Window {
         tx-hash: root.send-tx-hash;
         error-message: root.send-error;
         sending: root.send-sending;
+        receipt-status: root.send-receipt-status;
         send(to, amount, password) => { root.wallet-send(to, amount, password); }
         close => {
             root.show-send-dialog = false;
