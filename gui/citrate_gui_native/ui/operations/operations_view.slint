@@ -124,13 +124,14 @@ export component OperationsView inherits Rectangle {
                     Rectangle {
                         width: 110px; height: 36px;
                         border-radius: Theme.radius-md;
-                        background: pause-ta.has-hover ? Theme.warning.darker(0.2) : Theme.warning.darker(0.4);
+                        // Dark amber bg so white text reads cleanly
+                        background: pause-ta.has-hover ? #3a2a0a : #2a1f0a;
                         border-width: 1px;
                         border-color: Theme.warning;
                         animate background { duration: 120ms; }
                         Text {
                             text: root.chain-paused ? "Resume chain" : "Pause chain";
-                            color: Theme.text; font-size: 12px; font-weight: 600;
+                            color: Theme.warning; font-size: 12px; font-weight: 600;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                         pause-ta := TouchArea {

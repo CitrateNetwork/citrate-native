@@ -1296,19 +1296,46 @@ fn main() {
         }
 
         if tab_str == "compute" {
+            // Immediate probe so the Register button enables without
+            // waiting for the 30s polling tick. Fetches both the
+            // contract-address lookup AND the live getProvider call
+            // so is-registered flips correctly on first paint.
             let ui_w = ui_w.clone();
             let core = core.clone();
             spawn_async(&rt_h, async move {
-                // Determine contract status based on provider count query
-                let status = match core.compute.list_providers().await {
-                    Ok(providers) => {
-                        if providers.is_empty() { "empty" } else { "live" }
-                    }
-                    Err(_) => "not-deployed",
+                let chain_id = core.config.read().await.chain_id;
+                let rpc_port = core.config.read().await.rpc_port;
+                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let market_addr = marketplace_client::compute_marketplace_address(chain_id);
+                let accounts = core.wallet.list_accounts().await;
+                let self_addr = accounts.first().map(|a| a.address.clone());
+
+                let status = if market_addr.is_some() {
+                    "Marketplace live"
+                } else {
+                    "Marketplace not deployed on this network"
                 };
+
+                // Also read isRegistered so the button flips immediately.
+                let is_registered: bool = if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
+                    if let Some(data) = marketplace_client::encode_get_provider(addr) {
+                        match marketplace_client::eth_call(&rpc_url, m, &data).await {
+                            Ok(r) => marketplace_client::decode_provider_profile(&r)
+                                .map(|p| p.is_registered)
+                                .unwrap_or(false),
+                            Err(_) => false,
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {
                         ui.set_compute_contract_status(status.into());
+                        ui.set_compute_is_registered(is_registered);
                     }
                 });
             });
@@ -1746,6 +1773,7 @@ fn main() {
                             ui.set_compute_contract_status("Marketplace live".into());
                             if let Some(p) = provider {
                                 ui.set_compute_active_jobs(p.current_active_jobs as i32);
+                                ui.set_compute_is_registered(p.is_registered);
                                 let status = if p.is_registered {
                                     format!(
                                         "Registered · {} SALT staked · {} completed / {} failed · {} bps rep",
@@ -1759,6 +1787,7 @@ fn main() {
                                 };
                                 ui.set_compute_provider_status(status.into());
                             } else {
+                                ui.set_compute_is_registered(false);
                                 ui.set_compute_provider_status("Query failed — retry in 30s".into());
                             }
                             if let Some(wei) = claimable_wei {
