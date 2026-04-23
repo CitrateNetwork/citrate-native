@@ -617,6 +617,38 @@ fn short_hash(hex: &str) -> String {
     format!("0x{}…{}", &s[..6], &s[s.len() - 4..])
 }
 
+/// Compute the RPC URL the wallet and receipt-polling helpers should use
+/// for the current environment. Devnet targets the GUI's embedded node on
+/// `rpc_port` (localhost); anything else targets the remote testnet RPC.
+/// Keeping this in one place prevents the tx-submission vs. receipt-poll
+/// port-mismatch bug (submit to 8545, poll on 18545, wonder why receipts
+/// never arrive).
+fn active_rpc_url(cfg: &citrate_desktop_app::AppConfig) -> String {
+    match cfg.network.as_str() {
+        "devnet" => format!("http://127.0.0.1:{}", cfg.rpc_port),
+        _ => "https://rpc.citrate.ai".to_string(),
+    }
+}
+
+/// Format session-remaining seconds as a short, unambiguous human-readable
+/// string that fits the 60px session pill. Must always lead with a time
+/// unit (`h` / `m` / `s`) so users can't misread a raw number as an
+/// unrelated value — previous `MM:SS` format produced strings like
+/// "479:59" that some users interpreted as "locked for X hours".
+fn format_session_remaining(total_secs: i64) -> String {
+    let s = total_secs.max(0);
+    let hours = s / 3600;
+    let mins = (s % 3600) / 60;
+    let secs = s % 60;
+    if hours > 0 {
+        format!("{}h{:02}m", hours, mins)
+    } else if mins > 0 {
+        format!("{}m{:02}s", mins, secs)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
 fn wei_str_to_salt(wei: &str) -> String {
     let w = wei.trim();
     let bytes: Option<u128> = if let Some(hex) = w.strip_prefix("0x").or_else(|| w.strip_prefix("0X")) {
@@ -674,6 +706,34 @@ fn main() {
         }
     };
     let app_core = Arc::new(AppCore::new());
+
+    // Hydrate the in-memory account list from the on-disk keystore BEFORE
+    // we inspect `is_first_run`. Without this, every restart looks like a
+    // brand-new install: the service's `self.accounts` starts empty, so
+    // `is_first_run()` returns true, onboarding fires again, and existing
+    // wallets are invisible. `AppCore::start()` does this wiring, but the
+    // native GUI boots through a different path, so we load here directly.
+    if let Err(e) = rt.block_on(app_core.wallet.load_from_disk()) {
+        tracing::warn!("wallet load_from_disk failed: {}", e);
+    }
+
+    // Align the wallet's RPC URL with the effective environment BEFORE any
+    // tx is submitted. Without this, the wallet uses its default
+    // (https://rpc.citrate.ai) but the GUI's receipt-polling helpers hit
+    // http://127.0.0.1:<embedded-port>. Mismatched URLs produce the
+    // classic "rpc transport: error sending request" after a successful
+    // submission because the receipt lives on whichever node accepted
+    // the tx — not on the arbitrary port the poller defaulted to.
+    {
+        let cfg = rt.block_on(app_core.config.read());
+        let rpc_url = active_rpc_url(&cfg);
+        app_core.wallet.set_rpc_url(&rpc_url);
+        app_core.wallet.set_chain_id(cfg.chain_id);
+        tracing::info!(
+            "Wallet RPC aligned: network={}, chain_id={}, rpc={}",
+            cfg.network, cfg.chain_id, rpc_url,
+        );
+    }
     let is_first_run = rt.block_on(app_core.wallet.is_first_run());
 
     // P960-J: start the MCP host so external agent runtimes (Hermes)
@@ -700,8 +760,18 @@ fn main() {
         }
     };
 
-    // Initial state — derive environment label from loaded config, not hardcoded
+    // Initial state — derive environment label from loaded config, not hardcoded.
+    //
+    // Three startup modes:
+    //   1. First run       → onboarding (create/import a wallet).
+    //   2. Returning user  → lock screen (wallet exists on disk, in-memory
+    //                        keys were dropped when the previous process
+    //                        exited). Without this the user lands on the
+    //                        main tabs with a locked 🔒 wallet and no
+    //                        prompt to unlock — they can't transact.
+    //   3. Session active  → dashboard. Reached by completing case 1 or 2.
     ui.set_show_onboarding(is_first_run);
+    ui.set_show_lock_screen(!is_first_run);
     ui.set_active_tab("dashboard".into());
     {
         let config = rt.block_on(app_core.config.read());
@@ -749,6 +819,7 @@ fn main() {
                     // Refresh account list after creation
                     let accounts = core.wallet.list_accounts().await;
                     let checksummed = eip55_checksum(&result.address);
+                    let session_initial = format_session_remaining(SESSION_TIMEOUT_SECS);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_onboarding_mnemonic(result.mnemonic.into());
@@ -757,6 +828,13 @@ fn main() {
                             ui.set_onboarding_step(2);
                             ui.set_wallet_selected_address(checksummed.into());
                             ui.set_wallet_selected_label("Default".into());
+                            // Immediately reflect the unlocked session so the
+                            // wallet panel doesn't show 🔒 for up to 3s
+                            // while the background tick catches up. Users
+                            // interpreted the gap as "wallet is locked" and
+                            // couldn't proceed to list/stake.
+                            ui.set_wallet_session_active(true);
+                            ui.set_wallet_session_remaining(session_initial.into());
                             push_accounts_to_ui(&ui, &accounts);
                         }
                     });
@@ -987,7 +1065,8 @@ fn main() {
                     });
                     // T1-1: poll the receipt so the user sees confirmed/reverted/pending
                     // instead of just a hash and a prayer.
-                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    // Poll the same node the wallet submitted to.
+                    let rpc_url = core.wallet.get_rpc_url();
                     let final_msg = match poll_tx_receipt(&rpc_url, &hash).await {
                         Ok(ReceiptOutcome::Confirmed { block_number }) => {
                             format!("Confirmed in block {}", block_number)
@@ -1056,11 +1135,13 @@ fn main() {
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
                     SESSION_UNLOCK_EPOCH.store(now, Ordering::Relaxed);
+                    let session_initial = format_session_remaining(SESSION_TIMEOUT_SECS);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_show_lock_screen(false);
                             ui.set_lock_error("".into());
                             ui.set_wallet_session_active(true);
+                            ui.set_wallet_session_remaining(session_initial.into());
                         }
                     });
                 }
@@ -1481,12 +1562,17 @@ fn main() {
                 let (session_active, session_remaining) = {
                     let unlock_epoch = SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed);
                     if unlock_epoch > 0 {
-                        let elapsed = now_secs as i64 - unlock_epoch;
-                        let remaining = SESSION_TIMEOUT_SECS - elapsed;
+                        let elapsed = (now_secs as i64).saturating_sub(unlock_epoch);
+                        // Guard against clock skew producing negative elapsed
+                        // (which previously yielded huge remaining values the
+                        // user read as "locked for 425 hrs"). Clamp to
+                        // [0, SESSION_TIMEOUT_SECS] so the display is always
+                        // sensible even if the clock jumps.
+                        let elapsed = elapsed.max(0);
+                        let remaining = (SESSION_TIMEOUT_SECS - elapsed)
+                            .clamp(0, SESSION_TIMEOUT_SECS);
                         if remaining > 0 {
-                            let mins = remaining / 60;
-                            let secs = remaining % 60;
-                            (true, format!("{}:{:02}", mins, secs))
+                            (true, format_session_remaining(remaining))
                         } else {
                             // T1-3: session timed out. Clear the GUI
                             // clock AND lock the backend so the next
@@ -1955,97 +2041,102 @@ fn main() {
                     }
                 }
 
-                // T2-4: DAG stats poll. Every 30s when DAG tab is open.
-                // Calls citrate_getDagStats (custom RPC at eth_rpc.rs:2034)
-                // which returns tips, height, blue_score, etc.
-                if tick_counter % 10 == 0 {
-                    let active_tab = ui_handle.upgrade()
-                        .map(|ui| ui.get_active_tab().to_string());
-                    if active_tab.as_deref() == Some("dag") {
-                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
-                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
-                        let body = serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "method": "citrate_getDagStats",
-                            "params": [],
-                            "id": 1,
-                        });
-                        let client = reqwest::Client::new();
-                        let stats = rt_handle.block_on(async {
-                            client.post(&rpc_url)
-                                .json(&body)
-                                .timeout(std::time::Duration::from_secs(2))
-                                .send().await
-                                .ok()?
-                                .json::<serde_json::Value>().await.ok()
-                        });
-                        if let Some(stats) = stats {
-                            let tips_count = stats.get("result")
-                                .and_then(|r| r.get("tips"))
-                                .and_then(|t| t.as_array())
-                                .map(|a| a.len() as i32)
-                                .unwrap_or(0);
-                            let blue_score = stats.get("result")
-                                .and_then(|r| r.get("blue_score"))
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as i32;
-                            let height = stats.get("result")
-                                .and_then(|r| r.get("height"))
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as i32;
-                            let ui_h = ui_handle.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_h.upgrade() {
-                                    ui.set_dag_tips_count(tips_count);
-                                    ui.set_dag_blue_score(blue_score);
-                                    ui.set_dag_finalized_height(height);
-                                }
-                            });
-                        }
+                // DAG panel data — two independent cadences:
+                //  * dots (scatter) — refresh on EVERY tick (3s) when DAG
+                //    tab is open, because it's just a local RocksDB read
+                //    and users were complaining the viz didn't appear for
+                //    up to 30s after opening the tab.
+                //  * stats (getDagStats RPC) — every 30s, unchanged.
+                let dag_active = ui_handle.upgrade()
+                    .map(|ui| ui.get_active_tab().to_string())
+                    .as_deref() == Some("dag");
 
-                        // T2-13: compute DAG mini-viz dots from recent
-                        // blocks. Normalized x ∈ [0,1] by height
-                        // position, y ∈ [0,1] by (blue_score - min) /
-                        // (max - min). Last block is flagged as tip.
-                        let recent = rt_handle.block_on(core.node.get_recent_blocks(30))
-                            .unwrap_or_default();
-                        if !recent.is_empty() {
-                            let min_h = recent.iter().map(|b| b.height).min().unwrap_or(0);
-                            let max_h = recent.iter().map(|b| b.height).max().unwrap_or(1).max(min_h + 1);
-                            let min_b = recent.iter().map(|b| b.blue_score).min().unwrap_or(0);
-                            let max_b = recent.iter().map(|b| b.blue_score).max().unwrap_or(1).max(min_b + 1);
-                            let h_range = (max_h - min_h) as f32;
-                            let b_range = (max_b - min_b) as f32;
-                            let tip_height = max_h;
-                            let dots: Vec<DagDotData> = recent.iter().map(|b| {
-                                let x = if h_range > 0.0 {
-                                    (b.height - min_h) as f32 / h_range
-                                } else { 0.5 };
-                                let y = if b_range > 0.0 {
-                                    (b.blue_score - min_b) as f32 / b_range
-                                } else { 0.5 };
-                                let short = if b.hash.len() > 12 {
-                                    format!("{}…{}", &b.hash[..6], &b.hash[b.hash.len()-4..])
-                                } else {
-                                    b.hash.clone()
-                                };
-                                DagDotData {
-                                    height: b.height as i32,
-                                    hash_short: short.into(),
-                                    x,
-                                    y,
-                                    tx_count: b.tx_count as i32,
-                                    is_tip: b.height == tip_height,
-                                }
-                            }).collect();
-                            let ui_h = ui_handle.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_h.upgrade() {
-                                    let model = std::rc::Rc::new(slint::VecModel::from(dots));
-                                    ui.set_dag_dots(model.into());
-                                }
-                            });
-                        }
+                if dag_active {
+                    // T2-13: compute DAG mini-viz dots from recent blocks.
+                    // Normalized x ∈ [0,1] by height position, y ∈ [0,1]
+                    // by (blue_score - min) / (max - min). Tip highlighted.
+                    let recent = rt_handle.block_on(core.node.get_recent_blocks(30))
+                        .unwrap_or_default();
+                    if !recent.is_empty() {
+                        let min_h = recent.iter().map(|b| b.height).min().unwrap_or(0);
+                        let max_h = recent.iter().map(|b| b.height).max().unwrap_or(1).max(min_h + 1);
+                        let min_b = recent.iter().map(|b| b.blue_score).min().unwrap_or(0);
+                        let max_b = recent.iter().map(|b| b.blue_score).max().unwrap_or(1).max(min_b + 1);
+                        let h_range = (max_h - min_h) as f32;
+                        let b_range = (max_b - min_b) as f32;
+                        let tip_height = max_h;
+                        let dots: Vec<DagDotData> = recent.iter().map(|b| {
+                            let x = if h_range > 0.0 {
+                                (b.height - min_h) as f32 / h_range
+                            } else { 0.5 };
+                            let y = if b_range > 0.0 {
+                                (b.blue_score - min_b) as f32 / b_range
+                            } else { 0.5 };
+                            let short = if b.hash.len() > 12 {
+                                format!("{}…{}", &b.hash[..6], &b.hash[b.hash.len()-4..])
+                            } else {
+                                b.hash.clone()
+                            };
+                            DagDotData {
+                                height: b.height as i32,
+                                hash_short: short.into(),
+                                x,
+                                y,
+                                tx_count: b.tx_count as i32,
+                                is_tip: b.height == tip_height,
+                            }
+                        }).collect();
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                let model = std::rc::Rc::new(slint::VecModel::from(dots));
+                                ui.set_dag_dots(model.into());
+                            }
+                        });
+                    }
+                }
+
+                // T2-4: DAG stats RPC — every 30s when tab is open.
+                if dag_active && tick_counter % 10 == 0 {
+                    let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
+                    let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                    let body = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "citrate_getDagStats",
+                        "params": [],
+                        "id": 1,
+                    });
+                    let client = reqwest::Client::new();
+                    let stats = rt_handle.block_on(async {
+                        client.post(&rpc_url)
+                            .json(&body)
+                            .timeout(std::time::Duration::from_secs(2))
+                            .send().await
+                            .ok()?
+                            .json::<serde_json::Value>().await.ok()
+                    });
+                    if let Some(stats) = stats {
+                        let tips_count = stats.get("result")
+                            .and_then(|r| r.get("tips"))
+                            .and_then(|t| t.as_array())
+                            .map(|a| a.len() as i32)
+                            .unwrap_or(0);
+                        let blue_score = stats.get("result")
+                            .and_then(|r| r.get("blue_score"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i32;
+                        let height = stats.get("result")
+                            .and_then(|r| r.get("height"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as i32;
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_h.upgrade() {
+                                ui.set_dag_tips_count(tips_count);
+                                ui.set_dag_blue_score(blue_score);
+                                ui.set_dag_finalized_height(height);
+                            }
+                        });
                     }
                 }
             }
@@ -2109,12 +2200,26 @@ fn main() {
                     tracing::info!("Imported account: {}", result.address);
                     let addr = eip55_checksum(&result.address);
                     let accounts = core.wallet.list_accounts().await;
+                    // Activate the GUI session clock. Previously, import
+                    // set the backend session active (inside import_from_mnemonic)
+                    // but left SESSION_UNLOCK_EPOCH at 0, so the wallet pill
+                    // kept showing 🔒 and the background tick never flipped
+                    // session_active true — users couldn't list/stake after
+                    // importing a wallet.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    SESSION_UNLOCK_EPOCH.store(now, Ordering::Relaxed);
+                    let session_initial = format_session_remaining(SESSION_TIMEOUT_SECS);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_wallet_selected_address(addr.into());
                             ui.set_wallet_selected_label("Imported Account".into());
                             push_accounts_to_ui(&ui, &accounts);
                             ui.set_wallet_import_error("".into());
+                            ui.set_wallet_session_active(true);
+                            ui.set_wallet_session_remaining(session_initial.into());
                         }
                     });
                 }
@@ -2576,12 +2681,18 @@ fn main() {
                                 } else {
                                     match node.get_balance(&addr_owned).await {
                                         Ok(balance_wei) => {
-                                            // Convert wei string to SALT (18 decimals)
+                                            // Convert wei string to SALT (18 decimals).
+                                            // We deliberately do NOT return the raw wei string
+                                            // to the LLM — it has consistently confused wei
+                                            // (10^18 base) with SALT or Gwei and reported
+                                            // balances off by 10^9 or 10^18. The only unit
+                                            // the chat surface should reason about is SALT.
                                             let salt = wei_str_to_salt(&balance_wei);
                                             Ok(serde_json::json!({
                                                 "address": addr_owned,
-                                                "balance_wei": balance_wei,
                                                 "balance_salt": salt,
+                                                "unit": "SALT",
+                                                "display": format!("{} SALT", salt),
                                             }).to_string())
                                         }
                                         Err(e) => Err(format!("get_balance failed: {}", e)),
@@ -2620,16 +2731,21 @@ fn main() {
                                     .and_then(|v| v.as_str())
                                     .ok_or_else(|| "Missing 'tx_hash'".to_string())?;
                                 match blocks.get_transaction(tx_hash).await {
-                                    Ok(tx) => Ok(serde_json::json!({
-                                        "hash": tx.hash,
-                                        "from": tx.from,
-                                        "to": tx.to,
-                                        "value_wei": tx.value,
-                                        "value_salt": wei_str_to_salt(&tx.value),
-                                        "status": tx.status,
-                                        "block_height": tx.block_height,
-                                        "tx_type": tx.tx_type,
-                                    }).to_string()),
+                                    Ok(tx) => {
+                                        // Only expose SALT-denominated value to the LLM.
+                                        // Raw wei consistently confuses the model (off by 10^9 or 10^18).
+                                        let salt = wei_str_to_salt(&tx.value);
+                                        Ok(serde_json::json!({
+                                            "hash": tx.hash,
+                                            "from": tx.from,
+                                            "to": tx.to,
+                                            "value_salt": salt,
+                                            "unit": "SALT",
+                                            "status": tx.status,
+                                            "block_height": tx.block_height,
+                                            "tx_type": tx.tx_type,
+                                        }).to_string())
+                                    }
                                     Err(e) => Err(format!("tx not found: {}", e)),
                                 }
                             }
@@ -2832,11 +2948,17 @@ fn main() {
             core.config.read().await.network.clone()
         });
         spawn_async(&rt_h, async move {
-            // Set chat context with real wallet state
+            // Set chat context with real wallet state.
+            // The chat system prompt formats this as "Balance: {} SALT",
+            // so convert raw grains (wei from eth_getBalance) to SALT
+            // BEFORE handing it to the LLM — otherwise the model sees a
+            // 25-digit integer and reports it verbatim (the chat-balance
+            // "18 trailing zeros" bug).
             let address = core.wallet.get_primary_address().await
                 .unwrap_or_else(|| "not connected".to_string());
-            let balance = core.node.get_balance(&address).await
+            let grains = core.node.get_balance(&address).await
                 .unwrap_or_else(|_| "0".to_string());
+            let balance = citrate_wallet_core::format::grains_str_to_salt(&grains);
             let height = core.node.get_status().await.block_height;
             core.chat.set_context(&address, &balance, &config_network, height).await;
 
@@ -2857,8 +2979,10 @@ fn main() {
                     ticker.tick().await;
                     let addr = core_ctx.wallet.get_primary_address().await
                         .unwrap_or_else(|| "not connected".to_string());
-                    let bal = core_ctx.node.get_balance(&addr).await
+                    let grains = core_ctx.node.get_balance(&addr).await
                         .unwrap_or_else(|_| "0".to_string());
+                    // Convert grains → SALT here (same reason as above).
+                    let bal = citrate_wallet_core::format::grains_str_to_salt(&grains);
                     let h = core_ctx.node.get_status().await.block_height;
                     core_ctx.chat.set_context(&addr, &bal, &ctx_network, h).await;
                 }
@@ -3450,9 +3574,11 @@ fn main() {
             // Update wallet runtime to match new environment
             // This ensures signed transactions use the correct chain ID AND RPC target
             core.wallet.set_chain_id(new_chain_id);
-            let rpc_url = match lower.as_str() {
-                "devnet" => "http://127.0.0.1:8545".to_string(),
-                _ => "https://rpc.citrate.ai".to_string(),
+            let rpc_url = {
+                // Re-read so the `rpc_port` we pass to active_rpc_url
+                // reflects any edits the network switch just made.
+                let cfg = core.config.read().await;
+                active_rpc_url(&cfg)
             };
             core.wallet.set_rpc_url(&rpc_url);
             tracing::info!("Wallet updated: chain_id={}, rpc={} for {}", new_chain_id, rpc_url, lower);
@@ -3555,8 +3681,8 @@ fn main() {
                                 }
                             }
                         });
-                        // T1-1: poll receipt
-                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        // T1-1: poll receipt on the same node the wallet submitted to.
+                        let rpc_url = core.wallet.get_rpc_url();
                         let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
                             Ok(ReceiptOutcome::Confirmed { block_number }) => {
                                 format!("Joined pool {} (block {})", pool_id, block_number)
@@ -3629,8 +3755,8 @@ fn main() {
                                 }
                             }
                         });
-                        // T1-1: poll receipt
-                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        // T1-1: poll receipt on the same node the wallet submitted to.
+                        let rpc_url = core.wallet.get_rpc_url();
                         let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
                             Ok(ReceiptOutcome::Confirmed { block_number }) => {
                                 format!("Left pool {} (block {})", pool_id, block_number)
@@ -3704,8 +3830,8 @@ fn main() {
                                 }
                             }
                         });
-                        // T1-1: poll receipt
-                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        // T1-1: poll receipt on the same node the wallet submitted to.
+                        let rpc_url = core.wallet.get_rpc_url();
                         let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
                             Ok(ReceiptOutcome::Confirmed { block_number }) => {
                                 format!("Claim confirmed in block {}", block_number)
@@ -3805,8 +3931,8 @@ fn main() {
                 {
                     Ok(tx) => {
                         tracing::info!("Learning: createPool tx={}", tx);
-                        // Poll receipt — same helper used everywhere else.
-                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        // Poll receipt on the same node the wallet submitted to.
+                        let rpc_url = core.wallet.get_rpc_url();
                         let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
                             Ok(ReceiptOutcome::Confirmed { block_number }) => {
                                 format!("Pool created in block {} — closing dialog", block_number)
@@ -3910,7 +4036,14 @@ fn main() {
                                 ui.set_edu_vault_paused(status.is_paused);
                                 ui.set_edu_vault_threshold(status.threshold as i32);
                                 ui.set_edu_vault_signer_count(status.signer_count as i32);
-                                ui.set_edu_vault_balance(status.balance_wei.into());
+                                // Grain → SALT at the UI boundary. The
+                                // `balance_wei` field is raw grains from
+                                // InstitutionalVault.getBalance(); users
+                                // should see "10 SALT", not a 19-digit wei.
+                                let vault_salt = citrate_wallet_core::format::grains_str_to_salt(
+                                    &status.balance_wei,
+                                );
+                                ui.set_edu_vault_balance(vault_salt.into());
                             }
                         });
                     }
@@ -4073,7 +4206,8 @@ fn main() {
                     });
 
                     // Poll for receipt (up to 40s). T1-1 shared helper.
-                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    // Poll the same node the wallet submitted to.
+                    let rpc_url = core.wallet.get_rpc_url();
                     let final_msg = match poll_tx_receipt(&rpc_url, &tx_hash).await {
                         Ok(ReceiptOutcome::Confirmed { block_number }) => {
                             format!("Registered — provider active (block {})", block_number)
@@ -4185,8 +4319,8 @@ fn main() {
                             }
                         }
                     });
-                    // T1-1: poll receipt and update the toast
-                    let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                    // T1-1: poll receipt on the same node the wallet submitted to.
+                    let rpc_url = core.wallet.get_rpc_url();
                     let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
                         Ok(ReceiptOutcome::Confirmed { block_number }) => {
                             format!("Claim confirmed in block {}", block_number)
