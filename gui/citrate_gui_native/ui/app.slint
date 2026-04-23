@@ -155,6 +155,7 @@ export component App inherits Window {
     in property <string> compute-earned: "0";
     in property <string> compute-provider-status: "Not registered";
     in property <string> compute-contract-status: "unknown";
+    in property <bool>   compute-is-registered: false;
 
     // P960-D WP-D.1: detected hardware card
     in property <string> compute-hw-cpu: "—";
@@ -621,6 +622,7 @@ export component App inherits Window {
                     total-compute-earned: root.compute-earned;
                     provider-status: root.compute-provider-status;
                     contract-status: root.compute-contract-status;
+                    is-registered: root.compute-is-registered;
 
                     hw-summary: (root.compute-hw-has-gpu
                         ? (root.compute-hw-gpu-name + " · " + root.compute-hw-gpu-vram-gb + " GB VRAM · " + root.compute-hw-cpu-cores + " cores · " + root.compute-hw-ram-gb + " GB RAM")

@@ -38,6 +38,9 @@ export component ComputeView inherits Rectangle {
     in property <string> provider-status: "Not registered";
     in property <string> total-compute-earned: "0";
     in property <string> contract-status: "unknown";
+    // Real isRegistered flag from ComputeMarketplace.getProvider().
+    // Drives button text/color flip — "List on marketplace" → "✓ Listed".
+    in property <bool> is-registered: false;
 
     // Callbacks
     callback settings-changed;   // emitted after enabled / allocation / schedule change
@@ -348,7 +351,9 @@ export component ComputeView inherits Rectangle {
                             border-radius: 11px;
                             background: root.contract-status == "Marketplace live"
                                 ? Theme.success.darker(0.3)
-                                : Theme.warning.darker(0.3);
+                                : #2a1f0a;
+                            border-width: root.contract-status == "Marketplace live" ? 0 : 1px;
+                            border-color: Theme.warning;
                             Text {
                                 text: root.contract-status == "Marketplace live"
                                     ? "● live"
@@ -396,31 +401,42 @@ export component ComputeView inherits Rectangle {
                         }
 
                         // Register — live when the marketplace is deployed on
-                        // this network. Disabled with a tooltip when not.
+                        // this network. Label flips to "✓ Listed" once
+                        // getProvider().isRegistered is true, so operators
+                        // know they're already on the marketplace.
                         Rectangle {
-                            width: 140px; height: 32px;
+                            width: 180px; height: 32px;
                             border-radius: Theme.radius-md;
-                            background: root.contract-status == "Marketplace live"
-                                ? (reg-ta.has-hover ? Theme.accent-hover : Theme.accent)
-                                : Theme.bg-tertiary;
+                            background: root.contract-status != "Marketplace live"
+                                ? Theme.bg-tertiary
+                                : (root.is-registered
+                                    ? Theme.success.darker(0.2)
+                                    : (reg-ta.has-hover ? Theme.accent-hover : Theme.accent));
                             border-width: 1px;
-                            border-color: Theme.border;
+                            border-color: root.is-registered
+                                ? Theme.success : Theme.border;
                             opacity: root.contract-status == "Marketplace live" ? 1.0 : 0.55;
                             animate background { duration: 120ms; }
 
                             Text {
-                                text: "Register provider";
-                                color: root.contract-status == "Marketplace live"
-                                    ? #000000 : Theme.text-muted;
+                                text: root.is-registered
+                                    ? "✓ Listed on marketplace"
+                                    : "List on marketplace (1000 SALT)";
+                                color: root.contract-status != "Marketplace live"
+                                    ? Theme.text-muted
+                                    : (root.is-registered
+                                        ? Theme.text : #000000);
                                 font-size: 11px;
                                 font-weight: 600;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
+                                overflow: elide;
                             }
 
                             reg-ta := TouchArea {
                                 mouse-cursor: pointer;
-                                enabled: root.contract-status == "Marketplace live";
+                                enabled: root.contract-status == "Marketplace live"
+                                    && !root.is-registered;
                                 clicked => { root.register-provider(); }
                             }
                         }
@@ -459,7 +475,8 @@ export component ComputeView inherits Rectangle {
                     if root.contract-status != "Marketplace live" : Rectangle {
                         height: 48px;
                         border-radius: Theme.radius-md;
-                        background: Theme.warning.darker(0.4);
+                        // Dark amber bg so white text reads cleanly
+                        background: #2a1f0a;
                         border-width: 1px;
                         border-color: Theme.warning;
 

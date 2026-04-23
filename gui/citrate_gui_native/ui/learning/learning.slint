@@ -73,7 +73,9 @@ export component LearningView inherits Rectangle {
                     border-radius: 11px;
                     background: root.contract-status == "LearningPool live"
                         ? Theme.success.darker(0.3)
-                        : Theme.warning.darker(0.3);
+                        : #2a1f0a;
+                    border-width: root.contract-status == "LearningPool live" ? 0 : 1px;
+                    border-color: Theme.warning;
                     Text {
                         text: root.contract-status == "LearningPool live"
                             ? "● live · " + root.pool-count + " pools"
@@ -92,7 +94,10 @@ export component LearningView inherits Rectangle {
             if root.contract-status != "LearningPool live" : Rectangle {
                 height: 48px;
                 border-radius: Theme.radius-md;
-                background: Theme.warning.darker(0.4);
+                // Dark amber-tinted bg + yellow border + white text
+                // reads as "warning accent" rather than a yellow wall.
+                // darker(0.4) was too light to read white on.
+                background: #2a1f0a;
                 border-width: 1px;
                 border-color: Theme.warning;
                 HorizontalLayout {
@@ -430,6 +435,30 @@ export component LearningView inherits Rectangle {
                     claim-ta := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.claim-earnings(); }
+                    }
+                }
+
+                // T2-9 persistent: "+ New pool" always available when
+                // contract is live, regardless of whether pools exist.
+                // Anyone can create a new pool, not just the first
+                // operator into an empty network.
+                if root.contract-status == "LearningPool live" : Rectangle {
+                    horizontal-stretch: 1;
+                    height: 40px;
+                    border-radius: Theme.radius-md;
+                    background: new-ta.has-hover ? Theme.bg-tertiary : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.accent;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "+ New pool (1000 SALT)";
+                        color: Theme.accent; font-size: 13px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    new-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-create-pool(); }
                     }
                 }
             }
