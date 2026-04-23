@@ -7,7 +7,7 @@ import { LockScreen } from "shell/lock_screen.slint";
 import { Dashboard } from "dashboard/dashboard.slint";
 import { WalletView, AccountData, TxData } from "wallet/wallet.slint";
 import { SettingsView } from "settings/settings.slint";
-import { DagExplorer } from "dag/dag_explorer.slint";
+import { DagExplorer, DagDotData } from "dag/dag_explorer.slint";
 import { SendDialog } from "wallet/send_dialog.slint";
 import { ChatView, ChatMessageData } from "chat/chat.slint";
 import { ModelsView } from "models/models.slint";
@@ -90,6 +90,8 @@ export component App inherits Window {
     in property <int> dag-tips-count: 0;
     in property <int> dag-blue-score: 0;
     in property <int> dag-finalized-height: 0;
+    // T2-13: mini-viz scatter dots — Rust computes x/y normalized
+    in property <[DagDotData]> dag-dots: [];
     in property <string> wallet-selected-address: "";
     in property <string> wallet-selected-label: "";
     in property <string> wallet-selected-balance: "0";
@@ -107,7 +109,7 @@ export component App inherits Window {
     // P960-I rebuild: real chain state
     in property <string> learning-contract-status: "Checking…";
     in property <bool>   learning-is-member: false;
-    in property <int>    learning-current-pool-id: 0;
+    in-out property <int> learning-current-pool-id: 0;
     callback learning-leave-pool;
 
     // Education state
@@ -444,6 +446,7 @@ export component App inherits Window {
                     dag-tips-count: root.dag-tips-count;
                     dag-blue-score: root.dag-blue-score;
                     dag-finalized-height: root.dag-finalized-height;
+                    dag-dots: root.dag-dots;
                     show-detail: root.dag-show-detail;
                     detail-hash: root.dag-detail-hash;
                     detail-height: root.dag-detail-height;

@@ -11,6 +11,85 @@ export struct BlockData {
     proposer: string,
 }
 
+// T2-13: lightweight DAG viz data — Rust-computed normalized x/y
+// in [0, 1] based on recent block height + blue_score, plus flags
+// for rendering (is tip? is selected parent chain?).
+export struct DagDotData {
+    height: int,
+    hash-short: string,
+    x: float,         // 0..1 (left = oldest in window, right = tip)
+    y: float,         // 0..1 (0 = lowest blue score, 1 = highest)
+    tx-count: int,
+    is-tip: bool,
+}
+
+// T2-13: DAG mini-viz — scatter of the last N blocks plotted by
+// (normalized height, normalized blue score). Uses Rectangle dots
+// positioned absolutely inside a plot area. Parent-edges are a
+// deliberate follow-up (Slint Path composition is non-trivial and
+// the scatter already conveys "the DAG has a shape" that a flat
+// list doesn't).
+component DagMiniViz inherits Rectangle {
+    in property <[DagDotData]> dots: [];
+    in property <int> window-size: 30;  // informational, for the caption
+
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    // Caption
+    Text {
+        x: Theme.space-md;
+        y: Theme.space-sm;
+        text: "Last " + root.window-size + " blocks  ·  x = height  ·  y = blue score";
+        color: Theme.text-muted;
+        font-size: 10px;
+        font-family: Theme.font-mono;
+    }
+
+    // Plot area — leaves ~24px of padding inside. Dots are
+    // positioned at (x * plot_w, (1-y) * plot_h) so y=1 (high blue
+    // score) is at the top.
+    Rectangle {
+        x: 24px;
+        y: 32px;
+        width: parent.width - 48px;
+        height: parent.height - 48px;
+
+        // Axis baseline (x axis)
+        Rectangle {
+            x: 0;
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: Theme.border-subtle;
+        }
+
+        // Dots
+        for dot in root.dots : Rectangle {
+            x: dot.x * (parent.width - 10px);
+            y: (1 - dot.y) * (parent.height - 10px);
+            width: dot.is-tip ? 12px : 8px;
+            height: dot.is-tip ? 12px : 8px;
+            border-radius: 6px;
+            background: dot.is-tip ? Theme.accent : Theme.periwinkle;
+            border-width: dot.is-tip ? 2px : 0;
+            border-color: Theme.accent-hover;
+        }
+    }
+
+    // Empty state
+    if root.dots.length == 0 : Text {
+        x: 0; y: 0; width: parent.width; height: parent.height;
+        text: "Waiting for blocks…";
+        color: Theme.text-muted;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 component BlockListRow inherits Rectangle {
     in property <int> height-val;
     in property <string> hash-short;
@@ -45,6 +124,9 @@ export component DagExplorer inherits Rectangle {
     in property <int> dag-tips-count: 0;
     in property <int> dag-blue-score: 0;
     in property <int> dag-finalized-height: 0;
+    // T2-13: DAG mini-viz scatter data (computed Rust-side from the
+    // last ~30 blocks). Empty → "Waiting for blocks…" empty state.
+    in property <[DagDotData]> dag-dots: [];
 
     // Detail view
     in property <bool> show-detail: false;
@@ -248,6 +330,15 @@ export component DagExplorer inherits Rectangle {
         }
 
         // Block list view
+        // T2-13: DAG mini-viz scatter. Sits above the list so
+        // "shape of recent DAG" is the first thing users see.
+        if !root.show-detail : DagMiniViz {
+            dots: root.dag-dots;
+            window-size: 30;
+            min-height: 180px;
+            vertical-stretch: 0;
+        }
+
         if !root.show-detail : Rectangle {
             border-radius: Theme.radius-lg;
             background: Theme.surface;
