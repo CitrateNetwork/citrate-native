@@ -254,14 +254,18 @@ async fn test_create_wallet_then_unlock_activates_session() {
         .await
         .expect("wallet creation should succeed");
 
-    // Verify session is initially inactive
+    // P960-G fix: create_wallet now activates the session immediately.
+    // Pre-fix this asserted is_active == false; post-fix the user-facing
+    // expectation is that creating a wallet leaves you ready to sign,
+    // same as every browser wallet on first run.
     let status = h.wallet.get_session_status().await;
     assert!(
-        !status.is_active,
-        "Session should be inactive before unlock"
+        status.is_active,
+        "Session should be active immediately after create_wallet"
     );
 
-    // Unlock
+    // Lock + unlock round-trip still works
+    h.wallet.lock().await.expect("lock should succeed");
     let session = h
         .wallet
         .unlock(&result.address, "strongpassword123")
@@ -474,15 +478,20 @@ async fn test_lock_then_operations_fail() {
 }
 
 #[tokio::test]
-async fn test_send_without_unlock_fails() {
+async fn test_send_after_lock_fails() {
+    // P960-G fix: create_wallet now activates the session, so the
+    // "send without unlock" scenario must be reached by an explicit
+    // lock(). The semantics being tested — sending while the wallet
+    // is locked returns SessionExpired — are unchanged.
     let h = TestHarness::new();
 
-    // Create but never unlock
     let created = h
         .wallet
         .create_wallet("strongpassword123")
         .await
         .expect("wallet creation should succeed");
+
+    h.wallet.lock().await.expect("lock should succeed");
 
     let result = h
         .wallet
@@ -497,7 +506,7 @@ async fn test_send_without_unlock_fails() {
     match result {
         Err(AppError::SessionExpired) => { /* expected */ }
         other => panic!(
-            "Expected SessionExpired when sending without unlock, got {:?}",
+            "Expected SessionExpired when sending while locked, got {:?}",
             other
         ),
     }
@@ -910,7 +919,9 @@ async fn test_session_status_fields_after_unlock() {
         .await
         .expect("wallet creation should succeed");
 
-    // Before unlock
+    // P960-G: create_wallet now activates the session. Force a lock
+    // first to test the "before unlock" leg of the assertion.
+    h.wallet.lock().await.expect("lock should succeed");
     let before = h.wallet.get_session_status().await;
     assert!(!before.is_active);
     assert!(before.remaining_seconds.is_none());
