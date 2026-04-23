@@ -3,6 +3,7 @@
 import { Theme } from "../theme.slint";
 import { SectionDivider } from "settings_primitives.slint";
 import { NodeControlSection } from "node_control.slint";
+import { SystemHealthSection } from "system_health.slint";
 import { EnvironmentSection } from "environment.slint";
 import { PeerConnectionsSection } from "peer_connections.slint";
 import { AIConfigSection } from "ai_config.slint";
@@ -56,6 +57,18 @@ export component SettingsView inherits Rectangle {
     // Environment callback
     callback set-environment(string);
 
+    // P960-K T1-4: System health probes
+    in property <string> health-bootnode-status: "checking";
+    in property <string> health-bootnode-detail: "";
+    in property <string> health-ipfs-status: "checking";
+    in property <string> health-ipfs-detail: "";
+    in property <string> health-node-rpc-status: "checking";
+    in property <string> health-node-rpc-detail: "";
+    callback retry-bootnode;
+    callback start-ipfs;
+    callback retry-node-rpc;
+    callback refresh-health;
+
     background: Theme.bg;
 
     Flickable {
@@ -79,6 +92,22 @@ export component SettingsView inherits Rectangle {
                 start-node => { root.start-node(); }
                 stop-node => { root.stop-node(); }
                 restart-node => { root.restart-node(); }
+            }
+
+            SectionDivider {}
+
+            // 1b. System Health (P960-K T1-4)
+            SystemHealthSection {
+                bootnode-status: root.health-bootnode-status;
+                bootnode-detail: root.health-bootnode-detail;
+                ipfs-status: root.health-ipfs-status;
+                ipfs-detail: root.health-ipfs-detail;
+                node-rpc-status: root.health-node-rpc-status;
+                node-rpc-detail: root.health-node-rpc-detail;
+                retry-bootnode => { root.retry-bootnode(); }
+                start-ipfs => { root.start-ipfs(); }
+                retry-node => { root.retry-node-rpc(); }
+                refresh-all => { root.refresh-health(); }
             }
 
             SectionDivider {}

@@ -201,6 +201,18 @@ export component App inherits Window {
     callback settings-save-integration-token(string, string);
     callback settings-set-environment(string);
 
+    // P960-K T1-4: System health preflight state
+    in property <string> health-bootnode-status: "checking";
+    in property <string> health-bootnode-detail: "";
+    in property <string> health-ipfs-status: "checking";
+    in property <string> health-ipfs-detail: "";
+    in property <string> health-node-rpc-status: "checking";
+    in property <string> health-node-rpc-detail: "";
+    callback health-retry-bootnode;
+    callback health-start-ipfs;
+    callback health-retry-node-rpc;
+    callback health-refresh-all;
+
     // DAG Explorer callbacks
     callback dag-search(string);
     callback dag-select-block(int);
@@ -293,6 +305,7 @@ export component App inherits Window {
     in property <string> ops-hermes-endpoint: "";
     in property <int>    ops-hermes-session-count: 0;
     callback ops-copy-sidecar-config;
+    callback ops-set-scope(string);  // P960-K T1-2: "guided" | "read-only"
     in property <string> ops-grant-scope: "guided";
     callback ops-emergency-stop;
     callback ops-refresh-trail;
@@ -454,6 +467,17 @@ export component App inherits Window {
                     save-ai-key(provider, key) => { root.settings-save-ai-key(provider, key); }
                     scan-models => { root.settings-scan-models(); }
                     download-model => { root.settings-download-model(); }
+                    // P960-K T1-4: dependency health
+                    health-bootnode-status: root.health-bootnode-status;
+                    health-bootnode-detail: root.health-bootnode-detail;
+                    health-ipfs-status: root.health-ipfs-status;
+                    health-ipfs-detail: root.health-ipfs-detail;
+                    health-node-rpc-status: root.health-node-rpc-status;
+                    health-node-rpc-detail: root.health-node-rpc-detail;
+                    retry-bootnode => { root.health-retry-bootnode(); }
+                    start-ipfs => { root.health-start-ipfs(); }
+                    retry-node-rpc => { root.health-retry-node-rpc(); }
+                    refresh-health => { root.health-refresh-all(); }
                 }
 
                 // Chat
@@ -606,6 +630,7 @@ export component App inherits Window {
                     hermes-endpoint: root.ops-hermes-endpoint;
                     hermes-session-count: root.ops-hermes-session-count;
                     copy-sidecar-config => { root.ops-copy-sidecar-config(); }
+                    set-scope(s) => { root.ops-set-scope(s); }
                     grant-scope: root.ops-grant-scope;
                     emergency-stop => { root.ops-emergency-stop(); }
                     refresh-trail => { root.ops-refresh-trail(); }

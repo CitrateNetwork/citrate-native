@@ -1,0 +1,163 @@
+// System Health — runtime preflight for external dependencies
+// (P960-K T1-4). Each row probes a service the GUI relies on and
+// surfaces an honest status + a one-click remediation.
+//
+// Probes:
+//   - Bootnode reachability (TCP connect to first configured bootnode)
+//   - IPFS daemon HTTP API (POST /api/v0/version on 127.0.0.1:5001)
+//   - Local node RPC (eth_blockNumber on the configured rpc_port)
+//
+// All three are non-fatal — if any are down the rest of the GUI
+// keeps working, but the user is told explicitly so they know
+// why panels are degraded instead of guessing.
+
+import { Theme } from "../theme.slint";
+import { SectionDivider } from "settings_primitives.slint";
+
+component HealthRow inherits Rectangle {
+    in property <string> label: "";
+    in property <string> detail: "";       // e.g. "159.65.227.42:30303"
+    in property <string> status: "checking"; // "ok", "down", "checking"
+    in property <string> action-label: ""; // e.g. "Start IPFS"
+    callback action-clicked;
+
+    height: 56px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+
+        // Status dot
+        Rectangle {
+            width: 10px; height: 10px;
+            border-radius: 5px;
+            y: parent.height / 2 - 5px;
+            background: root.status == "ok" ? Theme.success
+                : root.status == "down" ? Theme.error
+                : Theme.warning;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.text-muted;
+                font-size: 10px;
+                font-family: Theme.font-mono;
+                overflow: elide;
+            }
+        }
+
+        // Remediation button — only when down + action is wired
+        if root.status == "down" && root.action-label != "" : Rectangle {
+            width: 110px;
+            height: 30px;
+            y: parent.height / 2 - 15px;
+            border-radius: Theme.radius-md;
+            background: action-ta.has-hover ? Theme.accent : Theme.bg-tertiary;
+            border-width: 1px;
+            border-color: Theme.border;
+            animate background { duration: 120ms; }
+            Text {
+                text: root.action-label;
+                color: action-ta.has-hover ? #000000 : Theme.text-secondary;
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            action-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.action-clicked(); }
+            }
+        }
+    }
+}
+
+export component SystemHealthSection inherits VerticalLayout {
+    spacing: Theme.space-md;
+
+    // Bootnode
+    in property <string> bootnode-status: "checking";
+    in property <string> bootnode-detail: "";
+    callback retry-bootnode;
+
+    // IPFS daemon
+    in property <string> ipfs-status: "checking";
+    in property <string> ipfs-detail: "";
+    callback start-ipfs;
+
+    // Local node RPC
+    in property <string> node-rpc-status: "checking";
+    in property <string> node-rpc-detail: "";
+    callback retry-node;
+
+    // Refresh all probes
+    callback refresh-all;
+
+    // Header
+    HorizontalLayout {
+        alignment: space-between;
+        Text {
+            text: "System Health";
+            color: Theme.text;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 90px; height: 26px;
+            border-radius: Theme.radius-md;
+            background: refresh-ta.has-hover ? Theme.bg-tertiary : Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border;
+            Text {
+                text: "Refresh";
+                color: Theme.text-secondary;
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            refresh-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.refresh-all(); }
+            }
+        }
+    }
+
+    HealthRow {
+        label: "Bootnode";
+        detail: root.bootnode-detail;
+        status: root.bootnode-status;
+        action-label: "Retry";
+        action-clicked => { root.retry-bootnode(); }
+    }
+    HealthRow {
+        label: "IPFS Daemon";
+        detail: root.ipfs-detail;
+        status: root.ipfs-status;
+        action-label: "Start IPFS";
+        action-clicked => { root.start-ipfs(); }
+    }
+    HealthRow {
+        label: "Local Node RPC";
+        detail: root.node-rpc-detail;
+        status: root.node-rpc-status;
+        action-label: "Retry";
+        action-clicked => { root.retry-node(); }
+    }
+}

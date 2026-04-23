@@ -74,6 +74,11 @@ export component OperationsView inherits Rectangle {
 
     // Grant scope
     in property <string> grant-scope: "guided"; // "read-only", "guided", "operator"
+    // P960-K T1-2: lets user toggle between Guided (every mutation
+    // tool needs approval) and ReadOnly (mutation tools refused
+    // outright). Maintainer/Operator are out-of-band scope levels
+    // for external MCP grants — not user-toggleable from this UI.
+    callback set-scope(string);
 
     // Callbacks
     callback emergency-stop;
@@ -129,6 +134,71 @@ export component OperationsView inherits Rectangle {
                     title: "SESSIONS";
                     value: root.active-sessions;
                     status: root.active-sessions > 0 ? "online" : "offline";
+                }
+            }
+
+            // P960-K T1-2: scope toggle. Two pills — Guided (default)
+            // and Read-only. Read-only refuses send_tx, deploy_contract,
+            // file_write, file_edit, shell_exec at the dispatch level
+            // before approval is even prompted. Useful when handing
+            // the laptop to someone briefly or running adversarial
+            // testing.
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                Text {
+                    text: "Scope:";
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 110px; height: 28px;
+                    border-radius: Theme.radius-md;
+                    background: root.grant-scope == "guided"
+                        ? Theme.accent
+                        : (g-ta.has-hover ? Theme.bg-tertiary : Theme.surface);
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "Guided";
+                        color: root.grant-scope == "guided" ? #000000 : Theme.text-secondary;
+                        font-size: 11px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    g-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.set-scope("guided"); }
+                    }
+                }
+                Rectangle {
+                    width: 110px; height: 28px;
+                    border-radius: Theme.radius-md;
+                    background: root.grant-scope == "read-only"
+                        ? Theme.warning
+                        : (r-ta.has-hover ? Theme.bg-tertiary : Theme.surface);
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    animate background { duration: 120ms; }
+                    Text {
+                        text: "Read-only";
+                        color: root.grant-scope == "read-only" ? #000000 : Theme.text-secondary;
+                        font-size: 11px; font-weight: 600;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    r-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.set-scope("read-only"); }
+                    }
+                }
+                Text {
+                    text: root.grant-scope == "read-only"
+                        ? "Mutations refused at dispatch."
+                        : "Mutations require explicit approval.";
+                    color: Theme.text-muted;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
                 }
             }
 
