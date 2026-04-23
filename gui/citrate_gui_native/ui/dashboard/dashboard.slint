@@ -50,6 +50,9 @@ component BlockRow inherits Rectangle {
     in property <string> tx-count;
     in property <string> time-text;
     in property <string> hash-text;
+    // T2-15: short proposer pubkey (first 8 hex chars of ed25519 key)
+    // in monospace so operators recognize their own blocks.
+    in property <string> proposer-short;
 
     height: 36px;
 
@@ -61,7 +64,16 @@ component BlockRow inherits Rectangle {
         Text { text: root.height-text; color: Theme.text; font-size: 12px; font-weight: 600; min-width: 80px; vertical-alignment: center; }
         Text { text: root.tx-count; color: Theme.text-muted; font-size: 12px; min-width: 60px; vertical-alignment: center; }
         Text { text: root.time-text; color: Theme.text-muted; font-size: 12px; min-width: 80px; vertical-alignment: center; }
-        Text { text: root.hash-text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.hash-text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        Text {
+            text: root.proposer-short;
+            color: Theme.sage;
+            font-size: 11px;
+            font-family: Theme.font-mono;
+            vertical-alignment: center;
+            min-width: 80px;
+            overflow: elide;
+        }
     }
 }
 
@@ -82,6 +94,13 @@ export component Dashboard inherits Rectangle {
     in property <string> block-time-0: "";
     in property <string> block-time-1: "";
     in property <string> block-time-2: "";
+    // T2-15: proposer short-hex (first 8 chars of ed25519 pubkey)
+    in property <string> block-proposer-0: "";
+    in property <string> block-proposer-1: "";
+    in property <string> block-proposer-2: "";
+    // T2-16: claimable balance from ContributionAccounting, separate
+    // from `earned` (which is block-reward delta vs baseline).
+    in property <string> claimable-contributions: "0";
 
     background: Theme.bg;
 
@@ -167,6 +186,30 @@ export component Dashboard inherits Rectangle {
                                 font-weight: 600;
                                 overflow: elide;
                             }
+                            Text {
+                                text: "block rewards (balance delta since session start)";
+                                color: Theme.text-muted; font-size: 9px;
+                            }
+                            // T2-16: claimable breakdown row — earnings
+                            // that live in ContributionAccounting (compute
+                            // + learning combined). Separate from "earned
+                            // this session" because it's post-distribution
+                            // balance, not delta.
+                            if root.claimable-contributions != "0" : HorizontalLayout {
+                                spacing: Theme.space-sm;
+                                Text {
+                                    text: "+ " + root.claimable-contributions + " SALT claimable";
+                                    color: Theme.success;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: "(ContributionAccounting — claim in Compute or Learning)";
+                                    color: Theme.text-muted;
+                                    font-size: 10px;
+                                    vertical-alignment: center;
+                                }
+                            }
                         }
                     }
                 }
@@ -213,9 +256,9 @@ export component Dashboard inherits Rectangle {
                                 Text { text: "Hash"; color: Theme.text-muted; font-size: 11px; font-weight: 500; vertical-alignment: center; }
                             }
 
-                            BlockRow { height-text: "#" + (root.block-height); tx-count: root.block-txcount-0; time-text: root.block-time-0 != "" ? root.block-time-0 : "just now"; hash-text: root.block-hash-0 != "" ? root.block-hash-0 : "syncing..."; }
-                            if root.block-height > 1 : BlockRow { height-text: "#" + (root.block-height - 1); tx-count: root.block-txcount-1; time-text: root.block-time-1 != "" ? root.block-time-1 : ""; hash-text: root.block-hash-1; }
-                            if root.block-height > 2 : BlockRow { height-text: "#" + (root.block-height - 2); tx-count: root.block-txcount-2; time-text: root.block-time-2 != "" ? root.block-time-2 : ""; hash-text: root.block-hash-2; }
+                            BlockRow { height-text: "#" + (root.block-height); tx-count: root.block-txcount-0; time-text: root.block-time-0 != "" ? root.block-time-0 : "just now"; hash-text: root.block-hash-0 != "" ? root.block-hash-0 : "syncing..."; proposer-short: root.block-proposer-0; }
+                            if root.block-height > 1 : BlockRow { height-text: "#" + (root.block-height - 1); tx-count: root.block-txcount-1; time-text: root.block-time-1 != "" ? root.block-time-1 : ""; hash-text: root.block-hash-1; proposer-short: root.block-proposer-1; }
+                            if root.block-height > 2 : BlockRow { height-text: "#" + (root.block-height - 2); tx-count: root.block-txcount-2; time-text: root.block-time-2 != "" ? root.block-time-2 : ""; hash-text: root.block-hash-2; proposer-short: root.block-proposer-2; }
                         }
                     }
                 }

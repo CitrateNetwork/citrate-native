@@ -62,6 +62,12 @@ export component App inherits Window {
     in property <string> block-time-0: "";
     in property <string> block-time-1: "";
     in property <string> block-time-2: "";
+    // T2-15: short proposer hex for each dashboard row
+    in property <string> block-proposer-0: "";
+    in property <string> block-proposer-1: "";
+    in property <string> block-proposer-2: "";
+    // T2-16: claimable from ContributionAccounting for dashboard earnings breakdown
+    in property <string> dashboard-claimable: "0";
     in property <string> connection-status: "Disconnected";
     in property <string> bootnode-list: "";
     in property <string> noise-identity: "";
@@ -401,6 +407,10 @@ export component App inherits Window {
                     block-time-0: root.block-time-0;
                     block-time-1: root.block-time-1;
                     block-time-2: root.block-time-2;
+                    block-proposer-0: root.block-proposer-0;
+                    block-proposer-1: root.block-proposer-1;
+                    block-proposer-2: root.block-proposer-2;
+                    claimable-contributions: root.dashboard-claimable;
                 }
 
                 // Wallet

@@ -1358,7 +1358,8 @@ fn main() {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs()).unwrap_or(0);
 
-                let block_data: Vec<(String, String, String)> = recent_blocks.iter().map(|b| {
+                // T2-15: tuple gains a 4th element — proposer short-hex
+                let block_data: Vec<(String, String, String, String)> = recent_blocks.iter().map(|b| {
                     let hash = if b.hash.len() > 18 {
                         format!("{}...{}", &b.hash[..10], &b.hash[b.hash.len()-4..])
                     } else {
@@ -1375,7 +1376,14 @@ fn main() {
                     } else {
                         "just now".to_string()
                     };
-                    (hash, txcount, age)
+                    let proposer = if b.proposer.len() >= 8 {
+                        format!("by {}…", &b.proposer[..8])
+                    } else if !b.proposer.is_empty() {
+                        format!("by {}", b.proposer)
+                    } else {
+                        String::new()
+                    };
+                    (hash, txcount, age, proposer)
                 }).collect();
 
                 let hash0 = block_data.first().map(|d| d.0.clone()).unwrap_or_default();
@@ -1387,6 +1395,9 @@ fn main() {
                 let time0 = block_data.first().map(|d| d.2.clone()).unwrap_or_default();
                 let time1 = block_data.get(1).map(|d| d.2.clone()).unwrap_or_default();
                 let time2 = block_data.get(2).map(|d| d.2.clone()).unwrap_or_default();
+                let prop0 = block_data.first().map(|d| d.3.clone()).unwrap_or_default();
+                let prop1 = block_data.get(1).map(|d| d.3.clone()).unwrap_or_default();
+                let prop2 = block_data.get(2).map(|d| d.3.clone()).unwrap_or_default();
 
                 // Refresh wallet accounts every 5th tick (~15s)
                 let wallet_accounts = if tick_counter.is_multiple_of(5) {
@@ -1630,8 +1641,41 @@ fn main() {
                         ui.set_block_time_0(time0.into());
                         ui.set_block_time_1(time1.into());
                         ui.set_block_time_2(time2.into());
+                        ui.set_block_proposer_0(prop0.into());
+                        ui.set_block_proposer_1(prop1.into());
+                        ui.set_block_proposer_2(prop2.into());
                     }
                 });
+
+                // T2-16: dashboard claimable breakdown. Query
+                // ContributionAccounting.claimable(self) once per
+                // 10 ticks (~30s) regardless of tab so the Dashboard
+                // card reflects the real number without waiting for
+                // the compute/learning tab to be opened.
+                if tick_counter % 10 == 0 {
+                    let chain_id = rt_handle.block_on(core.config.read()).chain_id;
+                    let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
+                    let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                    let accounts = rt_handle.block_on(core.wallet.list_accounts());
+                    let self_addr = accounts.first().map(|a| a.address.clone());
+                    let acc_addr = marketplace_client::contribution_accounting_address(chain_id);
+                    let claimable_wei: u128 =
+                        if let (Some(a), Some(addr)) = (acc_addr, self_addr.as_deref()) {
+                            marketplace_client::encode_claimable(addr)
+                                .and_then(|d| rt_handle.block_on(
+                                    marketplace_client::eth_call(&rpc_url, a, &d)
+                                ).ok())
+                                .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                .unwrap_or(0)
+                        } else { 0 };
+                    let display = marketplace_client::wei_to_salt_display(claimable_wei);
+                    let ui_h = ui_handle.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_dashboard_claimable(display.into());
+                        }
+                    });
+                }
 
                 // (Contracts IDE hydration retired in P960-G — no
                 // terminal/git polling; users edit in their own editor
