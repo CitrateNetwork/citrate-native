@@ -79,6 +79,10 @@ export component OperationsView inherits Rectangle {
     // outright). Maintainer/Operator are out-of-band scope levels
     // for external MCP grants — not user-toggleable from this UI.
     callback set-scope(string);
+    // T2-5: chain-level emergency pause (citrate_emergencyPause RPC).
+    in property <bool> chain-paused: false;
+    callback pause-chain;
+    callback resume-chain;
 
     // Callbacks
     callback emergency-stop;
@@ -98,12 +102,53 @@ export component OperationsView inherits Rectangle {
                 alignment: space-between;
                 Text { text: "Agent Center"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
 
-                // Emergency Stop
-                Rectangle {
-                    width: 120px; height: 36px; border-radius: Theme.radius-md;
-                    background: Theme.error;
-                    Text { text: "Emergency Stop"; color: #000000; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { clicked => { root.emergency-stop(); } }
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+
+                    // T2-5: chain pause/resume status pill (left of buttons)
+                    Rectangle {
+                        width: 130px; height: 22px;
+                        y: 7px;
+                        border-radius: 11px;
+                        background: root.chain-paused ? Theme.error.darker(0.3) : Theme.success.darker(0.3);
+                        Text {
+                            text: root.chain-paused ? "● chain PAUSED" : "● chain producing";
+                            color: Theme.text;
+                            font-size: 10px; font-weight: 600;
+                            font-family: Theme.font-mono;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+
+                    // T2-5: Pause/Resume chain (citrate_emergencyPause RPC)
+                    Rectangle {
+                        width: 110px; height: 36px;
+                        border-radius: Theme.radius-md;
+                        background: pause-ta.has-hover ? Theme.warning.darker(0.2) : Theme.warning.darker(0.4);
+                        border-width: 1px;
+                        border-color: Theme.warning;
+                        animate background { duration: 120ms; }
+                        Text {
+                            text: root.chain-paused ? "Resume chain" : "Pause chain";
+                            color: Theme.text; font-size: 12px; font-weight: 600;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        pause-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if (root.chain-paused) { root.resume-chain(); }
+                                else { root.pause-chain(); }
+                            }
+                        }
+                    }
+
+                    // Existing Emergency Stop (denies in-flight approvals)
+                    Rectangle {
+                        width: 120px; height: 36px; border-radius: Theme.radius-md;
+                        background: Theme.error;
+                        Text { text: "Deny pending"; color: #000000; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        TouchArea { clicked => { root.emergency-stop(); } }
+                    }
                 }
             }
 
@@ -131,8 +176,11 @@ export component OperationsView inherits Rectangle {
                 }
                 StatusCard {
                     horizontal-stretch: 1;
-                    title: "SESSIONS";
-                    value: root.active-sessions;
+                    // T2-2: was a hardcoded "1". Now reflects active
+                    // MCP grants (in-app session = 1, plus any
+                    // external MCP clients connected via P960-J).
+                    title: "MCP SESSIONS";
+                    value: 1 + root.hermes-session-count;
                     status: root.active-sessions > 0 ? "online" : "offline";
                 }
             }

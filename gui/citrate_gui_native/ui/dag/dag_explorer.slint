@@ -41,6 +41,11 @@ export component DagExplorer inherits Rectangle {
     in property <bool> loading: false;
     in property <string> error: "";
 
+    // T2-4: DAG-wide stats from citrate_getDagStats
+    in property <int> dag-tips-count: 0;
+    in property <int> dag-blue-score: 0;
+    in property <int> dag-finalized-height: 0;
+
     // Detail view
     in property <bool> show-detail: false;
     in property <string> detail-hash: "";
@@ -74,6 +79,44 @@ export component DagExplorer inherits Rectangle {
                 font-size: 24px;
                 font-weight: 600;
                 vertical-alignment: center;
+            }
+
+            // T2-4: DAG-wide stats from citrate_getDagStats RPC.
+            // Three small inline metrics under the title.
+            Rectangle {
+                width: 220px; height: 36px;
+                border-radius: Theme.radius-md;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                HorizontalLayout {
+                    padding: 6px;
+                    spacing: Theme.space-md;
+                    alignment: center;
+                    Text {
+                        text: root.dag-tips-count + " tips";
+                        color: Theme.accent;
+                        font-size: 11px;
+                        font-family: Theme.font-mono;
+                        vertical-alignment: center;
+                    }
+                    Text { text: "·"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                    Text {
+                        text: "blue " + root.dag-blue-score;
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        font-family: Theme.font-mono;
+                        vertical-alignment: center;
+                    }
+                    Text { text: "·"; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; }
+                    Text {
+                        text: "fin #" + root.dag-finalized-height;
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        font-family: Theme.font-mono;
+                        vertical-alignment: center;
+                    }
+                }
             }
 
             Rectangle { horizontal-stretch: 1; }

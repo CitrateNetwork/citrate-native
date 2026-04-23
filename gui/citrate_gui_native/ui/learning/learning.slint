@@ -32,6 +32,9 @@ export component LearningView inherits Rectangle {
     callback join-pool;
     callback leave-pool;
     callback claim-earnings;
+    // T2-9: open the create-pool modal. Modal lives at the App
+    // level so it can overlay the whole window.
+    callback open-create-pool;
 
     background: Theme.bg;
 
@@ -96,7 +99,7 @@ export component LearningView inherits Rectangle {
 
             // ── First-pool empty state ──
             if root.contract-status == "LearningPool live" && root.pool-count == 0 : Rectangle {
-                height: 56px;
+                height: 72px;
                 border-radius: Theme.radius-md;
                 background: Theme.bg-tertiary;
                 border-width: 1px;
@@ -104,13 +107,31 @@ export component LearningView inherits Rectangle {
                 HorizontalLayout {
                     padding: Theme.space-sm;
                     spacing: Theme.space-sm;
+                    alignment: center;
                     Text { text: "✨"; color: Theme.accent; font-size: 18px; vertical-alignment: center; }
                     VerticalLayout {
                         horizontal-stretch: 1;
+                        alignment: center;
                         Text { text: "No pools created yet"; color: Theme.text; font-size: 12px; font-weight: 600; }
                         Text {
-                            text: "LearningPool.createPool(name, desc, access, minStake) is supported on-chain — pool creation UI lands in a follow-up sprint. For now use `cast send` from the CLI.";
+                            text: "Be the first — create a pool with a 1000 SALT minimum stake.";
                             color: Theme.text-muted; font-size: 10px; wrap: word-wrap;
+                        }
+                    }
+                    // T2-9: create-pool CTA. Opens modal at the App level.
+                    Rectangle {
+                        width: 120px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: cp-ta.has-hover ? Theme.accent-hover : Theme.accent;
+                        animate background { duration: 120ms; }
+                        Text {
+                            text: "Create pool";
+                            color: #000000; font-size: 12px; font-weight: 600;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        cp-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-create-pool(); }
                         }
                     }
                 }
