@@ -6,11 +6,9 @@
 
 pub mod node_service;
 pub mod wallet_service;
-pub mod editor_service;
-pub mod file_explorer_service;
-pub mod compiler_service;
-pub mod git_service;
-pub mod terminal_service;
+// (editor_service, file_explorer_service, compiler_service,
+// git_service, terminal_service retired in P960-H — see git
+// history for the implementations if a future panel needs them.)
 pub mod chat_service;
 pub mod model_service;
 pub mod block_service;
@@ -20,11 +18,6 @@ pub mod edu;
 
 pub use node_service::NodeService;
 pub use wallet_service::WalletService;
-pub use editor_service::EditorService;
-pub use file_explorer_service::FileExplorerService;
-pub use compiler_service::CompilerService;
-pub use git_service::GitService;
-pub use terminal_service::TerminalService;
 pub use chat_service::ChatService;
 pub use model_service::ModelService;
 pub use block_service::BlockService;

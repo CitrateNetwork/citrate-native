@@ -119,10 +119,15 @@ async fn test_not_first_run_after_create() {
 
 #[tokio::test]
 async fn test_send_requires_session() {
+    // P960-G fix: create_wallet auto-activates the session, so we
+    // must lock() to reach the "send without session" condition.
+    // The semantic property — "sending while locked fails" — is
+    // unchanged.
     let svc = test_wallet();
     svc.create_wallet("strongpassword123").await.expect("create");
+    svc.lock().await.expect("lock");
     let r = svc.send_transaction("0xfrom", "0xto", "1000", "pwd").await;
-    assert!(r.is_err(), "Send without session should fail");
+    assert!(r.is_err(), "Send while locked should fail");
 }
 
 #[tokio::test]
