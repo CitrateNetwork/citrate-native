@@ -8,6 +8,11 @@
 //! - `getProvider(address)` view       — `ComputeMarketplace.sol:829`
 //! - `claimable(address)` view         — `ContributionAccounting.sol:47` (public mapping)
 //! - `claimRewards()` nonpayable       — `ContributionAccounting.sol:188`
+//! - `nextPoolId()` view               — `LearningPool.sol:35` (public counter)
+//! - `isMember(uint256,address)` view  — `LearningPool.sol:37` (public mapping)
+//! - `stakes(uint256,address)` view    — `LearningPool.sol:38` (public mapping)
+//! - `joinPool(uint256)` payable       — `LearningPool.sol:120`
+//! - `leavePool(uint256)` nonpayable   — `LearningPool.sol:153`
 //!
 //! We use `claimable(address)` (settled, post-distribution balance)
 //! rather than `pendingReward(address)` (pre-distribution estimate).
@@ -33,6 +38,13 @@ pub fn compute_marketplace_address(chain_id: u64) -> Option<&'static str> {
 pub fn contribution_accounting_address(chain_id: u64) -> Option<&'static str> {
     match chain_id {
         40204 => Some("0x1afe987622ab5add275d2fd21248f77f5e00667f"),
+        _ => None,
+    }
+}
+
+pub fn learning_pool_address(chain_id: u64) -> Option<&'static str> {
+    match chain_id {
+        40204 => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
         _ => None,
     }
 }
@@ -123,6 +135,68 @@ pub fn encode_claimable(addr: &str) -> Option<Vec<u8>> {
 
 pub fn encode_claim_rewards() -> Vec<u8> {
     selector("claimRewards()").to_vec()
+}
+
+// ── LearningPool ABI helpers ─────────────────────────────────────────
+
+pub fn encode_next_pool_id() -> Vec<u8> {
+    // Public counter `nextPoolId` auto-generates `nextPoolId()`.
+    selector("nextPoolId()").to_vec()
+}
+
+/// Encode `isMember(uint256 poolId, address user) → bool`.
+pub fn encode_is_member(pool_id: u64, addr: &str) -> Option<Vec<u8>> {
+    let padded_addr = encode_address_padded(addr)?;
+    let mut out = Vec::with_capacity(68);
+    out.extend_from_slice(&selector("isMember(uint256,address)"));
+    let mut id_word = [0u8; 32];
+    id_word[24..].copy_from_slice(&pool_id.to_be_bytes());
+    out.extend_from_slice(&id_word);
+    out.extend_from_slice(&padded_addr);
+    Some(out)
+}
+
+/// Encode `stakes(uint256 poolId, address user) → uint256`.
+pub fn encode_stakes(pool_id: u64, addr: &str) -> Option<Vec<u8>> {
+    let padded_addr = encode_address_padded(addr)?;
+    let mut out = Vec::with_capacity(68);
+    out.extend_from_slice(&selector("stakes(uint256,address)"));
+    let mut id_word = [0u8; 32];
+    id_word[24..].copy_from_slice(&pool_id.to_be_bytes());
+    out.extend_from_slice(&id_word);
+    out.extend_from_slice(&padded_addr);
+    Some(out)
+}
+
+/// Encode `joinPool(uint256 poolId)` payable. Sender stakes msg.value.
+pub fn encode_join_pool(pool_id: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(36);
+    out.extend_from_slice(&selector("joinPool(uint256)"));
+    let mut id_word = [0u8; 32];
+    id_word[24..].copy_from_slice(&pool_id.to_be_bytes());
+    out.extend_from_slice(&id_word);
+    out
+}
+
+/// Encode `leavePool(uint256 poolId)`. Returns the user's stake.
+pub fn encode_leave_pool(pool_id: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(36);
+    out.extend_from_slice(&selector("leavePool(uint256)"));
+    let mut id_word = [0u8; 32];
+    id_word[24..].copy_from_slice(&pool_id.to_be_bytes());
+    out.extend_from_slice(&id_word);
+    out
+}
+
+/// Decode a bool return — Solidity bools are 32-byte words where
+/// only the last byte is meaningful.
+pub fn decode_bool(hex_result: &str) -> Option<bool> {
+    let s = hex_result.strip_prefix("0x").unwrap_or(hex_result);
+    let bytes = hex::decode(s).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    Some(bytes[31] != 0)
 }
 
 /// Decode a 32-byte big-endian uint256 (clamped to u128 since all
@@ -354,7 +428,56 @@ mod tests {
     fn address_lookup() {
         assert!(compute_marketplace_address(40204).is_some());
         assert!(contribution_accounting_address(40204).is_some());
+        assert!(learning_pool_address(40204).is_some());
         assert!(compute_marketplace_address(1).is_none());
         assert!(contribution_accounting_address(9999).is_none());
+        assert!(learning_pool_address(1).is_none());
+    }
+
+    #[test]
+    fn next_pool_id_selector() {
+        assert_eq!(hex::encode(selector("nextPoolId()")), "18e56131");
+    }
+
+    #[test]
+    fn encode_join_pool_layout() {
+        let data = encode_join_pool(7);
+        // 4-byte selector + 32-byte uint256
+        assert_eq!(data.len(), 36);
+        // pool id 7 in the last byte of the second word
+        assert_eq!(data[35], 7);
+        assert!(data[4..35].iter().all(|&b| b == 0), "id should be left-padded with zeros");
+    }
+
+    #[test]
+    fn encode_is_member_layout() {
+        let addr = "0x1234567890abcdef1234567890abcdef12345678";
+        let data = encode_is_member(3, addr).expect("valid addr");
+        // 4 + 32 (poolId) + 32 (address) = 68
+        assert_eq!(data.len(), 68);
+        assert_eq!(data[35], 3);
+        assert_eq!(hex::encode(&data[48..68]), "1234567890abcdef1234567890abcdef12345678");
+    }
+
+    #[test]
+    fn encode_stakes_layout() {
+        let addr = "0xabababababababababababababababababababab";
+        let data = encode_stakes(0, addr).expect("valid addr");
+        assert_eq!(data.len(), 68);
+        // pool id 0 → all zero in the second word
+        assert!(data[4..36].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn decode_bool_true_false() {
+        let true_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        let false_hex = "0x0000000000000000000000000000000000000000000000000000000000000000";
+        assert_eq!(decode_bool(true_hex), Some(true));
+        assert_eq!(decode_bool(false_hex), Some(false));
+    }
+
+    #[test]
+    fn decode_bool_rejects_short() {
+        assert!(decode_bool("0x01").is_none());
     }
 }

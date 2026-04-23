@@ -1395,6 +1395,101 @@ fn main() {
                         });
                     }
                 }
+
+                // P960-I: Learning pool + earnings poll. Same 30s
+                // cadence as compute, gated on active tab. Reads:
+                //   - LearningPool.nextPoolId() → pool count
+                //   - LearningPool.isMember(0, self) → membership
+                //   - LearningPool.stakes(0, self) → stake amount
+                //   - ContributionAccounting.claimable(self) → earnings
+                if tick_counter % 10 == 0 {
+                    let active_tab = ui_handle.upgrade()
+                        .map(|ui| ui.get_active_tab().to_string());
+                    if active_tab.as_deref() == Some("learning") {
+                        let chain_id = rt_handle.block_on(core.config.read()).chain_id;
+                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
+                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                        let accounts = rt_handle.block_on(core.wallet.list_accounts());
+                        let self_addr = accounts.first().map(|a| a.address.clone());
+                        let pool_addr = marketplace_client::learning_pool_address(chain_id);
+                        let acc_addr = marketplace_client::contribution_accounting_address(chain_id);
+
+                        // 1. Pool count via nextPoolId
+                        let pool_count: u64 = if let Some(p) = pool_addr {
+                            let data = marketplace_client::encode_next_pool_id();
+                            rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &data))
+                                .ok()
+                                .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                .map(|v| v as u64)
+                                .unwrap_or(0)
+                        } else { 0 };
+
+                        // 2. Membership + stake for current pool (default 0)
+                        let current_pool_id: u64 = ui_handle.upgrade()
+                            .map(|ui| ui.get_learning_current_pool_id() as u64)
+                            .unwrap_or(0);
+                        let (is_member, stake_wei): (bool, u128) =
+                            if let (Some(p), Some(addr)) = (pool_addr, self_addr.as_deref()) {
+                                if pool_count == 0 || current_pool_id >= pool_count {
+                                    (false, 0)
+                                } else {
+                                    let m = marketplace_client::encode_is_member(current_pool_id, addr)
+                                        .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &d)).ok())
+                                        .and_then(|r| marketplace_client::decode_bool(&r))
+                                        .unwrap_or(false);
+                                    let s = marketplace_client::encode_stakes(current_pool_id, addr)
+                                        .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &d)).ok())
+                                        .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                        .unwrap_or(0);
+                                    (m, s)
+                                }
+                            } else { (false, 0) };
+
+                        // 3. Claimable earnings (same accounting contract as compute)
+                        let claimable_wei: u128 =
+                            if let (Some(a), Some(addr)) = (acc_addr, self_addr.as_deref()) {
+                                marketplace_client::encode_claimable(addr)
+                                    .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, a, &d)).ok())
+                                    .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                    .unwrap_or(0)
+                            } else { 0 };
+
+                        let has_pool_addr = pool_addr.is_some();
+                        let has_acc_addr = acc_addr.is_some();
+                        let ui_h = ui_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            let Some(ui) = ui_h.upgrade() else { return; };
+                            ui.set_learning_contract_status(
+                                if has_pool_addr {
+                                    "LearningPool live".into()
+                                } else {
+                                    "LearningPool not deployed on this network".into()
+                                }
+                            );
+                            ui.set_learning_pool_count(pool_count as i32);
+                            ui.set_learning_is_member(is_member);
+                            ui.set_learning_staked(
+                                marketplace_client::wei_to_salt_display(stake_wei).into()
+                            );
+                            if has_acc_addr {
+                                ui.set_learning_earnings(
+                                    marketplace_client::wei_to_salt_display(claimable_wei).into()
+                                );
+                            }
+                            // Status line — concise summary of state
+                            let status = if !has_pool_addr {
+                                "—".to_string()
+                            } else if pool_count == 0 {
+                                "No pools created on-chain yet".to_string()
+                            } else if is_member {
+                                format!("Pool #{} · staked {}", current_pool_id, marketplace_client::wei_to_salt_display(stake_wei))
+                            } else {
+                                format!("{} pool(s) on-chain · not joined", pool_count)
+                            };
+                            ui.set_learning_pool_status(status.into());
+                        });
+                    }
+                }
             }
         });
     }
@@ -2773,63 +2868,193 @@ fn main() {
     // LEARNING CENTER WIRING — Join pool, stake, claim
     // =========================================================================
 
-    // --- Learning: Join Pool ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_learning_join_pool(move || {
-        tracing::info!("Learning: join pool requested");
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            match core.learning.list_pools().await {
-                Ok(pools) => tracing::info!("Learning: {} pools available", pools.len()),
-                Err(e) => tracing::error!("Learning: list pools failed: {}", e),
-            }
-        });
-    });
-
-    // --- Learning: Stake ---
-    // Data source: LearningPool.joinPool(uint256) — sends SALT as msg.value
-    // Contract: not yet deployed (address TBD from forge script output)
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_learning_stake(move || {
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("Learning: stake requested");
-        spawn_async(&rt_h, async move {
-            // Check if pools exist
-            match core.learning.list_pools().await {
-                Ok(pools) if pools.is_empty() => {
-                    tracing::info!("Learning: no pools available — contract not deployed");
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_learning_pool_status("No pools — contracts not yet deployed".into());
+    // --- Learning: Join Pool (P960-I rebuild) ---
+    // Data source: LearningPool.joinPool(uint256) payable
+    //   — contracts/src/LearningPool.sol:120
+    // V1 sends a fixed 1000 SALT stake to pool 0; pool selection +
+    // dynamic stake amount land in a follow-up modal sprint.
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_learning_join_pool(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            tracing::info!("Learning: join pool requested");
+            spawn_async(&rt_h, async move {
+                let chain_id = core.config.read().await.chain_id;
+                let Some(addr) = marketplace_client::learning_pool_address(chain_id) else {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_learning_pool_status(
+                                    format!("LearningPool not deployed on chain {}", chain_id).into()
+                                );
+                            }
                         }
                     });
+                    return;
+                };
+                let accounts = core.wallet.list_accounts().await;
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_learning_pool_status(
+                                    "Create a wallet before joining a pool".into()
+                                );
+                            }
+                        }
+                    });
+                    return;
+                };
+                let pool_id = ui_w.upgrade()
+                    .map(|ui| ui.get_learning_current_pool_id() as u64)
+                    .unwrap_or(0);
+                let data = marketplace_client::encode_join_pool(pool_id);
+                // Default stake: 1000 SALT (matches LearningPool's typical
+                // minStake; if a pool requires more, the tx will revert
+                // and the receipt-poll will surface the failure).
+                let stake_wei = marketplace_client::MIN_PROVIDER_STAKE_WEI.to_string();
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_learning_pool_status(
+                                format!("Submitting joinPool({}) tx…", pool_id).into()
+                            );
+                        }
+                    }
+                });
+                match core.wallet
+                    .send_transaction_with_data(&from, addr, &stake_wei, data, "")
+                    .await
+                {
+                    Ok(tx) => {
+                        tracing::info!("Learning: joinPool tx={}", tx);
+                        let msg = format!("Joined pool {} — tx {}", pool_id, short_hash(&tx));
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(msg.into());
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Learning: joinPool failed: {}", e);
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(format!("Join failed: {}", e).into());
+                                }
+                            }
+                        });
+                    }
                 }
-                Ok(pools) => {
-                    tracing::info!("Learning: {} pools found, staking to first", pools.len());
-                    // Once deployed: send joinPool(poolId) tx with stake value
-                }
-                Err(e) => tracing::error!("Learning: pool query failed: {}", e),
-            }
+            });
         });
-    });
+    }
+
+    // --- Learning: Leave Pool ---
+    // Data source: LearningPool.leavePool(uint256) — returns user's stake
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_learning_leave_pool(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let chain_id = core.config.read().await.chain_id;
+                let Some(addr) = marketplace_client::learning_pool_address(chain_id) else {
+                    return;
+                };
+                let accounts = core.wallet.list_accounts().await;
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else { return; };
+                let pool_id = ui_w.upgrade()
+                    .map(|ui| ui.get_learning_current_pool_id() as u64)
+                    .unwrap_or(0);
+                let data = marketplace_client::encode_leave_pool(pool_id);
+                match core.wallet
+                    .send_transaction_with_data(&from, addr, "0", data, "")
+                    .await
+                {
+                    Ok(tx) => {
+                        tracing::info!("Learning: leavePool tx={}", tx);
+                        let msg = format!("Left pool {} — tx {}", pool_id, short_hash(&tx));
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(msg.into());
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Learning: leavePool failed: {}", e);
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_learning_pool_status(format!("Leave failed: {}", e).into());
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+        });
+    }
 
     // --- Learning: Claim Earnings ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    ui.on_learning_claim_earnings(move || {
-        tracing::info!("Learning: claim earnings requested");
-        let core = core.clone();
-        spawn_async(&rt_h, async move {
-            match core.learning.get_earnings("default").await {
-                Ok(earnings) => tracing::info!("Learning: earnings = {} SALT", earnings),
-                Err(e) => tracing::error!("Learning: get earnings failed: {}", e),
-            }
+    // Data source: ContributionAccounting.claimRewards() — same accounting
+    // contract that compute uses; both pool members and compute providers
+    // accrue claimable balances through it.
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_learning_claim_earnings(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let chain_id = core.config.read().await.chain_id;
+                let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id) else {
+                    return;
+                };
+                let accounts = core.wallet.list_accounts().await;
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else { return; };
+                let data = marketplace_client::encode_claim_rewards();
+                match core.wallet
+                    .send_transaction_with_data(&from, acc_addr, "0", data, "")
+                    .await
+                {
+                    Ok(tx) => {
+                        tracing::info!("Learning: claimRewards tx={}", tx);
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_clipboard_toast(
+                                        format!("Claim submitted — tx {}", short_hash(&tx)).into()
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Learning: claimRewards failed: {}", e);
+                    }
+                }
+            });
         });
-    });
+    }
 
     // =========================================================================
     // EDUCATION WIRING — Institutional vault, classroom, budget, forwarder
