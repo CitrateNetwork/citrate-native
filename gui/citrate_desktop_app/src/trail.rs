@@ -153,6 +153,33 @@ impl TrailRecorder {
                     duration_ms: Some(*duration_ms),
                 }
             }
+            // T2-12: chat messages flow through the trail too. Operators
+            // reviewing the audit log see the conversation that prompted
+            // each tool call, not just the tool calls in isolation. We
+            // truncate the content to 2KB to keep the trail size sane —
+            // the full message lives in the in-memory chat history.
+            AppEvent::ChatMessage { role, content, chars } => {
+                let truncated = if content.len() > 2048 {
+                    format!("{}…", &content[..2048])
+                } else {
+                    content.clone()
+                };
+                TrailEvent {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    session_id: self.session_id.clone(),
+                    timestamp: now,
+                    event_type: format!("chat_{}", role),
+                    tool_name: None,
+                    data: serde_json::json!({
+                        "role": role,
+                        "content": truncated,
+                        "chars": chars,
+                    }),
+                    risk_level: None,
+                    approved: None,
+                    duration_ms: None,
+                }
+            }
             _ => return, // Other events don't need trail recording yet
         };
         self.record(trail_event).await;

@@ -86,6 +86,10 @@ export component App inherits Window {
     in property <string> dag-detail-parent: "";
     in property <int> dag-detail-blue-score: 0;
     in property <string> dag-detail-proposer: "";
+    // T2-4: DAG-wide stats from citrate_getDagStats RPC
+    in property <int> dag-tips-count: 0;
+    in property <int> dag-blue-score: 0;
+    in property <int> dag-finalized-height: 0;
     in property <string> wallet-selected-address: "";
     in property <string> wallet-selected-label: "";
     in property <string> wallet-selected-balance: "0";
@@ -164,6 +168,14 @@ export component App inherits Window {
     // App version
     in property <string> app-version: "0.1.0";
     in-out property <bool> show-send-dialog: false;
+    // T2-9: create-pool modal state. Inline in app.slint because
+    // it's a single-form modal — not worth a separate component file.
+    in-out property <bool> show-create-pool-dialog: false;
+    in-out property <string> create-pool-name: "";
+    in-out property <string> create-pool-description: "";
+    in property <string> create-pool-status: "";  // "submitting", "ok", "error: …"
+    callback create-pool-submit(string, string);  // name, description
+    callback create-pool-close;
     in property <string> send-tx-hash: "";
     in property <string> send-error: "";
     in property <bool> send-sending: false;
@@ -230,7 +242,6 @@ export component App inherits Window {
     callback learning-claim-earnings;
 
     // Compute callbacks
-    callback compute-post-job;
     callback compute-register-provider;
     callback compute-claim-earnings;        // P960-D WP-D.4
     callback compute-refresh;
@@ -306,6 +317,10 @@ export component App inherits Window {
     in property <int>    ops-hermes-session-count: 0;
     callback ops-copy-sidecar-config;
     callback ops-set-scope(string);  // P960-K T1-2: "guided" | "read-only"
+    // T2-5: chain-level emergency pause (citrate_emergencyPause RPC)
+    in property <bool> ops-chain-paused: false;
+    callback ops-pause-chain;
+    callback ops-resume-chain;
     in property <string> ops-grant-scope: "guided";
     callback ops-emergency-stop;
     callback ops-refresh-trail;
@@ -426,6 +441,9 @@ export component App inherits Window {
                 // DAG Explorer
                 if root.active-tab == "dag" : DagExplorer {
                     current-height: root.block-height;
+                    dag-tips-count: root.dag-tips-count;
+                    dag-blue-score: root.dag-blue-score;
+                    dag-finalized-height: root.dag-finalized-height;
                     show-detail: root.dag-show-detail;
                     detail-hash: root.dag-detail-hash;
                     detail-height: root.dag-detail-height;
@@ -539,6 +557,7 @@ export component App inherits Window {
                         join-pool => { root.learning-join-pool(); }
                         leave-pool => { root.learning-leave-pool(); }
                         claim-earnings => { root.learning-claim-earnings(); }
+                        open-create-pool => { root.show-create-pool-dialog = true; }
                     }
                     EduPanel {
                         vertical-stretch: 1;
@@ -631,6 +650,9 @@ export component App inherits Window {
                     hermes-session-count: root.ops-hermes-session-count;
                     copy-sidecar-config => { root.ops-copy-sidecar-config(); }
                     set-scope(s) => { root.ops-set-scope(s); }
+                    chain-paused: root.ops-chain-paused;
+                    pause-chain => { root.ops-pause-chain(); }
+                    resume-chain => { root.ops-resume-chain(); }
                     grant-scope: root.ops-grant-scope;
                     emergency-stop => { root.ops-emergency-stop(); }
                     refresh-trail => { root.ops-refresh-trail(); }
@@ -710,6 +732,124 @@ export component App inherits Window {
         close => {
             root.show-send-dialog = false;
             root.wallet-send-close();
+        }
+    }
+
+    // T2-9: create-pool overlay. Inline modal — name + description
+    // inputs, fixed Open access + 1000 SALT minStake for v1.
+    if root.show-create-pool-dialog : Rectangle {
+        x: 0; y: 0; width: 100%; height: 100%;
+        background: #00000099;
+        TouchArea {
+            // Backdrop click closes (matches SendDialog convention)
+            clicked => {
+                root.show-create-pool-dialog = false;
+                root.create-pool-close();
+            }
+        }
+        Rectangle {
+            width: 480px; height: 360px;
+            x: parent.width / 2 - 240px;
+            y: parent.height / 2 - 180px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-md;
+                Text { text: "Create learning pool"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text {
+                    text: "Open-access pool with 1000 SALT minimum stake. You'll be the first member.";
+                    color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
+                }
+                // Name input
+                Text { text: "Name"; color: Theme.text-secondary; font-size: 11px; }
+                Rectangle {
+                    height: 32px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-secondary;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    name-input := TextInput {
+                        x: 8px; y: 0; width: parent.width - 16px; height: parent.height;
+                        text <=> root.create-pool-name;
+                        font-size: 12px;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        single-line: true;
+                    }
+                }
+                // Description input
+                Text { text: "Description"; color: Theme.text-secondary; font-size: 11px; }
+                Rectangle {
+                    height: 64px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-secondary;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    desc-input := TextInput {
+                        x: 8px; y: 4px; width: parent.width - 16px; height: parent.height - 8px;
+                        text <=> root.create-pool-description;
+                        font-size: 12px;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+                }
+                // Status line (submitting / ok / error)
+                if root.create-pool-status != "" : Text {
+                    text: root.create-pool-status;
+                    color: Theme.text-muted;
+                    font-size: 10px;
+                    font-family: Theme.font-mono;
+                    wrap: word-wrap;
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        width: 90px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: cancel-ta.has-hover ? Theme.bg-tertiary : Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        animate background { duration: 120ms; }
+                        Text {
+                            text: "Cancel";
+                            color: Theme.text-secondary; font-size: 12px;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        cancel-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.show-create-pool-dialog = false;
+                                root.create-pool-close();
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: 130px; height: 32px;
+                        border-radius: Theme.radius-md;
+                        background: submit-ta.has-hover ? Theme.accent-hover : Theme.accent;
+                        animate background { duration: 120ms; }
+                        Text {
+                            text: "Create · 1000 SALT";
+                            color: #000000; font-size: 12px; font-weight: 600;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        submit-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.create-pool-submit(
+                                    root.create-pool-name,
+                                    root.create-pool-description
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

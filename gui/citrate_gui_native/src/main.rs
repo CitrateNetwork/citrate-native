@@ -1214,6 +1214,31 @@ fn main() {
                     }
                 });
 
+                // T2-5: chain pause status — citrate_emergencyStatus
+                let rpc_port = core.config.read().await.rpc_port;
+                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let client = reqwest::Client::new();
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "citrate_emergencyStatus",
+                    "params": [],
+                    "id": 1,
+                });
+                let paused = match client.post(&rpc_url).json(&body).send().await {
+                    Ok(resp) => {
+                        let json: Option<serde_json::Value> = resp.json().await.ok();
+                        json.and_then(|j| j.get("result").and_then(|r| r.get("paused")).and_then(|p| p.as_bool()))
+                            .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                };
+                let ui_for_chain = ui_w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_for_chain.upgrade() {
+                        ui.set_ops_chain_paused(paused);
+                    }
+                });
+
                 // P960-J: MCP host status — separate await so the
                 // main ops hydration doesn't block on mcp_host.
                 let status = core.mcp_host.status().await;
@@ -1235,6 +1260,32 @@ fn main() {
         }
 
         // Hydrate Compute contract status on activation
+        // T2-6: query ModelRegistry.getModelCount() on Models open so
+        // the panel shows the real registered-model count instead of 0.
+        if tab_str == "models" {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let chain_id = core.config.read().await.chain_id;
+                let rpc_port = core.config.read().await.rpc_port;
+                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let Some(addr) = marketplace_client::model_registry_address(chain_id) else {
+                    return;
+                };
+                let data = marketplace_client::encode_model_count();
+                let count = match marketplace_client::eth_call(&rpc_url, addr, &data).await {
+                    Ok(r) => marketplace_client::decode_uint256_u128(&r).unwrap_or(0) as i32,
+                    Err(_) => 0,
+                };
+                tracing::info!("Models: ModelRegistry.getModelCount() = {}", count);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_models_count(count);
+                    }
+                });
+            });
+        }
+
         // P960-K T1-4: re-probe dependency health on every settings open
         if tab_str == "settings" {
             let core = core.clone();
@@ -1767,6 +1818,56 @@ fn main() {
                         });
                     }
                 }
+
+                // T2-4: DAG stats poll. Every 30s when DAG tab is open.
+                // Calls citrate_getDagStats (custom RPC at eth_rpc.rs:2034)
+                // which returns tips, height, blue_score, etc.
+                if tick_counter % 10 == 0 {
+                    let active_tab = ui_handle.upgrade()
+                        .map(|ui| ui.get_active_tab().to_string());
+                    if active_tab.as_deref() == Some("dag") {
+                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
+                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                        let body = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "citrate_getDagStats",
+                            "params": [],
+                            "id": 1,
+                        });
+                        let client = reqwest::Client::new();
+                        let stats = rt_handle.block_on(async {
+                            client.post(&rpc_url)
+                                .json(&body)
+                                .timeout(std::time::Duration::from_secs(2))
+                                .send().await
+                                .ok()?
+                                .json::<serde_json::Value>().await.ok()
+                        });
+                        if let Some(stats) = stats {
+                            let tips_count = stats.get("result")
+                                .and_then(|r| r.get("tips"))
+                                .and_then(|t| t.as_array())
+                                .map(|a| a.len() as i32)
+                                .unwrap_or(0);
+                            let blue_score = stats.get("result")
+                                .and_then(|r| r.get("blue_score"))
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as i32;
+                            let height = stats.get("result")
+                                .and_then(|r| r.get("height"))
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as i32;
+                            let ui_h = ui_handle.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_h.upgrade() {
+                                    ui.set_dag_tips_count(tips_count);
+                                    ui.set_dag_blue_score(blue_score);
+                                    ui.set_dag_finalized_height(height);
+                                }
+                            });
+                        }
+                    }
+                }
             }
         });
     }
@@ -2087,6 +2188,16 @@ fn main() {
             let model = std::rc::Rc::new(slint::VecModel::from(msgs));
             ui.set_chat_messages(model.into());
         }
+
+        // T2-12: emit user message into the trail. The async block
+        // below records the eventual assistant response on completion.
+        let msg_for_trail = msg.clone();
+        let chars = msg.chars().count();
+        core.events.publish(citrate_desktop_app::event_bus::AppEvent::ChatMessage {
+            role: "user".to_string(),
+            content: msg_for_trail,
+            chars,
+        });
 
         // Send async WITH tool execution — the live chat path uses send_message_with_tools
         spawn_async(&rt_h, async move {
@@ -2459,6 +2570,16 @@ fn main() {
             ).await {
                 Ok(response) => {
                     let content = clean_markdown(&response.content);
+                    // T2-12: emit assistant response into the trail.
+                    // Tool-result events are recorded separately via
+                    // ToolCallCompleted; this captures the model's
+                    // final natural-language reply.
+                    let response_chars = content.chars().count();
+                    core.events.publish(citrate_desktop_app::event_bus::AppEvent::ChatMessage {
+                        role: "assistant".to_string(),
+                        content: content.clone(),
+                        chars: response_chars,
+                    });
                     // Build structured message list. Include tool-role
                     // messages so the user sees the actual structured
                     // chain data (not just the LLM's summary of it).
@@ -3428,6 +3549,145 @@ fn main() {
         });
     }
 
+    // --- Learning: Create Pool (T2-9) ---
+    // Data source: LearningPool.createPool(string,string,uint8,uint256)
+    //   payable. v1 hardcodes Open access (uint8=0) + 1000 SALT minStake;
+    //   custom values are a follow-up sprint.
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_create_pool_submit(move |name, description| {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            let name_s = name.to_string();
+            let desc_s = description.to_string();
+            spawn_async(&rt_h, async move {
+                if name_s.trim().is_empty() {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_create_pool_status("Name is required".into());
+                            }
+                        }
+                    });
+                    return;
+                }
+                let chain_id = core.config.read().await.chain_id;
+                let Some(addr) = marketplace_client::learning_pool_address(chain_id) else {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_create_pool_status(
+                                    format!("LearningPool not deployed on chain {}", chain_id).into()
+                                );
+                            }
+                        }
+                    });
+                    return;
+                };
+                let accounts = core.wallet.list_accounts().await;
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_create_pool_status("Create a wallet first".into());
+                            }
+                        }
+                    });
+                    return;
+                };
+                // V1 fixed: Open access (0) + 1000 SALT minStake
+                let data = marketplace_client::encode_create_pool(
+                    &name_s, &desc_s, 0, marketplace_client::MIN_PROVIDER_STAKE_WEI,
+                );
+                let stake_wei = marketplace_client::MIN_PROVIDER_STAKE_WEI.to_string();
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_create_pool_status("Submitting createPool tx…".into());
+                        }
+                    }
+                });
+                match core.wallet
+                    .send_transaction_with_data(&from, addr, &stake_wei, data, "")
+                    .await
+                {
+                    Ok(tx) => {
+                        tracing::info!("Learning: createPool tx={}", tx);
+                        // Poll receipt — same helper used everywhere else.
+                        let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                        let final_msg = match poll_tx_receipt(&rpc_url, &tx).await {
+                            Ok(ReceiptOutcome::Confirmed { block_number }) => {
+                                format!("Pool created in block {} — closing dialog", block_number)
+                            }
+                            Ok(ReceiptOutcome::Reverted) => {
+                                "createPool reverted — check the contract revert reason".to_string()
+                            }
+                            Ok(ReceiptOutcome::Pending) => {
+                                format!("Still pending — tx {}", short_hash(&tx))
+                            }
+                            Err(e) => format!("Receipt poll failed: {}", e),
+                        };
+                        let dismiss = final_msg.starts_with("Pool created");
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_create_pool_status(final_msg.into());
+                                    if dismiss {
+                                        // Close the modal after a short
+                                        // delay so the user sees the
+                                        // success message.
+                                        let ui_for_dismiss = ui_w.clone();
+                                        slint::Timer::single_shot(
+                                            std::time::Duration::from_millis(2500),
+                                            move || {
+                                                if let Some(ui) = ui_for_dismiss.upgrade() {
+                                                    ui.set_show_create_pool_dialog(false);
+                                                    ui.set_create_pool_status("".into());
+                                                    ui.set_create_pool_name("".into());
+                                                    ui.set_create_pool_description("".into());
+                                                }
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!("Learning: createPool send failed: {}", e);
+                        let err_msg = format!("Tx send failed: {}", e);
+                        let _ = slint::invoke_from_event_loop({
+                            let ui_w = ui_w.clone();
+                            move || {
+                                if let Some(ui) = ui_w.upgrade() {
+                                    ui.set_create_pool_status(err_msg.into());
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+        });
+    }
+    // create-pool dialog close handler
+    {
+        let ui_w = ui.as_weak();
+        ui.on_create_pool_close(move || {
+            if let Some(ui) = ui_w.upgrade() {
+                ui.set_create_pool_status("".into());
+                ui.set_create_pool_name("".into());
+                ui.set_create_pool_description("".into());
+            }
+        });
+    }
+
     // =========================================================================
     // EDUCATION WIRING — Institutional vault, classroom, budget, forwarder
     // =========================================================================
@@ -3538,34 +3798,10 @@ fn main() {
     // COMPUTE MARKETPLACE WIRING — Post job, register provider, refresh
     // =========================================================================
 
-    // --- Compute: Post Job ---
-    // Data source: ComputeMarketplace.postJob(bytes32,uint256,uint256) — sends tx
-    // Contract: not yet deployed (address TBD from forge script output)
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_compute_post_job(move || {
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("Compute: post job requested");
-        spawn_async(&rt_h, async move {
-            match core.compute.list_providers().await {
-                Ok(providers) if providers.is_empty() => {
-                    tracing::info!("Compute: no providers — contract not deployed");
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_compute_provider_status("No providers — contracts not yet deployed".into());
-                        }
-                    });
-                }
-                Ok(providers) => {
-                    tracing::info!("Compute: {} providers available", providers.len());
-                    // Once deployed: send postJob(modelHash, budget, deadline) tx
-                }
-                Err(e) => tracing::error!("Compute: provider query failed: {}", e),
-            }
-        });
-    });
+    // (T2-1: on_compute_post_job retired. Callback existed but no
+    // UI button invoked it. Job posting from the GUI is a future
+    // feature behind a real UI flow — when that lands, restore the
+    // handler then.)
 
     // --- Compute: Register Provider (P960-D WP-D.3) ---
     // Data source: ComputeMarketplace.registerProvider(bytes32[])
@@ -3845,6 +4081,88 @@ fn main() {
 
     // --- Operations: Refresh Trail ---
     let core = app_core.clone();
+    // --- Ops: Pause / Resume chain (T2-5) ---
+    // Calls citrate_emergencyPause / Resume / Status RPCs. Devnet
+    // mode (operator_token=None, is_public_bind=false) lets the
+    // local GUI call these without auth headers; production
+    // operators with a public bind will need to set the token.
+    fn emergency_rpc_body(method: &'static str) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": [],
+            "id": 1,
+        })
+    }
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_ops_pause_chain(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                let client = reqwest::Client::new();
+                match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyPause")).send().await {
+                    Ok(_) => {
+                        tracing::warn!("Operations: chain PAUSED via RPC");
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_ops_chain_paused(true);
+                                ui.set_clipboard_toast("Block production paused".into());
+                                let ui_for_clear = ui_w.clone();
+                                slint::Timer::single_shot(
+                                    std::time::Duration::from_millis(3000),
+                                    move || {
+                                        if let Some(ui) = ui_for_clear.upgrade() {
+                                            ui.set_clipboard_toast("".into());
+                                        }
+                                    },
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => tracing::error!("Operations: pause failed: {}", e),
+                }
+            });
+        });
+    }
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_ops_resume_chain(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                let client = reqwest::Client::new();
+                match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyResume")).send().await {
+                    Ok(_) => {
+                        tracing::info!("Operations: chain RESUMED via RPC");
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_ops_chain_paused(false);
+                                ui.set_clipboard_toast("Block production resumed".into());
+                                let ui_for_clear = ui_w.clone();
+                                slint::Timer::single_shot(
+                                    std::time::Duration::from_millis(3000),
+                                    move || {
+                                        if let Some(ui) = ui_for_clear.upgrade() {
+                                            ui.set_clipboard_toast("".into());
+                                        }
+                                    },
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => tracing::error!("Operations: resume failed: {}", e),
+                }
+            });
+        });
+    }
+
     // --- Ops: Set scope (P960-K T1-2) ---
     // Flips AppCore.session_policy between Guided and ReadOnly. The
     // tool dispatch reads this on every call so the change takes

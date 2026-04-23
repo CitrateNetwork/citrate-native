@@ -113,6 +113,16 @@ pub enum AppEvent {
         duration_ms: u64,
         result_summary: String,
     },
+
+    /// Chat message — user prompt or assistant response. T2-12 wires
+    /// these into the trail recorder so operators reviewing the
+    /// audit log see the conversation that prompted each tool call,
+    /// not just the tool calls themselves.
+    ChatMessage {
+        role: String,    // "user" | "assistant" | "system"
+        content: String,
+        chars: usize,
+    },
 }
 
 /// Broadcast-based event bus. Multiple subscribers can listen.
