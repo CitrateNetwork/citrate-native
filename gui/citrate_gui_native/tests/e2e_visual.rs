@@ -188,44 +188,8 @@ fn e2e_all_surfaces() {
         save_snapshot(&app, "09_models_tab_with_model");
     });
 
-    // ── 10. Contracts tab (ready) ──
-    check!("contracts_tab_ready", {
-        app.set_active_tab("contracts".into());
-        assert!(!app.get_contracts_compiling());
-        save_snapshot(&app, "10_contracts_tab_ready");
-    });
-
-    // ── 11. Contracts tab (compiled) ──
-    check!("contracts_compiled", {
-        app.set_contracts_compile_status("Compiled 3 contracts".into());
-        app.set_contracts_selected_contract("Counter".into());
-        save_snapshot(&app, "11_contracts_compiled");
-    });
-
-    // ── 12. Contracts tab (deployed) ──
-    check!("contracts_deployed", {
-        app.set_contracts_deployed_address("tx: 0xabc123def456".into());
-        save_snapshot(&app, "12_contracts_deployed");
-    });
-
-    // ── 13. Contracts compile error ──
-    check!("contracts_compile_error", {
-        app.set_contracts_compile_status("1 error".into());
-        app.set_contracts_compile_error("Counter.sol:15: TypeError: undeclared identifier".into());
-        save_snapshot(&app, "13_contracts_compile_error");
-        app.set_contracts_compile_error("".into());
-        app.set_contracts_deployed_address("".into());
-    });
-
-    // ── 14. Contracts file list (P960-G) ──
-    check!("contracts_file_list", {
-        app.set_active_tab("contracts".into());
-        app.set_contract_watch_root("/workspace/contracts/src".into());
-        app.set_contract_watch_active(true);
-        assert_eq!(app.get_active_tab().to_string(), "contracts");
-        assert!(app.get_contract_watch_active());
-        save_snapshot(&app, "14_contracts_file_list");
-    });
+    // (Contracts tab snapshots #10–#14 retired in P960-H along with
+    // the Contracts surface itself.)
 
     // ── 15. Operations tab (default) ──
     check!("operations_default", {

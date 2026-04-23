@@ -113,18 +113,7 @@ fn configure_chat(app: &App) {
     app.set_chat_messages(model.into());
 }
 
-fn configure_contracts(app: &App) {
-    app.set_active_tab("contracts".into());
-    app.set_contracts_compile_status("Compiled 1 contract".into());
-    app.set_contracts_compiling(false);
-    app.set_contracts_selected_contract("InferenceRouter".into());
-    app.set_contracts_deploying(false);
-    app.set_contracts_deployed_address(
-        "tx: 0xfeedface00000000000000000000000000000000000000000000000000000001".into(),
-    );
-    app.set_contract_watch_root("/workspace/contracts/src".into());
-    app.set_contract_watch_active(true);
-}
+// (configure_contracts retired in P960-H — Contracts surface dropped.)
 
 fn configure_models(app: &App) {
     app.set_active_tab("models".into());
@@ -218,7 +207,6 @@ fn ui_visual_proof_suite() {
             ("dashboard", configure_dashboard as fn(&App)),
             ("wallet", configure_wallet),
             ("chat", configure_chat),
-            ("contracts", configure_contracts),
             ("models", configure_models),
             ("compute", configure_compute),
             ("operations", configure_operations),
@@ -288,41 +276,8 @@ fn ui_visual_proof_suite() {
             app.window().take_snapshot().expect("snap"));
     }
 
-    // ── Journey 3: Compile → error → fix → deploy ──
-    {
-        app.set_active_tab("contracts".into());
-        assert!(!app.get_contracts_compiling());
-        save_snapshot("journey_contracts_01_ready",
-            app.window().take_snapshot().expect("snap"));
-
-        app.set_contracts_compiling(true);
-        app.set_contracts_compile_status("Compiling...".into());
-        save_snapshot("journey_contracts_02_compiling",
-            app.window().take_snapshot().expect("snap"));
-
-        app.set_contracts_compiling(false);
-        app.set_contracts_compile_status("1 error".into());
-        app.set_contracts_compile_error("Counter.sol:15: TypeError: undeclared identifier".into());
-        save_snapshot("journey_contracts_03_error",
-            app.window().take_snapshot().expect("snap"));
-
-        app.set_contracts_compile_error("".into());
-        app.set_contracts_compile_status("Compiled 1 contract".into());
-        app.set_contracts_selected_contract("Counter".into());
-        save_snapshot("journey_contracts_04_compiled",
-            app.window().take_snapshot().expect("snap"));
-
-        app.set_contracts_deploying(true);
-        save_snapshot("journey_contracts_05_deploying",
-            app.window().take_snapshot().expect("snap"));
-
-        app.set_contracts_deploying(false);
-        app.set_contracts_deployed_address("tx: 0xdeadbeef00001".into());
-        assert!(!app.get_contracts_deployed_address().to_string().is_empty());
-        save_snapshot("journey_contracts_06_deployed",
-            app.window().take_snapshot().expect("snap"));
-        app.set_contracts_deployed_address("".into());
-    }
+    // (Journey 3 — compile/deploy — retired in P960-H along with the
+    // Contracts surface itself.)
 
     // ── Journey 4: Operations e-stop ──
     {
