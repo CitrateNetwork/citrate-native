@@ -149,6 +149,7 @@ proptest! {
             data_dir: "/tmp/test".to_string(),
             rpc_port,
             p2p_port,
+            mcp_port: 0,
             bootnodes: vec![],
             theme: theme.clone(),
             ai_keys: std::collections::HashMap::new(),

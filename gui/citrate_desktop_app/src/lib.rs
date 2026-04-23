@@ -32,6 +32,14 @@ pub struct AppCore {
     // were retired in P960-H along with the Contracts surface that
     // consumed them. If a future panel needs them, lift them back
     // from git history rather than carrying dead infrastructure.)
+    /// MCP server — capability boundary for external agent runtimes
+    /// (P960-J). Shared with McpHostService; direct handle kept here
+    /// so future panels can register grants or tools programmatically.
+    pub mcp: Arc<citrate_agent_core::mcp_server::McpServer>,
+    /// MCP HTTP host — serves JSON-RPC 2.0 over 127.0.0.1:{mcp_port}
+    /// so external agent runtimes (Hermes et al.) can discover and
+    /// connect. Status feeds the Operations panel.
+    pub mcp_host: Arc<services::mcp_host::McpHostService>,
     /// AI chat — conversation with on-chain AI via citrate_chatCompletion
     pub chat: Arc<services::ChatService>,
     /// Model registry — browse, deploy, and run inference on AI models
@@ -62,6 +70,11 @@ pub struct AppConfig {
     pub data_dir: String,
     pub rpc_port: u16,
     pub p2p_port: u16,
+    /// P960-J: port the MCP host binds on 127.0.0.1. 9600 by default.
+    /// Kept at 0 in serialized form means "use DEFAULT_MCP_PORT" —
+    /// older configs without this field migrate cleanly.
+    #[serde(default)]
+    pub mcp_port: u16,
     pub bootnodes: Vec<String>,
     pub theme: String,
     /// AI provider API keys (provider name → encrypted key)
@@ -105,6 +118,7 @@ impl Default for AppConfig {
             data_dir: data_dir_for_network("testnet"),
             rpc_port: 18545,
             p2p_port: 30304,
+            mcp_port: services::mcp_host::DEFAULT_MCP_PORT,
             bootnodes: vec![
                 "159.65.227.42:30303".to_string(),
             ],
@@ -254,6 +268,13 @@ impl AppCore {
         // Agent tool registry — register available tools for chat function calling
         let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
 
+        // P960-J: MCP server + HTTP host for external agent runtimes.
+        // Constructed here but NOT bound — AppCore::start() (the
+        // async init path) calls mcp_host.start(port) so bind errors
+        // surface on startup rather than in the constructor.
+        let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(tool_registry.clone()));
+        let mcp_host = Arc::new(services::mcp_host::McpHostService::new(mcp.clone()));
+
         // Trail recorder — subscribes to event bus and records canonical TrailEvents.
         // LogSeq path from config (if enabled).
         let logseq_path = {
@@ -285,6 +306,8 @@ impl AppCore {
         Self {
             node,
             wallet,
+            mcp,
+            mcp_host,
             chat,
             models,
             blocks,
