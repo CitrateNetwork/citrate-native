@@ -36,6 +36,11 @@ pub struct AppCore {
     /// (P960-J). Shared with McpHostService; direct handle kept here
     /// so future panels can register grants or tools programmatically.
     pub mcp: Arc<citrate_agent_core::mcp_server::McpServer>,
+    /// In-GUI agent session's active policy (P960-K T1-2). Defaults
+    /// to Guided (every high-risk tool needs explicit approval).
+    /// User can flip to ReadOnly from the Operations panel to lock
+    /// mutation tools out entirely without locking the whole wallet.
+    pub session_policy: Arc<RwLock<citrate_agent_core::canonical::PolicyProfile>>,
     /// MCP HTTP host — serves JSON-RPC 2.0 over 127.0.0.1:{mcp_port}
     /// so external agent runtimes (Hermes et al.) can discover and
     /// connect. Status feeds the Operations panel.
@@ -274,6 +279,9 @@ impl AppCore {
         // surface on startup rather than in the constructor.
         let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(tool_registry.clone()));
         let mcp_host = Arc::new(services::mcp_host::McpHostService::new(mcp.clone()));
+        let session_policy = Arc::new(RwLock::new(
+            citrate_agent_core::canonical::PolicyProfile::Guided
+        ));
 
         // Trail recorder — subscribes to event bus and records canonical TrailEvents.
         // LogSeq path from config (if enabled).
@@ -308,6 +316,7 @@ impl AppCore {
             wallet,
             mcp,
             mcp_host,
+            session_policy,
             chat,
             models,
             blocks,

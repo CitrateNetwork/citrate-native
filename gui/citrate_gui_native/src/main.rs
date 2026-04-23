@@ -436,11 +436,129 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
     }
 }
 
-/// Convert a decimal wei string (what eth_getBalance returns) to a
-/// human-readable SALT string with 4 fractional digits. Handles either
-/// "0x…" hex or plain decimal input.
-///
-/// Returns "0" on any parse failure rather than crashing the chat flow.
+// ── P960-K T1-4: dependency health preflight ────────────────────
+//
+// Three external services the GUI depends on. Each probe is a
+// 2-second TCP connect or HTTP call; they run on Settings tab open
+// and on the explicit "Refresh" button. We surface real status so
+// users on first run know which dependency is missing instead of
+// guessing why panels are degraded.
+
+/// Health status for one dependency. "ok" = reachable, "down" =
+/// probe failed, "checking" = probe in flight (transient).
+#[derive(Debug, Clone, Copy)]
+enum HealthState {
+    Ok,
+    Down,
+}
+
+impl HealthState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            HealthState::Ok => "ok",
+            HealthState::Down => "down",
+        }
+    }
+}
+
+/// TCP-connect probe. Fast, no protocol parsing — just "can I open
+/// a socket to host:port within 2s?"
+async fn probe_tcp(host_port: &str) -> HealthState {
+    use tokio::net::TcpStream;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        TcpStream::connect(host_port),
+    ).await {
+        Ok(Ok(_)) => HealthState::Ok,
+        _ => HealthState::Down,
+    }
+}
+
+/// IPFS HTTP API probe — POST /api/v0/version. Returns Ok iff the
+/// daemon responds 200 within 2s.
+async fn probe_ipfs(api_url: &str) -> HealthState {
+    let url = format!("{}/api/v0/version", api_url.trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return HealthState::Down,
+    };
+    match client.post(&url).send().await {
+        Ok(resp) if resp.status().is_success() => HealthState::Ok,
+        _ => HealthState::Down,
+    }
+}
+
+/// JSON-RPC probe — eth_blockNumber on the local node.
+async fn probe_rpc(rpc_url: &str) -> HealthState {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return HealthState::Down,
+    };
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": [],
+        "id": 1,
+    });
+    match client.post(rpc_url).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            // Make sure the response is actually well-formed JSON-RPC,
+            // not just a 200 from some other server squatting the port.
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) if json.get("result").and_then(|v| v.as_str()).is_some() => {
+                    HealthState::Ok
+                }
+                _ => HealthState::Down,
+            }
+        }
+        _ => HealthState::Down,
+    }
+}
+
+/// Run all three health probes against the current AppCore config
+/// and push the results back to the UI. Sequential so the spinner
+/// doesn't all flip at once but it's still done in ~6s total worst-case.
+async fn run_health_probes(
+    core: &Arc<AppCore>,
+    ui_w: slint::Weak<App>,
+) {
+    let config = core.config.read().await;
+    let bootnode = config.bootnodes.first().cloned()
+        .unwrap_or_else(|| "<none configured>".to_string());
+    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+    drop(config);
+    let ipfs_url = "http://127.0.0.1:5001".to_string();
+
+    // 1. Bootnode TCP
+    let bootnode_state = if bootnode.contains(':') && !bootnode.starts_with('<') {
+        probe_tcp(&bootnode).await
+    } else {
+        HealthState::Down
+    };
+
+    // 2. IPFS HTTP API
+    let ipfs_state = probe_ipfs(&ipfs_url).await;
+
+    // 3. Local node RPC
+    let rpc_state = probe_rpc(&rpc_url).await;
+
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(ui) = ui_w.upgrade() else { return; };
+        ui.set_health_bootnode_status(bootnode_state.as_str().into());
+        ui.set_health_bootnode_detail(bootnode.into());
+        ui.set_health_ipfs_status(ipfs_state.as_str().into());
+        ui.set_health_ipfs_detail(ipfs_url.into());
+        ui.set_health_node_rpc_status(rpc_state.as_str().into());
+        ui.set_health_node_rpc_detail(rpc_url.into());
+    });
+}
+
 /// Outcome of polling `eth_getTransactionReceipt` for a submitted tx.
 ///
 /// Ok(Confirmed(block_number_hex)) — status 0x1, tx included in a block.
@@ -1065,13 +1183,21 @@ fn main() {
                 let logseq_path = core.trail.logseq_path().await;
                 let logseq_status = if logseq_path.is_some() { "online" } else { "disabled" };
 
+                // P960-K T1-2: real session policy from AppCore
+                let scope_str = match *core.session_policy.read().await {
+                    citrate_agent_core::canonical::PolicyProfile::ReadOnly => "read-only",
+                    citrate_agent_core::canonical::PolicyProfile::Guided => "guided",
+                    citrate_agent_core::canonical::PolicyProfile::Operator => "operator",
+                    citrate_agent_core::canonical::PolicyProfile::Maintainer => "maintainer",
+                }.to_string();
+
                 let ui_for_ops = ui_w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_for_ops.upgrade() {
                         ui.set_ops_trail_count(trail_count);
                         ui.set_ops_pending_count(pending_count);
                         ui.set_ops_active_sessions(1); // Current session
-                        ui.set_ops_grant_scope("guided".into());
+                        ui.set_ops_grant_scope(scope_str.into());
                         ui.set_ops_logseq_status(logseq_status.into());
                         ui.set_ops_logseq_path(logseq_path.unwrap_or_default().into());
                         // P960-J: MCP host state is set from the
@@ -1109,6 +1235,15 @@ fn main() {
         }
 
         // Hydrate Compute contract status on activation
+        // P960-K T1-4: re-probe dependency health on every settings open
+        if tab_str == "settings" {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                run_health_probes(&core, ui_w).await;
+            });
+        }
+
         if tab_str == "compute" {
             let ui_w = ui_w.clone();
             let core = core.clone();
@@ -1988,6 +2123,10 @@ fn main() {
             // executor can read real chain state instead of stubs.
             let node_for_tools = core.node.clone();
             let blocks_for_tools = core.blocks.clone();
+            // P960-K T1-2: capture session policy so the tool dispatch
+            // can refuse mutation tools under ReadOnly scope before the
+            // approval flow is even reached.
+            let session_policy_for_tools = core.session_policy.clone();
 
             // Use streaming variant for incremental UI updates
             let ui_for_stream = ui_w.clone();
@@ -2002,9 +2141,33 @@ fn main() {
                     let wallet = wallet_for_tools.clone();
                     let node = node_for_tools.clone();
                     let blocks = blocks_for_tools.clone();
+                    let session_policy = session_policy_for_tools.clone();
                     async move {
                         let start_time = std::time::Instant::now();
                         tracing::info!("Tool call: {} with {:?}", tool_name, params);
+
+                        // P960-K T1-2: scope check FIRST — before risk
+                        // classification, before approval. If the
+                        // session's policy doesn't allow this tool's
+                        // category, refuse immediately with a clear
+                        // reason. categorize_tool() + allowed_by() are
+                        // the same helpers the MCP host uses for
+                        // external runtime grants — single enforcement
+                        // path regardless of caller.
+                        {
+                            let policy = session_policy.read().await.clone();
+                            let category = citrate_agent_core::mcp_server::categorize_tool(&tool_name);
+                            if !category.allowed_by(&policy) {
+                                tracing::warn!(
+                                    "Tool '{}' (category {:?}) refused by scope {:?}",
+                                    tool_name, category, policy
+                                );
+                                return Err(format!(
+                                    "Tool '{}' is not allowed under {:?} scope. Switch to Guided in Operations to enable it.",
+                                    tool_name, policy
+                                ));
+                            }
+                        }
 
                         // Determine risk level and target info for each tool
                         let (risk_level, target, scope) = match tool_name.as_str() {
@@ -3682,6 +3845,36 @@ fn main() {
 
     // --- Operations: Refresh Trail ---
     let core = app_core.clone();
+    // --- Ops: Set scope (P960-K T1-2) ---
+    // Flips AppCore.session_policy between Guided and ReadOnly. The
+    // tool dispatch reads this on every call so the change takes
+    // effect immediately for in-app chat invocations.
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_ops_set_scope(move |scope_str| {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            let scope_str = scope_str.to_string();
+            spawn_async(&rt_h, async move {
+                use citrate_agent_core::canonical::PolicyProfile;
+                let new_policy = match scope_str.as_str() {
+                    "read-only" => PolicyProfile::ReadOnly,
+                    _ => PolicyProfile::Guided,
+                };
+                *core.session_policy.write().await = new_policy.clone();
+                tracing::info!("Session policy changed to {:?}", new_policy);
+                let display = scope_str.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_ops_grant_scope(display.into());
+                    }
+                });
+            });
+        });
+    }
+
     // --- Ops: Copy sidecar config (P960-J) ---
     // Writes a Hermes-compatible sidecar config JSON to the clipboard
     // so users can paste it into their Hermes client.
@@ -4200,6 +4393,103 @@ fn main() {
             }
         });
     });
+
+    // =========================================================================
+    // SYSTEM HEALTH (P960-K T1-4)
+    // =========================================================================
+    // Bootnode + IPFS + local node RPC preflight, surfaced in Settings.
+
+    // Refresh-all button → re-run all probes
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_health_refresh_all(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                run_health_probes(&core, ui_w).await;
+            });
+        });
+    }
+
+    // Retry bootnode → just re-runs the probes (single-button UX is
+    // simpler than a per-probe action, and a partial refresh would
+    // be misleading).
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_health_retry_bootnode(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                run_health_probes(&core, ui_w).await;
+            });
+        });
+    }
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_health_retry_node_rpc(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                run_health_probes(&core, ui_w).await;
+            });
+        });
+    }
+
+    // Start IPFS — same path as the existing storage_start_daemon
+    // handler, but triggered from Settings instead of the Files tab.
+    // After invoking, re-probe so the UI flips to "ok".
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        ui.on_health_start_ipfs(move || {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            spawn_async(&rt_h, async move {
+                tracing::info!("Health: starting IPFS daemon (from Settings)");
+                let client = reqwest::Client::new();
+                let already = client
+                    .post("http://127.0.0.1:5001/api/v0/id")
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if !already {
+                    // Best-effort spawn — the existing storage daemon
+                    // service handles this. We just shell out as the
+                    // smallest dependency-light fix.
+                    let _ = std::process::Command::new("ipfs")
+                        .arg("daemon")
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                    // Give it a moment to bind
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                run_health_probes(&core, ui_w).await;
+            });
+        });
+    }
+
+    // Run probes once at startup so the Settings tab shows fresh
+    // values the first time the user opens it (without waiting for
+    // the on_tab_changed firing).
+    {
+        let core = app_core.clone();
+        let ui_w = ui.as_weak();
+        let rt_h = rt.handle().clone();
+        spawn_async(&rt_h, async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            run_health_probes(&core, ui_w).await;
+        });
+    }
 
     // =========================================================================
     // IPFS AUTO-DETECT ON STARTUP
