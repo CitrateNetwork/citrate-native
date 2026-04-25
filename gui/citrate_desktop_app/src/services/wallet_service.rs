@@ -6,8 +6,10 @@
 
 use crate::error::AppError;
 use crate::event_bus::{AppEvent, EventBus};
-use citrate_wallet_core::SessionManager;
+use citrate_wallet_core::{PersistedFailure, SessionManager};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 /// Session timeout: 1 hour. After this many seconds without activity
@@ -20,6 +22,17 @@ const SESSION_TIMEOUT_SECS: u64 = 3600;
 /// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09).
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 const LOCKOUT_DURATION_SECS: u64 = 300;
+
+/// Re-auth value threshold: any send of `>=` this many wei requires
+/// the user to have entered their password within `RE_AUTH_FRESHNESS_SECS`.
+/// 10 SALT (10 * 10^18 wei) per the audit recommendation.
+/// RM-B1 / WP-E2.5 (audit WAL-07).
+pub const RE_AUTH_THRESHOLD_WEI: u128 = 10_000_000_000_000_000_000u128;
+
+/// How recent the password entry must be for high-value sends.
+/// 60 seconds is short enough to defeat session-cookie capture from
+/// a malicious tab while not being so short it kills usability.
+pub const RE_AUTH_FRESHNESS_SECS: u64 = 60;
 
 /// Trait for real wallet backend implementations.
 #[async_trait::async_trait]
@@ -326,6 +339,15 @@ pub struct WalletService {
     /// argument from callers and so per-account semantics are
     /// possible.
     active_address: Arc<RwLock<Option<String>>>,
+    /// When the user most recently proved possession of the password.
+    /// `Some(Instant)` after a successful unlock, `None` after lock or
+    /// before first unlock. Used by the re-auth threshold check.
+    /// RM-B1 / WP-E2.5 (audit WAL-07).
+    last_unlock_at: Arc<RwLock<Option<Instant>>>,
+    /// On-disk path for lockout-state persistence. `None` keeps the
+    /// state in memory only (used by tests and headless contexts).
+    /// RM-B1 / WP-E2.3 (audit WAL-05).
+    lockout_file: Arc<std::sync::RwLock<Option<PathBuf>>>,
     backend: Arc<dyn WalletBackend>,
     /// Current RPC URL, kept in sync with the backend so callers that
     /// need to talk to the SAME node the wallet submits to (e.g. receipt
@@ -347,6 +369,8 @@ impl WalletService {
             accounts: Arc::new(RwLock::new(Vec::new())),
             session_mgr: Arc::new(RwLock::new(new_session_manager())),
             active_address: Arc::new(RwLock::new(None)),
+            last_unlock_at: Arc::new(RwLock::new(None)),
+            lockout_file: Arc::new(std::sync::RwLock::new(None)),
             backend: Arc::new(WalletCoreBackend::new()),
             rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
         }
@@ -360,9 +384,81 @@ impl WalletService {
             accounts: Arc::new(RwLock::new(Vec::new())),
             session_mgr: Arc::new(RwLock::new(new_session_manager())),
             active_address: Arc::new(RwLock::new(None)),
+            last_unlock_at: Arc::new(RwLock::new(None)),
+            lockout_file: Arc::new(std::sync::RwLock::new(None)),
             backend,
             rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
         }
+    }
+
+    /// Configure on-disk persistence of the brute-force lockout state.
+    /// Existing state is loaded synchronously; subsequent `unlock`
+    /// failures persist back to the same path with mode 0600 on Unix.
+    /// RM-B1 / WP-E2.3 (audit WAL-05).
+    pub async fn enable_lockout_persistence(&self, path: PathBuf) {
+        // Load any prior state.
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(items) = serde_json::from_slice::<Vec<PersistedFailure>>(&bytes) {
+                self.session_mgr.write().await.import_failures(items);
+            } else {
+                tracing::warn!(
+                    "WalletService: lockout file at {} corrupt, ignoring",
+                    path.display()
+                );
+            }
+        }
+        if let Ok(mut guard) = self.lockout_file.write() {
+            *guard = Some(path);
+        }
+    }
+
+    /// Persist lockout state to disk if `enable_lockout_persistence`
+    /// has set a path. No-op otherwise.
+    async fn persist_lockout_state(&self) {
+        let path_opt = self
+            .lockout_file
+            .read()
+            .ok()
+            .and_then(|g| g.clone());
+        let Some(path) = path_opt else {
+            return;
+        };
+        let snapshot = self.session_mgr.read().await.export_failures();
+        let bytes = match serde_json::to_vec_pretty(&snapshot) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("WalletService: failed to serialize lockout state: {}", e);
+                return;
+            }
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            tracing::warn!(
+                "WalletService: failed to persist lockout state to {}: {}",
+                path.display(),
+                e
+            );
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+    }
+
+    /// True iff the given address currently has an active (non-expired,
+    /// non-locked-out) session. Per-account: locking 0xA does not
+    /// affect 0xB's session state.
+    /// RM-B1 / WP-E2.6 (audit WAL-08).
+    pub async fn is_account_unlocked(&self, address: &str) -> bool {
+        let mgr = self.session_mgr.read().await;
+        mgr.is_session_active(address)
     }
 
     /// Resolve a SessionStatus snapshot from the session manager.
@@ -430,6 +526,7 @@ impl WalletService {
         // expired" right after onboarding. Same convention as a fresh
         // browser-wallet install: create → unlocked.
         *self.active_address.write().await = Some(result.address.clone());
+        *self.last_unlock_at.write().await = Some(Instant::now());
         self.session_mgr.write().await.record_success(&result.address);
 
         Ok(result)
@@ -460,6 +557,7 @@ impl WalletService {
         // the password we just validated by decrypting the keystore is
         // sufficient — don't make the user re-type it for the next op.
         *self.active_address.write().await = Some(result.address.clone());
+        *self.last_unlock_at.write().await = Some(Instant::now());
         self.session_mgr.write().await.record_success(&result.address);
 
         Ok(result)
@@ -502,14 +600,23 @@ impl WalletService {
 
         if !valid {
             // Wrong password → record against the *attempted* address.
-            let mut mgr = self.session_mgr.write().await;
-            let _ = mgr.record_failure(address);
+            {
+                let mut mgr = self.session_mgr.write().await;
+                let _ = mgr.record_failure(address);
+            }
+            // Persist updated counter so a process restart cannot
+            // launder away the failure.
+            // RM-B1 / WP-E2.3 (audit WAL-05).
+            self.persist_lockout_state().await;
             return Err(AppError::Wallet("Invalid password".to_string()));
         }
 
         // Success — reset failure counter, mint a fresh session.
         *self.active_address.write().await = Some(address.to_string());
+        *self.last_unlock_at.write().await = Some(Instant::now());
         self.session_mgr.write().await.record_success(address);
+        // Failure counter cleared on success; persist that too.
+        self.persist_lockout_state().await;
         Ok(self.current_status().await)
     }
 
@@ -520,6 +627,7 @@ impl WalletService {
         // (a deliberate lock should NOT reset brute-force attempts).
         self.session_mgr.write().await.end_all_sessions();
         *self.active_address.write().await = None;
+        *self.last_unlock_at.write().await = None;
         Ok(())
     }
 
@@ -539,6 +647,27 @@ impl WalletService {
         if !status.is_active {
             return Err(AppError::SessionExpired);
         }
+
+        // RM-B1 / WP-E2.5 (audit WAL-07): re-auth above the
+        // RE_AUTH_THRESHOLD_WEI (10 SALT). A long-lived session is
+        // fine for low-value sends, but high-value transfers must
+        // require the user to have proved password possession recently.
+        if let Ok(value) = value_wei.parse::<u128>() {
+            if value >= RE_AUTH_THRESHOLD_WEI {
+                let last_unlock = *self.last_unlock_at.read().await;
+                let stale = match last_unlock {
+                    Some(when) => when.elapsed().as_secs() >= RE_AUTH_FRESHNESS_SECS,
+                    None => true,
+                };
+                if stale {
+                    return Err(AppError::Wallet(format!(
+                        "Re-authentication required: transfers above {} wei require password entry within the last {} seconds",
+                        RE_AUTH_THRESHOLD_WEI, RE_AUTH_FRESHNESS_SECS
+                    )));
+                }
+            }
+        }
+
         // Touch the session so this signing op resets the inactivity
         // timer.
         if let Some(addr) = self.active_address.read().await.clone() {
@@ -837,11 +966,112 @@ mod tests {
     async fn test_lockout_is_per_address() {
         let svc = test_service();
         for _ in 0..MAX_FAILED_ATTEMPTS {
-            let _ = svc.unlock("0xvictim", "wrong-pwd").await;
+            let _ = svc.unlock("0xvictim", "bad").await;
         }
         // 0xother is unaffected.
         let ok = svc.unlock("0xother", "password123").await;
         assert!(ok.is_ok(), "other address must remain unlockable");
+    }
+
+    /// RM-B1 / WP-E2.3 (audit WAL-05): persisted lockout state
+    /// survives a "process restart" (constructing a fresh
+    /// WalletService pointing at the same file).
+    #[tokio::test]
+    async fn test_wal05_lockout_persists_across_restart() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("lockout.json");
+
+        let events = Arc::new(EventBus::new());
+        let svc1 = WalletService::with_backend(events, Arc::new(TestWalletBackend));
+        svc1.enable_lockout_persistence(path.clone()).await;
+
+        // 4 failed attempts (one short of lockout).
+        for _ in 0..(MAX_FAILED_ATTEMPTS - 1) {
+            let _ = svc1.unlock("0xvictim", "bad").await;
+        }
+
+        // Fresh service pointing at the same file.
+        let events2 = Arc::new(EventBus::new());
+        let svc2 = WalletService::with_backend(events2, Arc::new(TestWalletBackend));
+        svc2.enable_lockout_persistence(path.clone()).await;
+
+        // One more attempt → lockout should fire even though this
+        // is the first attempt the new service sees.
+        let res = svc2.unlock("0xvictim", "bad").await;
+        assert!(res.is_err());
+
+        let after = svc2.unlock("0xvictim", "password123").await;
+        match after {
+            Err(AppError::Wallet(msg)) => {
+                assert!(msg.contains("locked out"), "msg = {}", msg);
+            }
+            other => panic!("expected lockout error, got: {:?}", other),
+        }
+    }
+
+    /// RM-B1 / WP-E2.5 (audit WAL-07): high-value send requires
+    /// recent password entry.
+    #[tokio::test]
+    async fn test_wal07_high_value_send_requires_fresh_unlock() {
+        let svc = test_service();
+        svc.unlock("0xabc", "password123").await.expect("unlock");
+
+        // Sub-threshold send works.
+        let small_value = (RE_AUTH_THRESHOLD_WEI / 2).to_string();
+        let r = svc
+            .send_transaction("0xabc", "0xto", &small_value, "password123")
+            .await;
+        assert!(r.is_ok(), "sub-threshold send must work");
+
+        // Force the unlock timestamp into the past, beyond freshness.
+        {
+            let mut last = svc.last_unlock_at.write().await;
+            *last = Some(
+                Instant::now()
+                    - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5),
+            );
+        }
+
+        // Above-threshold send must require re-auth.
+        let big_value = RE_AUTH_THRESHOLD_WEI.to_string();
+        let r = svc
+            .send_transaction("0xabc", "0xto", &big_value, "password123")
+            .await;
+        match r {
+            Err(AppError::Wallet(msg)) => {
+                assert!(msg.contains("Re-authentication"), "msg = {}", msg);
+            }
+            other => panic!("expected re-auth error, got {:?}", other),
+        }
+
+        // Re-unlock refreshes the timestamp; high-value send works.
+        svc.unlock("0xabc", "password123").await.expect("re-unlock");
+        let r = svc
+            .send_transaction("0xabc", "0xto", &big_value, "password123")
+            .await;
+        assert!(r.is_ok(), "high-value send works after fresh unlock");
+    }
+
+    /// RM-B1 / WP-E2.6 (audit WAL-08): per-account session view.
+    /// `is_account_unlocked` reflects per-address state independently
+    /// of which account is "primary."
+    #[tokio::test]
+    async fn test_wal08_per_account_unlock_status() {
+        let svc = test_service();
+        svc.unlock("0xalice", "password123").await.expect("unlock alice");
+
+        assert!(svc.is_account_unlocked("0xalice").await);
+        assert!(!svc.is_account_unlocked("0xbob").await);
+
+        // Unlock bob too.
+        svc.unlock("0xbob", "password123").await.expect("unlock bob");
+        assert!(svc.is_account_unlocked("0xalice").await);
+        assert!(svc.is_account_unlocked("0xbob").await);
+
+        // Lock everything; both go inactive.
+        svc.lock().await.expect("lock");
+        assert!(!svc.is_account_unlocked("0xalice").await);
+        assert!(!svc.is_account_unlocked("0xbob").await);
     }
 
     #[tokio::test]
