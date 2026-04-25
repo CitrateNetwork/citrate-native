@@ -131,6 +131,104 @@ fn spawn_async(
     rt.spawn(task);
 }
 
+/// How long after a sensitive copy the clipboard auto-wipes.
+/// RM-B1 / WP-E2.7 (audit GUI-C-03).
+const CLIPBOARD_AUTOCLEAR_SECS: u64 = 30;
+
+/// Pure decision: should we wipe the clipboard given what we wrote
+/// (`original`) and what's there now (`current`)? Wipe iff they
+/// still match — anything else means the user (or another app) has
+/// copied something we shouldn't clobber.
+///
+/// Pure function so we can unit-test the policy without driving
+/// the Slint event loop or a real clipboard.
+fn clipboard_should_wipe(original: &str, current: &str) -> bool {
+    !original.is_empty() && original == current
+}
+
+/// Schedule a clipboard wipe `CLIPBOARD_AUTOCLEAR_SECS` after the
+/// current copy. The timer fires on the Slint event loop (which is
+/// the main thread, where arboard demands to be called). If the
+/// clipboard still contains the same text we wrote, clear it; if
+/// the user has copied something else in the interim, leave it
+/// alone.
+///
+/// RM-B1 / WP-E2.7 (audit GUI-C-03).
+fn schedule_clipboard_autoclear(original: String) {
+    slint::Timer::single_shot(
+        std::time::Duration::from_secs(CLIPBOARD_AUTOCLEAR_SECS),
+        move || {
+            let mut clipboard = match arboard::Clipboard::new() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("Clipboard auto-clear: clipboard unavailable: {}", e);
+                    return;
+                }
+            };
+            match clipboard.get_text() {
+                Ok(current) if clipboard_should_wipe(&original, &current) => {
+                    if let Err(e) = clipboard.set_text("") {
+                        tracing::warn!("Clipboard auto-clear: set_text failed: {}", e);
+                    } else {
+                        tracing::info!(
+                            "Clipboard auto-cleared after {}s",
+                            CLIPBOARD_AUTOCLEAR_SECS
+                        );
+                    }
+                }
+                Ok(_) => {
+                    tracing::debug!(
+                        "Clipboard auto-clear: contents changed since copy, leaving in place"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Clipboard auto-clear: get_text failed: {}", e);
+                }
+            }
+        },
+    );
+}
+
+#[cfg(test)]
+mod clipboard_autoclear_tests {
+    use super::*;
+
+    #[test]
+    fn test_guic03_wipes_when_clipboard_unchanged() {
+        let original = "this is a sensitive secret";
+        assert!(clipboard_should_wipe(original, original));
+    }
+
+    #[test]
+    fn test_guic03_skips_when_user_copied_else() {
+        let original = "this is a sensitive secret";
+        let current = "this is the user's grocery list";
+        assert!(!clipboard_should_wipe(original, current));
+    }
+
+    #[test]
+    fn test_guic03_skips_when_already_empty() {
+        // Edge: if the clipboard is somehow already empty we don't
+        // need to wipe (and shouldn't claim we did).
+        assert!(!clipboard_should_wipe("", ""));
+    }
+
+    #[test]
+    fn test_guic03_skips_when_we_never_wrote() {
+        // Defensive: caller passing empty `original` shouldn't
+        // result in the helper wiping the clipboard.
+        assert!(!clipboard_should_wipe("", "user's content"));
+    }
+
+    #[test]
+    fn test_guic03_partial_substring_does_not_wipe() {
+        // Mnemonic prefix is NOT the same as the full mnemonic.
+        let original = "abandon abandon abandon ability";
+        let current = "abandon abandon abandon"; // user truncated/edited
+        assert!(!clipboard_should_wipe(original, current));
+    }
+}
+
 /// IPFS daemon statistics fetched from the local HTTP API.
 struct IpfsStats {
     peer_count: i32,
@@ -855,6 +953,11 @@ fn main() {
     // --- Copy Mnemonic to Clipboard ---
     // NOTE: arboard::Clipboard::new() must run on the main thread.
     // Spawning a clipboard thread crashes accesskit on X11.
+    //
+    // RM-B1 / WP-E2.7 (audit GUI-C-03): clipboard auto-clear. After
+    // 30 seconds the mnemonic is wiped from the clipboard if (and
+    // only if) it still matches what we wrote — we don't clobber
+    // something the user copied themselves in the interim.
     let ui_w = ui.as_weak();
     ui.on_copy_mnemonic(move || {
         if let Some(ui) = ui_w.upgrade() {
@@ -863,7 +966,8 @@ fn main() {
                 match arboard::Clipboard::new() {
                     Ok(mut clipboard) => {
                         if clipboard.set_text(&mnemonic).is_ok() {
-                            tracing::info!("Mnemonic copied to clipboard");
+                            tracing::info!("Mnemonic copied to clipboard (auto-clear in 30s)");
+                            schedule_clipboard_autoclear(mnemonic.clone());
                         }
                     }
                     Err(e) => tracing::warn!("Clipboard not available: {}", e),
@@ -1194,6 +1298,9 @@ fn main() {
                         }
                         return;
                     }
+                    // RM-B1 / WP-E2.7 (audit GUI-C-03): wipe the
+                    // clipboard 30s after copy if it still matches.
+                    schedule_clipboard_autoclear(text.clone());
                 }
                 Err(e) => {
                     tracing::warn!("Clipboard not available: {}", e);
