@@ -30,7 +30,10 @@ use axum::{
 };
 use citrate_agent_core::canonical::{CapabilityGrant, PolicyProfile};
 use citrate_agent_core::mcp_server::McpServer;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -39,6 +42,57 @@ use tokio::sync::RwLock;
 /// the ephemeral range above the node RPC ports (8545) and below the
 /// IPFS API (5001 already taken). 9600 is unlikely to clash.
 pub const DEFAULT_MCP_PORT: u16 = 9600;
+
+/// Auth-token TTL when the GUI issues one without an explicit override.
+/// 30 days matches typical session-token TTLs and bounds the damage if
+/// a token leaks but operators don't notice.
+/// RM-B1 / WP-E1.1 (audit GUI-C-04).
+const DEFAULT_AUTH_TOKEN_TTL_SECS: u64 = 30 * 24 * 3600;
+
+/// A pre-issued authentication token bound to a maximum policy.
+/// MCP clients pass `auth_token` at `initialize`; the server resolves
+/// the policy from this server-side record rather than trusting the
+/// caller-supplied policy field.
+///
+/// RM-B1 / WP-E1.1 (audit GUI-C-04). Pre-fix `handle_initialize`
+/// took the policy directly from JSON-RPC params, letting any
+/// connecting client claim `Maintainer`. Post-fix the policy is
+/// bounded by what the operator pre-authorized via the Operations
+/// panel's "Generate MCP access token" flow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthToken {
+    /// The opaque secret string presented at `initialize`. 256 bits
+    /// of entropy hex-encoded.
+    pub token: String,
+    /// The maximum policy this token may grant. Initialize requests
+    /// asking for a more permissive policy are downgraded to this
+    /// ceiling (or rejected, depending on the strict-mode flag).
+    pub max_policy: PolicyProfile,
+    /// Unix timestamp at issuance.
+    pub created_at: u64,
+    /// Unix timestamp after which the token no longer authorizes
+    /// `initialize`.
+    pub expires_at: u64,
+    /// Operator-facing label so the Operations panel can identify
+    /// tokens by purpose ("local Hermes", "Claude Desktop", etc.)
+    /// rather than by opaque hex.
+    pub label: String,
+    /// Set to true when the operator revokes the token via the panel.
+    pub revoked: bool,
+}
+
+/// UI-friendly view of [`AuthToken`] (no secret material).
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthTokenSummary {
+    pub label: String,
+    pub max_policy: String,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub revoked: bool,
+    /// First 8 hex chars of the token, for visual matching against
+    /// the value the operator copy-pasted.
+    pub token_prefix: String,
+}
 
 /// User-facing summary of a single MCP session, for the Operations
 /// panel to render.
@@ -66,6 +120,12 @@ pub struct McpHostService {
     endpoint: RwLock<String>,
     /// Whether `start()` succeeded.
     listening: RwLock<bool>,
+    /// Operator-issued auth tokens, keyed by the secret token string.
+    /// RM-B1 / WP-E1.1 (audit GUI-C-04).
+    tokens: RwLock<HashMap<String, AuthToken>>,
+    /// On-disk path for token persistence. `None` means in-memory
+    /// only (used in tests).
+    tokens_file: Option<PathBuf>,
 }
 
 impl McpHostService {
@@ -74,6 +134,136 @@ impl McpHostService {
             mcp,
             endpoint: RwLock::new(String::new()),
             listening: RwLock::new(false),
+            tokens: RwLock::new(HashMap::new()),
+            tokens_file: None,
+        }
+    }
+
+    /// Construct a host whose tokens are loaded from + persisted to
+    /// `data_dir/mcp_tokens.json`. The file is created with 0600
+    /// permissions on Unix to keep it out of reach of other local
+    /// users.
+    /// RM-B1 / WP-E1.2 (audit GUI-C-04).
+    pub fn with_token_storage(mcp: Arc<McpServer>, data_dir: PathBuf) -> Self {
+        let tokens_file = data_dir.join("mcp_tokens.json");
+        let initial = load_tokens_from_disk(&tokens_file);
+        Self {
+            mcp,
+            endpoint: RwLock::new(String::new()),
+            listening: RwLock::new(false),
+            tokens: RwLock::new(initial),
+            tokens_file: Some(tokens_file),
+        }
+    }
+
+    /// Issue a new auth token with the given maximum policy. Operators
+    /// generate one of these from the Operations panel and copy it
+    /// into the MCP client's config (Hermes / Claude Desktop / etc.).
+    pub async fn create_token(
+        &self,
+        label: impl Into<String>,
+        max_policy: PolicyProfile,
+        ttl_secs: Option<u64>,
+    ) -> AuthToken {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let token = hex::encode(bytes);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let expires_at = now + ttl_secs.unwrap_or(DEFAULT_AUTH_TOKEN_TTL_SECS);
+        let record = AuthToken {
+            token: token.clone(),
+            max_policy,
+            created_at: now,
+            expires_at,
+            label: label.into(),
+            revoked: false,
+        };
+        {
+            let mut tokens = self.tokens.write().await;
+            tokens.insert(token.clone(), record.clone());
+            self.persist_tokens(&tokens).await;
+        }
+        record
+    }
+
+    /// Revoke a token by prefix or full string. Returns true when a
+    /// token was removed.
+    pub async fn revoke_token(&self, token_or_prefix: &str) -> bool {
+        let mut tokens = self.tokens.write().await;
+        let target_key = tokens
+            .keys()
+            .find(|k| k.as_str() == token_or_prefix || k.starts_with(token_or_prefix))
+            .cloned();
+        if let Some(key) = target_key {
+            if let Some(t) = tokens.get_mut(&key) {
+                t.revoked = true;
+            }
+            self.persist_tokens(&tokens).await;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// UI listing — never exposes the raw secret beyond an 8-char
+    /// prefix.
+    pub async fn list_tokens(&self) -> Vec<AuthTokenSummary> {
+        let tokens = self.tokens.read().await;
+        tokens
+            .values()
+            .map(|t| AuthTokenSummary {
+                label: t.label.clone(),
+                max_policy: format!("{:?}", t.max_policy),
+                created_at: t.created_at,
+                expires_at: t.expires_at,
+                revoked: t.revoked,
+                token_prefix: t.token.chars().take(8).collect(),
+            })
+            .collect()
+    }
+
+    /// Internal: validate a presented token and return its record,
+    /// or `None` if missing/expired/revoked.
+    async fn lookup_active_token(&self, token: &str) -> Option<AuthToken> {
+        let tokens = self.tokens.read().await;
+        let record = tokens.get(token)?.clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if record.revoked || record.expires_at <= now {
+            return None;
+        }
+        Some(record)
+    }
+
+    async fn persist_tokens(&self, tokens: &HashMap<String, AuthToken>) {
+        let Some(path) = self.tokens_file.as_ref() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let entries: Vec<&AuthToken> = tokens.values().collect();
+        match serde_json::to_vec_pretty(&entries) {
+            Ok(bytes) => {
+                if let Err(e) = std::fs::write(path, &bytes) {
+                    tracing::warn!("MCP host: failed to persist tokens: {}", e);
+                    return;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        path,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
+            }
+            Err(e) => tracing::warn!("MCP host: token serialization failed: {}", e),
         }
     }
 
@@ -151,6 +341,40 @@ impl McpHostService {
     }
 }
 
+/// Load tokens from disk, returning an empty map if the file is
+/// missing or malformed (a corrupt file should not brick the host).
+fn load_tokens_from_disk(path: &PathBuf) -> HashMap<String, AuthToken> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return HashMap::new();
+    };
+    let entries: Vec<AuthToken> = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("MCP host: tokens file corrupt, ignoring: {}", e);
+            return HashMap::new();
+        }
+    };
+    entries.into_iter().map(|t| (t.token.clone(), t)).collect()
+}
+
+/// Pick the more restrictive of two policies. ReadOnly < Guided <
+/// Operator < Maintainer.
+fn cap_policy(requested: PolicyProfile, ceiling: PolicyProfile) -> PolicyProfile {
+    fn rank(p: &PolicyProfile) -> u8 {
+        match p {
+            PolicyProfile::ReadOnly => 0,
+            PolicyProfile::Guided => 1,
+            PolicyProfile::Operator => 2,
+            PolicyProfile::Maintainer => 3,
+        }
+    }
+    if rank(&requested) <= rank(&ceiling) {
+        requested
+    } else {
+        ceiling
+    }
+}
+
 // ── JSON-RPC 2.0 types ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -224,13 +448,43 @@ async fn handle_initialize(
     id: serde_json::Value,
     params: serde_json::Value,
 ) -> Json<JsonRpcResponse> {
-    let policy = match params.get("policy").and_then(|v| v.as_str()).unwrap_or("ReadOnly") {
+    let requested_policy = match params.get("policy").and_then(|v| v.as_str()).unwrap_or("ReadOnly") {
         "ReadOnly" => PolicyProfile::ReadOnly,
         "Guided" => PolicyProfile::Guided,
         "Operator" => PolicyProfile::Operator,
         "Maintainer" => PolicyProfile::Maintainer,
         other => return Json(JsonRpcResponse::err(id, -32602, format!("Unknown policy: {}", other))),
     };
+
+    // RM-B1 / WP-E1.1 (audit GUI-C-04): server-bounded policy.
+    // Pre-fix the caller's `policy` field was trusted verbatim — any
+    // local process could initialize with `Maintainer` and obtain
+    // full tool access. Post-fix the policy is bounded by an
+    // operator-issued auth_token. No token → ReadOnly only.
+    let auth_token = params
+        .get("auth_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let policy = match auth_token.as_deref() {
+        Some(tok) => match host.lookup_active_token(tok).await {
+            Some(record) => cap_policy(requested_policy, record.max_policy),
+            None => {
+                return Json(JsonRpcResponse::err(
+                    id,
+                    -32001,
+                    "auth_token unknown, expired, or revoked",
+                ));
+            }
+        },
+        None => {
+            // No token → operator hasn't authorized this client. We
+            // accept the connection at ReadOnly so tool discovery
+            // still works (Hermes / Claude Desktop introspection),
+            // but any escalation request is silently downgraded.
+            PolicyProfile::ReadOnly
+        }
+    };
+
     let recipient = params.get("recipient")
         .and_then(|v| v.as_str())
         .unwrap_or("hermes-client")
@@ -350,5 +604,181 @@ mod tests {
         let host = test_host();
         let cfg = host.export_sidecar_config(Some("abc-123".to_string())).await;
         assert_eq!(cfg["grant_id"], "abc-123");
+    }
+
+    // ── RM-E1 / WP-E1.1 (audit GUI-C-04) ────────────────────────────
+
+    /// Without `auth_token`, initialize must downgrade ANY requested
+    /// policy to `ReadOnly`. A caller can no longer claim Maintainer
+    /// without operator authorization.
+    #[tokio::test]
+    async fn test_guic04_no_token_caps_at_readonly() {
+        let host = test_host();
+        let params = serde_json::json!({
+            "policy": "Maintainer",
+            "recipient": "attacker-client"
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let body = resp.0;
+        // Request is accepted, but the issued grant is bounded.
+        assert!(body.error.is_none(), "no-token requests are accepted at ReadOnly");
+        let grants = host.list_active_grants().await;
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].policy, format!("{:?}", PolicyProfile::ReadOnly));
+    }
+
+    /// An invalid auth_token must be rejected outright (not silently
+    /// downgraded — that would mask operator misconfiguration).
+    #[tokio::test]
+    async fn test_guic04_unknown_token_rejected() {
+        let host = test_host();
+        let params = serde_json::json!({
+            "auth_token": "00".repeat(32),
+            "policy": "Operator"
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let body = resp.0;
+        assert!(body.error.is_some(), "unknown auth_token must error");
+        assert_eq!(body.error.as_ref().unwrap().code, -32001);
+        let grants = host.list_active_grants().await;
+        assert_eq!(grants.len(), 0, "no grant on rejection");
+    }
+
+    /// A valid token capped at Guided must downgrade a Maintainer
+    /// request to Guided (not reject; the client's discovery still
+    /// works at the lower scope).
+    #[tokio::test]
+    async fn test_guic04_token_caps_above_max() {
+        let host = test_host();
+        let token = host.create_token("test", PolicyProfile::Guided, None).await;
+        let params = serde_json::json!({
+            "auth_token": token.token,
+            "policy": "Maintainer",
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_none());
+        let grants = host.list_active_grants().await;
+        assert_eq!(grants[0].policy, format!("{:?}", PolicyProfile::Guided));
+    }
+
+    /// A token at Operator capacity allows Operator initialize to
+    /// pass through unchanged.
+    #[tokio::test]
+    async fn test_guic04_token_at_capacity_passes_through() {
+        let host = test_host();
+        let token = host
+            .create_token("test", PolicyProfile::Operator, None)
+            .await;
+        let params = serde_json::json!({
+            "auth_token": token.token,
+            "policy": "Operator",
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_none());
+        let grants = host.list_active_grants().await;
+        assert_eq!(grants[0].policy, format!("{:?}", PolicyProfile::Operator));
+    }
+
+    /// Revoked tokens must be rejected.
+    #[tokio::test]
+    async fn test_guic04_revoked_token_rejected() {
+        let host = test_host();
+        let token = host
+            .create_token("revocable", PolicyProfile::Operator, None)
+            .await;
+        assert!(host.revoke_token(&token.token).await);
+
+        let params = serde_json::json!({
+            "auth_token": token.token,
+            "policy": "Operator",
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_some(), "revoked token must error");
+    }
+
+    /// Expired tokens must be rejected.
+    #[tokio::test]
+    async fn test_guic04_expired_token_rejected() {
+        let host = test_host();
+        // TTL = 0 → expires_at == created_at (already in the past).
+        let token = host
+            .create_token("expired", PolicyProfile::Operator, Some(0))
+            .await;
+        let params = serde_json::json!({
+            "auth_token": token.token,
+            "policy": "Operator",
+        });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_some(), "expired token must error");
+    }
+
+    /// `list_tokens` exposes only the prefix, never the full secret.
+    #[tokio::test]
+    async fn test_guic04_token_listing_redacts_secret() {
+        let host = test_host();
+        let token = host
+            .create_token("hermes-local", PolicyProfile::Guided, None)
+            .await;
+        let summaries = host.list_tokens().await;
+        assert_eq!(summaries.len(), 1);
+        let s = &summaries[0];
+        assert_eq!(s.label, "hermes-local");
+        assert_eq!(s.token_prefix.len(), 8);
+        assert!(token.token.starts_with(&s.token_prefix));
+        // Summary serialization MUST NOT include the full token.
+        let json = serde_json::to_string(s).expect("ser");
+        assert!(!json.contains(&token.token), "raw token leaked in summary");
+    }
+
+    /// File-backed token storage round-trips through restart.
+    #[tokio::test]
+    async fn test_guic04_token_storage_persists_across_restart() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let registry = Arc::new(ToolRegistry::new());
+        let mcp = Arc::new(McpServer::new(registry.clone()));
+        let host =
+            Arc::new(McpHostService::with_token_storage(mcp, tmp.path().to_path_buf()));
+        let token = host
+            .create_token("persistent", PolicyProfile::Operator, None)
+            .await;
+
+        // New host instance reading the same on-disk file.
+        let mcp2 = Arc::new(McpServer::new(registry));
+        let host2 = Arc::new(McpHostService::with_token_storage(
+            mcp2,
+            tmp.path().to_path_buf(),
+        ));
+        let summaries = host2.list_tokens().await;
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].label, "persistent");
+
+        // The token still validates after the "restart".
+        let params = serde_json::json!({
+            "auth_token": token.token,
+            "policy": "Operator",
+        });
+        let resp = handle_initialize(&host2, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_none());
+    }
+
+    /// On Unix, the persisted file is mode 0600.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_guic04_token_file_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let registry = Arc::new(ToolRegistry::new());
+        let mcp = Arc::new(McpServer::new(registry));
+        let host =
+            Arc::new(McpHostService::with_token_storage(mcp, tmp.path().to_path_buf()));
+        host.create_token("perm-check", PolicyProfile::ReadOnly, None)
+            .await;
+        let path = tmp.path().join("mcp_tokens.json");
+        let mode = std::fs::metadata(&path)
+            .expect("file exists")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "tokens file must be 0600");
     }
 }
