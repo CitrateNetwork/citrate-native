@@ -1844,6 +1844,26 @@ fn main() {
                                 None
                             };
 
+                        // CM-01 WP-01.5: recent activity via eth_getLogs.
+                        // Only fetched when the provider is registered (query
+                        // is cheap but pointless pre-registration).
+                        // Data source: ComputeMarketplace event logs
+                        // (JobAssigned, JobCompleted, JobFailed).
+                        let activity: Vec<marketplace_client::ActivityEntry> =
+                            if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
+                                if provider.as_ref().is_some_and(|p| p.is_registered) {
+                                    rt_handle
+                                        .block_on(marketplace_client::fetch_recent_activity(
+                                            &rpc_url, m, addr,
+                                        ))
+                                        .unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            };
+
                         // Compose status line. Three mutually-exclusive cases.
                         let has_addresses = market_addr.is_some() && accounting_addr.is_some();
                         let ui_h = ui_handle.clone();
@@ -1872,13 +1892,57 @@ fn main() {
                                     "Not registered".to_string()
                                 };
                                 ui.set_compute_provider_status(status.into());
+
+                                // CM-01 structured listing card. Only
+                                // populated when registered — the Slint
+                                // card is conditional on `is-registered`
+                                // so pre-registration reads are harmless
+                                // but wasted. Reputation bps → % (one
+                                // decimal); capacity as "a / m" strings.
+                                if p.is_registered {
+                                    let stake_salt = marketplace_client::wei_to_salt_display(p.stake_wei);
+                                    ui.set_compute_listing_stake(stake_salt.into());
+                                    let rep_pct = (p.reputation_bps as f64) / 100.0;
+                                    ui.set_compute_listing_reputation_pct(format!("{:.1}", rep_pct).into());
+                                    ui.set_compute_listing_capacity(
+                                        format!("{} / {}", p.current_active_jobs, p.max_concurrent_jobs).into()
+                                    );
+                                    // v1 registers a single "any" wildcard
+                                    // hash via `any_model_hash()` — future
+                                    // sprints resolve the hashes through
+                                    // ModelRegistry for rich names.
+                                    ui.set_compute_listing_models("any (wildcard)".into());
+                                    ui.set_compute_listing_total_completed(p.total_jobs_completed as i32);
+                                    ui.set_compute_listing_total_failed(p.total_jobs_failed as i32);
+                                }
+                                ui.set_compute_listing_connection_ok(true);
                             } else {
                                 ui.set_compute_is_registered(false);
                                 ui.set_compute_provider_status("Query failed — retry in 30s".into());
+                                // The listing query failed — signal
+                                // degraded state so the user knows values
+                                // are stale. Card itself is hidden
+                                // because is-registered is now false.
+                                ui.set_compute_listing_connection_ok(false);
                             }
                             if let Some(wei) = claimable_wei {
-                                ui.set_compute_earned(marketplace_client::wei_to_salt_display(wei).into());
+                                let salt = marketplace_client::wei_to_salt_display(wei);
+                                ui.set_compute_earned(salt.clone().into());
+                                ui.set_compute_listing_claimable(salt.into());
                             }
+
+                            // Push recent-activity rows to the listing card.
+                            // Rows already sorted newest-first by the helper.
+                            let rows: Vec<ListingActivityRow> = activity
+                                .into_iter()
+                                .map(|e| ListingActivityRow {
+                                    job_id: e.job_id as i32,
+                                    block_number: e.block_number as i32,
+                                    status: e.status.into(),
+                                })
+                                .collect();
+                            let model = std::rc::Rc::new(slint::VecModel::from(rows));
+                            ui.set_compute_listing_activity(model.into());
                         });
                     }
                 }
@@ -4368,6 +4432,110 @@ fn main() {
                 Ok(jobs) => tracing::info!("Compute: {} jobs", jobs.len()),
                 Err(e) => tracing::error!("Compute: refresh failed: {}", e),
             }
+        });
+    });
+
+    // --- Compute: Refresh listing (CM-01) ---
+    // Manual bypass of the 30s background poll — immediately re-queries
+    // ComputeMarketplace.getProvider + ContributionAccounting.claimable
+    // and pushes the structured listing card fields to the UI.
+    //
+    // Feature spec: "Manual refresh triggers immediate poll" in
+    // citrate_v0.01.1/specs/gherkin/listing_visibility.feature
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    ui.on_compute_refresh_listing(move || {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        tracing::info!("Compute: manual listing refresh");
+        spawn_async(&rt_h, async move {
+            let chain_id = core.config.read().await.chain_id;
+            let rpc_url = core.wallet.get_rpc_url();
+            let Some(market) = marketplace_client::compute_marketplace_address(chain_id) else {
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || if let Some(ui) = ui_w.upgrade() {
+                        ui.set_compute_listing_connection_ok(false);
+                    }
+                });
+                return;
+            };
+            let Some(accounting) = marketplace_client::contribution_accounting_address(chain_id) else {
+                return;
+            };
+            let accounts = core.wallet.list_accounts().await;
+            let Some(addr) = accounts.first().map(|a| a.address.clone()) else {
+                return;
+            };
+
+            // Data source: ComputeMarketplace.getProvider(address)
+            // returns ProviderProfile (contracts/src/ComputeMarketplace.sol:829)
+            let provider = if let Some(data) = marketplace_client::encode_get_provider(&addr) {
+                marketplace_client::eth_call(&rpc_url, market, &data).await
+                    .ok()
+                    .and_then(|r| marketplace_client::decode_provider_profile(&r))
+            } else {
+                None
+            };
+
+            // Data source: ContributionAccounting.claimable(address)
+            // returns uint256 (public mapping auto-getter)
+            let claimable = if let Some(data) = marketplace_client::encode_claimable(&addr) {
+                marketplace_client::eth_call(&rpc_url, accounting, &data).await
+                    .ok()
+                    .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+            } else {
+                None
+            };
+
+            // Data source: ComputeMarketplace event logs for this provider.
+            // Empty vec on any error — the card falls back to empty-state.
+            let activity = if provider.as_ref().is_some_and(|p| p.is_registered) {
+                marketplace_client::fetch_recent_activity(&rpc_url, market, &addr)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_w.upgrade() else { return; };
+                match (provider, claimable) {
+                    (Some(p), Some(wei)) if p.is_registered => {
+                        ui.set_compute_is_registered(true);
+                        ui.set_compute_active_jobs(p.current_active_jobs as i32);
+                        let stake = marketplace_client::wei_to_salt_display(p.stake_wei);
+                        ui.set_compute_listing_stake(stake.into());
+                        let rep_pct = (p.reputation_bps as f64) / 100.0;
+                        ui.set_compute_listing_reputation_pct(format!("{:.1}", rep_pct).into());
+                        ui.set_compute_listing_capacity(
+                            format!("{} / {}", p.current_active_jobs, p.max_concurrent_jobs).into()
+                        );
+                        ui.set_compute_listing_models("any (wildcard)".into());
+                        ui.set_compute_listing_total_completed(p.total_jobs_completed as i32);
+                        ui.set_compute_listing_total_failed(p.total_jobs_failed as i32);
+                        let claim_salt = marketplace_client::wei_to_salt_display(wei);
+                        ui.set_compute_earned(claim_salt.clone().into());
+                        ui.set_compute_listing_claimable(claim_salt.into());
+                        ui.set_compute_listing_connection_ok(true);
+
+                        let rows: Vec<ListingActivityRow> = activity
+                            .into_iter()
+                            .map(|e| ListingActivityRow {
+                                job_id: e.job_id as i32,
+                                block_number: e.block_number as i32,
+                                status: e.status.into(),
+                            })
+                            .collect();
+                        let model = std::rc::Rc::new(slint::VecModel::from(rows));
+                        ui.set_compute_listing_activity(model.into());
+                    }
+                    _ => {
+                        ui.set_compute_listing_connection_ok(false);
+                    }
+                }
+            });
         });
     });
 
