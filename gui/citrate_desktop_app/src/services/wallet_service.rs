@@ -6,8 +6,20 @@
 
 use crate::error::AppError;
 use crate::event_bus::{AppEvent, EventBus};
+use citrate_wallet_core::SessionManager;
 use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
 use tokio::sync::RwLock;
+
+/// Session timeout: 1 hour. After this many seconds without activity
+/// the wallet auto-locks and `is_session_active` returns false.
+/// RM-B1 / WP-E2.1 (audit GUI-C-01).
+const SESSION_TIMEOUT_SECS: u64 = 3600;
+
+/// Lockout policy: 5 wrong-password attempts triggers a 5-minute
+/// lockout. Matches the planset's "5 attempts / 5-min cooldown."
+/// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09).
+const MAX_FAILED_ATTEMPTS: u32 = 5;
+const LOCKOUT_DURATION_SECS: u64 = 300;
 
 /// Trait for real wallet backend implementations.
 #[async_trait::async_trait]
@@ -283,25 +295,47 @@ pub struct CreateAccountResult {
     pub public_key: String,
 }
 
-/// Session status for the wallet lock/unlock lifecycle
+/// Session status for the wallet lock/unlock lifecycle.
+///
+/// RM-B1 / WP-E2.1 (audit GUI-C-01): pre-fix `remaining_seconds`
+/// was a static `Some(3600)` not tied to time at all. Post-fix the
+/// value is computed from `SessionManager::get_status` against the
+/// real Instant of last activity.
 #[derive(Debug, Clone)]
 pub struct SessionStatus {
     pub is_active: bool,
     pub remaining_seconds: Option<u64>,
     pub is_locked_out: bool,
+    /// Seconds remaining on a brute-force lockout, if any.
+    /// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09).
+    pub lockout_remaining_seconds: Option<u64>,
 }
 
 /// Wallet operations service.
 pub struct WalletService {
     events: Arc<EventBus>,
     accounts: Arc<RwLock<Vec<Account>>>,
-    session: Arc<RwLock<SessionStatus>>,
+    /// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09): authoritative
+    /// session + lockout state. The previous `Arc<RwLock<SessionStatus>>`
+    /// was a cosmetic snapshot — `is_active` flipped to true on unlock
+    /// and stayed true until manual lock(), with no time-based
+    /// expiration.
+    session_mgr: Arc<RwLock<SessionManager>>,
+    /// Address whose unlock currently owns the session, if any.
+    /// Used so `is_session_active` can resolve without an explicit
+    /// argument from callers and so per-account semantics are
+    /// possible.
+    active_address: Arc<RwLock<Option<String>>>,
     backend: Arc<dyn WalletBackend>,
     /// Current RPC URL, kept in sync with the backend so callers that
     /// need to talk to the SAME node the wallet submits to (e.g. receipt
     /// polling after `send_transaction_with_data`) have a canonical
     /// source. Updated by `set_rpc_url`.
     rpc_url: Arc<std::sync::RwLock<String>>,
+}
+
+fn new_session_manager() -> SessionManager {
+    SessionManager::new(MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_SECS, SESSION_TIMEOUT_SECS)
 }
 
 impl WalletService {
@@ -311,11 +345,8 @@ impl WalletService {
         Self {
             events,
             accounts: Arc::new(RwLock::new(Vec::new())),
-            session: Arc::new(RwLock::new(SessionStatus {
-                is_active: false,
-                remaining_seconds: None,
-                is_locked_out: false,
-            })),
+            session_mgr: Arc::new(RwLock::new(new_session_manager())),
+            active_address: Arc::new(RwLock::new(None)),
             backend: Arc::new(WalletCoreBackend::new()),
             rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
         }
@@ -327,13 +358,33 @@ impl WalletService {
         Self {
             events,
             accounts: Arc::new(RwLock::new(Vec::new())),
-            session: Arc::new(RwLock::new(SessionStatus {
+            session_mgr: Arc::new(RwLock::new(new_session_manager())),
+            active_address: Arc::new(RwLock::new(None)),
+            backend,
+            rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
+        }
+    }
+
+    /// Resolve a SessionStatus snapshot from the session manager.
+    async fn current_status(&self) -> SessionStatus {
+        let active_addr = self.active_address.read().await.clone();
+        match active_addr {
+            Some(addr) => {
+                let mgr = self.session_mgr.read().await;
+                let core_status = mgr.get_status(&addr);
+                SessionStatus {
+                    is_active: core_status.is_active,
+                    remaining_seconds: core_status.remaining_secs,
+                    is_locked_out: core_status.is_locked_out,
+                    lockout_remaining_seconds: core_status.lockout_remaining_secs,
+                }
+            }
+            None => SessionStatus {
                 is_active: false,
                 remaining_seconds: None,
                 is_locked_out: false,
-            })),
-            backend,
-            rpc_url: Arc::new(std::sync::RwLock::new(initial_url)),
+                lockout_remaining_seconds: None,
+            },
         }
     }
 
@@ -378,11 +429,8 @@ impl WalletService {
         // sign the first tx is the source of "Send failed: Session
         // expired" right after onboarding. Same convention as a fresh
         // browser-wallet install: create → unlocked.
-        *self.session.write().await = SessionStatus {
-            is_active: true,
-            remaining_seconds: Some(3600),
-            is_locked_out: false,
-        };
+        *self.active_address.write().await = Some(result.address.clone());
+        self.session_mgr.write().await.record_success(&result.address);
 
         Ok(result)
     }
@@ -411,41 +459,67 @@ impl WalletService {
         // Activate the session for the same reason create_wallet does:
         // the password we just validated by decrypting the keystore is
         // sufficient — don't make the user re-type it for the next op.
-        *self.session.write().await = SessionStatus {
-            is_active: true,
-            remaining_seconds: Some(3600),
-            is_locked_out: false,
-        };
+        *self.active_address.write().await = Some(result.address.clone());
+        self.session_mgr.write().await.record_success(&result.address);
 
         Ok(result)
     }
 
-    /// Unlock the wallet with password
+    /// Unlock the wallet with password.
+    ///
+    /// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09): the lockout counter
+    /// is incremented for the address that was *attempted*, not for
+    /// some always-primary handle. Pre-fix the GUI tracked failed
+    /// attempts on whatever was active rather than the password's
+    /// claimed identity, so an attacker could brute-force account A
+    /// while the GUI logged failures against account B (or none).
     pub async fn unlock(&self, address: &str, password: &str) -> Result<SessionStatus, AppError> {
         if password.is_empty() {
             return Err(AppError::Wallet("Password required".to_string()));
         }
 
-        let valid = self.backend.unlock(address, password).await?;
+        // RM-B1 / WP-E2.2 (audit GUI-C-02): refuse to even attempt
+        // an unlock on a locked-out address.
+        {
+            let mgr = self.session_mgr.read().await;
+            if mgr.is_locked_out(address) {
+                return Err(AppError::Wallet(format!(
+                    "Account {} is locked out due to too many failed attempts. Try again later.",
+                    address
+                )));
+            }
+        }
+
+        let valid = match self.backend.unlock(address, password).await {
+            Ok(v) => v,
+            Err(e) => {
+                // The backend itself errored (not a wrong-password
+                // signal). Don't treat this as a brute-force attempt
+                // — surface the underlying failure verbatim.
+                return Err(e);
+            }
+        };
+
         if !valid {
+            // Wrong password → record against the *attempted* address.
+            let mut mgr = self.session_mgr.write().await;
+            let _ = mgr.record_failure(address);
             return Err(AppError::Wallet("Invalid password".to_string()));
         }
 
-        let status = SessionStatus {
-            is_active: true,
-            remaining_seconds: Some(3600),
-            is_locked_out: false,
-        };
-        *self.session.write().await = status.clone();
-        Ok(status)
+        // Success — reset failure counter, mint a fresh session.
+        *self.active_address.write().await = Some(address.to_string());
+        self.session_mgr.write().await.record_success(address);
+        Ok(self.current_status().await)
     }
 
     /// Lock the wallet
     pub async fn lock(&self) -> Result<(), AppError> {
         self.backend.lock().await?;
-        let mut session = self.session.write().await;
-        session.is_active = false;
-        session.remaining_seconds = None;
+        // End all sessions in the manager. Failure counters survive
+        // (a deliberate lock should NOT reset brute-force attempts).
+        self.session_mgr.write().await.end_all_sessions();
+        *self.active_address.write().await = None;
         Ok(())
     }
 
@@ -457,12 +531,19 @@ impl WalletService {
         value_wei: &str,
         password: &str,
     ) -> Result<String, AppError> {
-        // Validate session is active
-        let session = self.session.read().await;
-        if !session.is_active {
+        // RM-B1 / WP-E2.4 (audit WAL-06): pre-sign session check.
+        // The session manager's `is_session_active` is real (Instant-
+        // backed), so a session that has timed out since the last
+        // user action is correctly refused here.
+        let status = self.current_status().await;
+        if !status.is_active {
             return Err(AppError::SessionExpired);
         }
-        drop(session);
+        // Touch the session so this signing op resets the inactivity
+        // timer.
+        if let Some(addr) = self.active_address.read().await.clone() {
+            self.session_mgr.write().await.touch_session(&addr);
+        }
 
         let tx_hash = self.backend.send_transaction(from, to, value_wei, password).await?;
 
@@ -477,7 +558,7 @@ impl WalletService {
 
     /// Get current session status
     pub async fn get_session_status(&self) -> SessionStatus {
-        self.session.read().await.clone()
+        self.current_status().await
     }
 
     /// Send a transaction with calldata (for contract/precompile interaction).
@@ -490,11 +571,14 @@ impl WalletService {
         data: Vec<u8>,
         password: &str,
     ) -> Result<String, AppError> {
-        let session = self.session.read().await;
-        if !session.is_active {
+        // RM-B1 / WP-E2.4 (audit WAL-06): pre-sign session check.
+        let status = self.current_status().await;
+        if !status.is_active {
             return Err(AppError::SessionExpired);
         }
-        drop(session);
+        if let Some(addr) = self.active_address.read().await.clone() {
+            self.session_mgr.write().await.touch_session(&addr);
+        }
 
         let tx_hash = self.backend.send_transaction_with_data(from, to, value_wei, data, password).await?;
 
@@ -689,11 +773,75 @@ mod tests {
         assert!(!status.is_locked_out);
     }
 
+    /// RM-B1 / WP-E2.1 (audit GUI-C-01): real session decrement.
+    /// Pre-fix `remaining_seconds` was a static `Some(3600)` value
+    /// not tied to time. Post-fix it's computed from a real Instant
+    /// and decreases as wall-clock time passes.
     #[tokio::test]
-    async fn test_session_timeout_value() {
+    async fn test_session_decrements_then_locks() {
         let svc = test_service();
-        let status = svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-        assert_eq!(status.remaining_seconds, Some(3600));
+        let status = svc
+            .unlock("0xabc", "password123")
+            .await
+            .expect("unlock");
+        let initial = status.remaining_seconds.expect("initial seconds");
+        assert!(initial <= SESSION_TIMEOUT_SECS && initial > 0);
+
+        // Force the session timer to expire by reaching into the
+        // SessionManager and ending the session — the visible API
+        // we have for "fast-forward" without sleeping for an hour.
+        svc.session_mgr.write().await.end_all_sessions();
+
+        let after = svc.get_session_status().await;
+        assert!(!after.is_active, "session must be inactive after end");
+        assert!(
+            after.remaining_seconds.is_none(),
+            "remaining_seconds is None when locked"
+        );
+    }
+
+    /// RM-B1 / WP-E2.2 (audit GUI-C-02, WAL-09): lockout fires at
+    /// MAX_FAILED_ATTEMPTS attempts, recorded against the address
+    /// that was tried.
+    #[tokio::test]
+    async fn test_lockout_after_repeated_wrong_passwords() {
+        let svc = test_service();
+        let target = "0xvictim";
+
+        // The TestWalletBackend rejects any password except "password123".
+        for _ in 0..(MAX_FAILED_ATTEMPTS - 1) {
+            // The TestWalletBackend rejects passwords <8 chars.
+            let _ = svc.unlock(target, "bad").await;
+        }
+        let final_attempt = svc.unlock(target, "bad").await;
+        assert!(final_attempt.is_err(), "attempt 5 must fail");
+
+        // After lockout, even the correct password is rejected with
+        // a lockout message.
+        let after = svc.unlock(target, "password123").await;
+        match after {
+            Err(AppError::Wallet(msg)) => {
+                assert!(
+                    msg.contains("locked out"),
+                    "expected lockout message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected lockout error, got: {:?}", other),
+        }
+    }
+
+    /// RM-B1 / WP-E2.2: failures recorded against the *attempted*
+    /// address don't lock out a different account.
+    #[tokio::test]
+    async fn test_lockout_is_per_address() {
+        let svc = test_service();
+        for _ in 0..MAX_FAILED_ATTEMPTS {
+            let _ = svc.unlock("0xvictim", "wrong-pwd").await;
+        }
+        // 0xother is unaffected.
+        let ok = svc.unlock("0xother", "password123").await;
+        assert!(ok.is_ok(), "other address must remain unlockable");
     }
 
     #[tokio::test]
@@ -819,6 +967,7 @@ mod tests {
             is_active: true,
             remaining_seconds: Some(3600),
             is_locked_out: false,
+            lockout_remaining_seconds: None,
         };
         let cloned = status.clone();
         assert!(cloned.is_active);
