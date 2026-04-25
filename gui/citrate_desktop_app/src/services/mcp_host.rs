@@ -419,17 +419,49 @@ impl JsonRpcResponse {
 }
 
 /// Single entry point — all JSON-RPC methods dispatch from here.
+///
+/// RM-B1 / WP-E5.8 (audit AGT-13): the transport-layer
+/// `Authorization: Bearer <token>` header is honored when present
+/// — clients that authenticate at the transport layer are exempt
+/// from passing `auth_token` again in the JSON-RPC params. Either
+/// is sufficient. The `initialize` handler still upholds the
+/// server-bounded policy from WP-E1.1.
 async fn dispatch(
     State(host): State<Arc<McpHostService>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
     if req.jsonrpc != "2.0" {
         return Json(JsonRpcResponse::err(req.id, -32600, "Expected jsonrpc: 2.0"));
     }
+
+    // Extract bearer token from the Authorization header if present.
+    let bearer_token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+
+    // For initialize, splice the bearer token into params.auth_token
+    // so the existing server-bounded-policy code path picks it up
+    // without changes. Only override when params don't already
+    // carry an auth_token (caller's explicit field wins).
+    let mut params = req.params;
+    if let Some(token) = bearer_token.clone() {
+        if let Some(obj) = params.as_object_mut() {
+            if !obj.contains_key("auth_token") {
+                obj.insert(
+                    "auth_token".to_string(),
+                    serde_json::Value::String(token),
+                );
+            }
+        }
+    }
+
     match req.method.as_str() {
-        "initialize" => handle_initialize(&host, req.id, req.params).await,
-        "tools/list" => handle_tools_list(&host, req.id, req.params).await,
-        "session/end" => handle_session_end(&host, req.id, req.params).await,
+        "initialize" => handle_initialize(&host, req.id, params).await,
+        "tools/list" => handle_tools_list(&host, req.id, params).await,
+        "session/end" => handle_session_end(&host, req.id, params).await,
         "tools/call" => Json(JsonRpcResponse::err(
             req.id,
             -32601,
@@ -517,6 +549,14 @@ async fn handle_initialize(
         policy,
         revoked: false,
         connected_since: now,
+        // RM-B1 / WP-E5.1 (audit AGT-06): grants minted directly by
+        // the GUI host carry no signature today — the host IS the
+        // issuer, and the auth_token presented at initialize is the
+        // operator-authorized credential. Production strict-mode
+        // wallets MUST sign here; tracked as a follow-on on the
+        // RM-G2 backlog so the cutover is observed end-to-end.
+        issuer_pubkey: Vec::new(),
+        signature: Vec::new(),
     };
     host.mcp.add_grant(grant).await;
     tracing::info!("MCP host: grant {} registered", &grant_id[..8]);
