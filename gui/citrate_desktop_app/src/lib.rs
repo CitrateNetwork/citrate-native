@@ -16,8 +16,16 @@ pub mod services;
 pub mod trail;
 pub mod view_models;
 
+use crate::ports::{SecretStore, SystemSecretStore};
+use std::collections::HashMap;
+use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+const SECRET_MARKER_PREFIX: &str = "keyring:v1:";
+const SECRET_KIND_AI: &str = "ai";
+const SECRET_KIND_INTEGRATION: &str = "integration";
 
 /// Top-level application state shared across all services.
 ///
@@ -68,7 +76,7 @@ pub struct AppCore {
 }
 
 /// Application configuration (persisted across sessions)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
     pub network: String,
     pub chain_id: u64,
@@ -82,9 +90,12 @@ pub struct AppConfig {
     pub mcp_port: u16,
     pub bootnodes: Vec<String>,
     pub theme: String,
-    /// AI provider API keys (provider name → encrypted key)
+    /// AI provider key markers (provider name -> OS-keychain reference).
+    ///
+    /// Legacy configs may contain plaintext here; `AppConfig::load` migrates
+    /// them to the OS credential store and rewrites this map with markers.
     #[serde(default)]
-    pub ai_keys: std::collections::HashMap<String, String>,
+    pub ai_keys: HashMap<String, String>,
     /// AI provider priority order (first = highest priority)
     #[serde(default = "default_ai_priority")]
     pub ai_priority: Vec<String>,
@@ -100,9 +111,37 @@ pub struct AppConfig {
     /// Whether on-chain anchoring is enabled
     #[serde(default)]
     pub on_chain_anchoring: bool,
-    /// Integration tokens (integration name → token)
+    /// Integration token markers (integration name -> OS-keychain reference).
+    ///
+    /// Legacy configs may contain plaintext here; `AppConfig::load` migrates
+    /// them to the OS credential store and rewrites this map with markers.
     #[serde(default)]
-    pub integration_tokens: std::collections::HashMap<String, String>,
+    pub integration_tokens: HashMap<String, String>,
+}
+
+impl fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AppConfig")
+            .field("network", &self.network)
+            .field("chain_id", &self.chain_id)
+            .field("data_dir", &self.data_dir)
+            .field("rpc_port", &self.rpc_port)
+            .field("p2p_port", &self.p2p_port)
+            .field("mcp_port", &self.mcp_port)
+            .field("bootnodes", &self.bootnodes)
+            .field("theme", &self.theme)
+            .field("ai_keys", &redacted_secret_keys(&self.ai_keys))
+            .field("ai_priority", &self.ai_priority)
+            .field("logseq_graph_path", &self.logseq_graph_path)
+            .field("logseq_enabled", &self.logseq_enabled)
+            .field("auto_journal", &self.auto_journal)
+            .field("on_chain_anchoring", &self.on_chain_anchoring)
+            .field(
+                "integration_tokens",
+                &redacted_secret_keys(&self.integration_tokens),
+            )
+            .finish()
+    }
 }
 
 fn default_ai_priority() -> Vec<String> {
@@ -128,15 +167,41 @@ impl Default for AppConfig {
                 "159.65.227.42:30303".to_string(),
             ],
             theme: "dark".to_string(),
-            ai_keys: std::collections::HashMap::new(),
+            ai_keys: HashMap::new(),
             ai_priority: default_ai_priority(),
             logseq_graph_path: default_logseq_path(),
             logseq_enabled: false,
             auto_journal: false,
             on_chain_anchoring: false,
-            integration_tokens: std::collections::HashMap::new(),
+            integration_tokens: HashMap::new(),
         }
     }
+}
+
+fn redacted_secret_keys(map: &HashMap<String, String>) -> Vec<&str> {
+    let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    keys
+}
+
+fn secret_marker(kind: &str, name: &str) -> String {
+    format!("{}{}:{}", SECRET_MARKER_PREFIX, kind, hex::encode(name.as_bytes()))
+}
+
+fn secret_store_key(kind: &str, name: &str) -> String {
+    format!("{}:{}", kind, hex::encode(name.as_bytes()))
+}
+
+fn is_secret_marker(value: &str) -> bool {
+    value.starts_with(SECRET_MARKER_PREFIX)
+}
+
+fn io_secret_error(action: &str, err: String) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, format!("{action}: {err}"))
+}
+
+fn secret_value_requires_storage(value: &str) -> bool {
+    !value.is_empty() && !is_secret_marker(value)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -175,12 +240,16 @@ pub fn chain_id_for_network(network: &str) -> u64 {
 impl AppConfig {
     /// Load config from disk, or return default.
     pub fn load() -> Self {
-        let path = Self::config_path();
+        Self::load_from_path_with_secret_store(&Self::config_path(), &SystemSecretStore::new())
+    }
+
+    pub fn load_from_path_with_secret_store(path: &Path, secret_store: &dyn SecretStore) -> Self {
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(contents) => {
                     match serde_json::from_str::<AppConfig>(&contents) {
                         Ok(mut config) => {
+                            let mut needs_save = false;
                             // Migrate stale configs: if network/chain_id are mismatched, fix them
                             let expected_chain_id = chain_id_for_network(&config.network);
                             if config.chain_id != expected_chain_id {
@@ -195,8 +264,24 @@ impl AppConfig {
                                 } else {
                                     config.chain_id = expected_chain_id;
                                 }
-                                // Persist the fix
-                                if let Err(e) = config.save() {
+                                needs_save = true;
+                            }
+
+                            match config.migrate_plaintext_secrets(secret_store) {
+                                Ok(changed) => needs_save |= changed,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Config migration: failed to move plaintext secrets to OS keychain: {}. \
+                                         Dropping plaintext values from config; re-enter affected keys in Settings.",
+                                        e
+                                    );
+                                    config.drop_plaintext_secret_values();
+                                    needs_save = true;
+                                }
+                            }
+
+                            if needs_save {
+                                if let Err(e) = config.write_sanitized_to_path(path) {
                                     tracing::warn!("Failed to save migrated config: {}", e);
                                 }
                             }
@@ -214,7 +299,26 @@ impl AppConfig {
 
     /// Save config to disk.
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let path = Self::config_path();
+        self.save_to_path_with_secret_store(&Self::config_path(), &SystemSecretStore::new())
+    }
+
+    pub fn save_to_path_with_secret_store(
+        &self,
+        path: &Path,
+        secret_store: &dyn SecretStore,
+    ) -> Result<(), std::io::Error> {
+        let mut sanitized = self.clone();
+        sanitized
+            .migrate_plaintext_secrets(secret_store)
+            .map_err(|e| io_secret_error("failed to store config secrets", e))?;
+        sanitized.write_sanitized_to_path(path)
+    }
+
+    fn write_sanitized_to_path(&self, path: &Path) -> Result<(), std::io::Error> {
+        debug_assert!(
+            !self.contains_plaintext_secret_values(),
+            "AppConfig::write_sanitized_to_path called with plaintext secrets"
+        );
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -230,6 +334,141 @@ impl AppConfig {
             .map(|d| d.join("citrate-gui").join("config.json"))
             .unwrap_or_else(|| std::path::PathBuf::from(".citrate-gui/config.json"))
     }
+
+    pub fn set_ai_key(&mut self, provider: &str, key: &str) -> Result<(), std::io::Error> {
+        self.set_ai_key_with_secret_store(provider, key, &SystemSecretStore::new())
+    }
+
+    pub fn set_ai_key_with_secret_store(
+        &mut self,
+        provider: &str,
+        key: &str,
+        secret_store: &dyn SecretStore,
+    ) -> Result<(), std::io::Error> {
+        let store_key = secret_store_key(SECRET_KIND_AI, provider);
+        secret_store
+            .set_secret(&store_key, key)
+            .map_err(|e| io_secret_error("failed to store AI provider key", e))?;
+        self.ai_keys
+            .insert(provider.to_string(), secret_marker(SECRET_KIND_AI, provider));
+        Ok(())
+    }
+
+    pub fn get_ai_key_with_secret_store(
+        &self,
+        provider: &str,
+        secret_store: &dyn SecretStore,
+    ) -> Option<String> {
+        match self.ai_keys.get(provider) {
+            Some(marker) if is_secret_marker(marker) => {
+                secret_store.get_secret(&secret_store_key(SECRET_KIND_AI, provider))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn set_integration_token(
+        &mut self,
+        name: &str,
+        token: &str,
+    ) -> Result<(), std::io::Error> {
+        self.set_integration_token_with_secret_store(
+            name,
+            token,
+            &SystemSecretStore::new(),
+        )
+    }
+
+    pub fn set_integration_token_with_secret_store(
+        &mut self,
+        name: &str,
+        token: &str,
+        secret_store: &dyn SecretStore,
+    ) -> Result<(), std::io::Error> {
+        let store_key = secret_store_key(SECRET_KIND_INTEGRATION, name);
+        secret_store
+            .set_secret(&store_key, token)
+            .map_err(|e| io_secret_error("failed to store integration token", e))?;
+        self.integration_tokens.insert(
+            name.to_string(),
+            secret_marker(SECRET_KIND_INTEGRATION, name),
+        );
+        Ok(())
+    }
+
+    pub fn get_integration_token_with_secret_store(
+        &self,
+        name: &str,
+        secret_store: &dyn SecretStore,
+    ) -> Option<String> {
+        match self.integration_tokens.get(name) {
+            Some(marker) if is_secret_marker(marker) => secret_store
+                .get_secret(&secret_store_key(SECRET_KIND_INTEGRATION, name)),
+            _ => None,
+        }
+    }
+
+    fn migrate_plaintext_secrets(
+        &mut self,
+        secret_store: &dyn SecretStore,
+    ) -> Result<bool, String> {
+        let mut changed = false;
+        changed |= migrate_plaintext_secret_map(
+            &mut self.ai_keys,
+            SECRET_KIND_AI,
+            secret_store,
+        )?;
+        changed |= migrate_plaintext_secret_map(
+            &mut self.integration_tokens,
+            SECRET_KIND_INTEGRATION,
+            secret_store,
+        )?;
+        Ok(changed)
+    }
+
+    fn contains_plaintext_secret_values(&self) -> bool {
+        self.ai_keys
+            .values()
+            .any(|value| secret_value_requires_storage(value))
+            || self
+                .integration_tokens
+                .values()
+                .any(|value| secret_value_requires_storage(value))
+    }
+
+    fn drop_plaintext_secret_values(&mut self) {
+        self.ai_keys
+            .retain(|_, value| value.is_empty() || is_secret_marker(value));
+        self.integration_tokens
+            .retain(|_, value| value.is_empty() || is_secret_marker(value));
+    }
+}
+
+fn migrate_plaintext_secret_map(
+    map: &mut HashMap<String, String>,
+    kind: &str,
+    secret_store: &dyn SecretStore,
+) -> Result<bool, String> {
+    let mut changed = false;
+    let entries: Vec<(String, String)> = map
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+
+    for (name, value) in entries {
+        if value.is_empty() {
+            continue;
+        }
+        if is_secret_marker(&value) {
+            continue;
+        }
+        let store_key = secret_store_key(kind, &name);
+        secret_store.set_secret(&store_key, &value)?;
+        map.insert(name.clone(), secret_marker(kind, &name));
+        changed = true;
+    }
+
+    Ok(changed)
 }
 
 impl AppCore {
@@ -360,6 +599,48 @@ impl AppCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct TestSecretStore {
+        data: Mutex<HashMap<String, String>>,
+        fail_writes: bool,
+    }
+
+    impl TestSecretStore {
+        fn failing() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+                fail_writes: true,
+            }
+        }
+    }
+
+    impl SecretStore for TestSecretStore {
+        fn get_secret(&self, key: &str) -> Option<String> {
+            self.data.lock().expect("secret store mutex").get(key).cloned()
+        }
+
+        fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
+            if self.fail_writes {
+                return Err("injected secret-store failure".to_string());
+            }
+            self.data
+                .lock()
+                .expect("secret store mutex")
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete_secret(&self, key: &str) -> Result<(), String> {
+            self.data.lock().expect("secret store mutex").remove(key);
+            Ok(())
+        }
+
+        fn has_secret(&self, key: &str) -> bool {
+            self.data.lock().expect("secret store mutex").contains_key(key)
+        }
+    }
 
     #[test]
     fn test_default_config() {
@@ -412,6 +693,122 @@ mod tests {
         assert_eq!(original.rpc_port, deserialized.rpc_port);
         assert_eq!(original.p2p_port, deserialized.p2p_port);
         assert_eq!(original.theme, deserialized.theme);
+    }
+
+    #[test]
+    fn test_t0_03_config_save_moves_plaintext_secrets_out_of_json() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("config.json");
+        let store = TestSecretStore::default();
+        let mut config = AppConfig::default();
+        config
+            .ai_keys
+            .insert("openai".to_string(), "sk-live-test-secret".to_string());
+        config.integration_tokens.insert(
+            "huggingface".to_string(),
+            "hf_live_test_secret".to_string(),
+        );
+
+        config
+            .save_to_path_with_secret_store(&path, &store)
+            .expect("save sanitized config");
+        let raw = std::fs::read_to_string(&path).expect("read config");
+
+        assert!(!raw.contains("sk-live-test-secret"));
+        assert!(!raw.contains("hf_live_test_secret"));
+        assert!(raw.contains(SECRET_MARKER_PREFIX));
+        assert_eq!(
+            store.get_secret(&secret_store_key(SECRET_KIND_AI, "openai")),
+            Some("sk-live-test-secret".to_string())
+        );
+        assert_eq!(
+            store.get_secret(&secret_store_key(SECRET_KIND_INTEGRATION, "huggingface")),
+            Some("hf_live_test_secret".to_string())
+        );
+    }
+
+    #[test]
+    fn test_t0_03_load_migrates_legacy_plaintext_secret_config() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("config.json");
+        let legacy = r#"{
+  "network": "testnet",
+  "chain_id": 40204,
+  "data_dir": "/tmp/test",
+  "rpc_port": 18545,
+  "p2p_port": 30304,
+  "mcp_port": 9600,
+  "bootnodes": [],
+  "theme": "dark",
+  "ai_keys": { "anthropic": "sk-ant-legacy-secret" },
+  "ai_priority": ["local", "anthropic"],
+  "logseq_graph_path": "/tmp/logseq",
+  "logseq_enabled": false,
+  "auto_journal": false,
+  "on_chain_anchoring": false,
+  "integration_tokens": { "github": "ghp_legacy_secret" }
+}"#;
+        std::fs::write(&path, legacy).expect("write legacy config");
+        let store = TestSecretStore::default();
+
+        let migrated = AppConfig::load_from_path_with_secret_store(&path, &store);
+        let raw = std::fs::read_to_string(&path).expect("read migrated config");
+
+        assert!(!raw.contains("sk-ant-legacy-secret"));
+        assert!(!raw.contains("ghp_legacy_secret"));
+        assert!(migrated
+            .ai_keys
+            .get("anthropic")
+            .is_some_and(|value| is_secret_marker(value)));
+        assert!(migrated
+            .integration_tokens
+            .get("github")
+            .is_some_and(|value| is_secret_marker(value)));
+        assert_eq!(
+            migrated.get_ai_key_with_secret_store("anthropic", &store),
+            Some("sk-ant-legacy-secret".to_string())
+        );
+        assert_eq!(
+            migrated.get_integration_token_with_secret_store("github", &store),
+            Some("ghp_legacy_secret".to_string())
+        );
+    }
+
+    #[test]
+    fn test_t0_03_config_debug_redacts_secret_values() {
+        let mut config = AppConfig::default();
+        config
+            .ai_keys
+            .insert("openai".to_string(), "sk-debug-secret".to_string());
+        config
+            .integration_tokens
+            .insert("github".to_string(), "ghp_debug_secret".to_string());
+
+        let debug = format!("{:?}", config);
+
+        assert!(!debug.contains("sk-debug-secret"));
+        assert!(!debug.contains("ghp_debug_secret"));
+        assert!(debug.contains("openai"));
+        assert!(debug.contains("github"));
+    }
+
+    #[test]
+    fn test_t0_03_config_save_fails_closed_if_secret_store_rejects() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("config.json");
+        let store = TestSecretStore::failing();
+        let mut config = AppConfig::default();
+        config
+            .ai_keys
+            .insert("openai".to_string(), "sk-never-write-plaintext".to_string());
+
+        let result = config.save_to_path_with_secret_store(&path, &store);
+
+        assert!(result.is_err());
+        assert!(
+            !path.exists(),
+            "config save must fail before writing plaintext secrets"
+        );
     }
 
     #[test]

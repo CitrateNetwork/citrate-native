@@ -19,6 +19,82 @@ pub trait SecretStore: Send + Sync {
     fn has_secret(&self, key: &str) -> bool;
 }
 
+/// Production secret store backed by the operating system credential store.
+#[derive(Debug, Clone, Default)]
+pub struct SystemSecretStore;
+
+impl SystemSecretStore {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn keyring_entry(key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new("citrate-desktop", key)
+        .map_err(|e| format!("OS keychain entry error for {key}: {e}"))
+}
+
+impl SecretStore for SystemSecretStore {
+    fn get_secret(&self, key: &str) -> Option<String> {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+            let entry = keyring_entry(key).ok()?;
+            match entry.get_password() {
+                Ok(secret) => Some(secret),
+                Err(keyring::Error::NoEntry) => None,
+                Err(e) => {
+                    tracing::warn!("OS keychain read failed for {}: {}", key, e);
+                    None
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            let _ = key;
+            None
+        }
+    }
+
+    fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+            let entry = keyring_entry(key)?;
+            entry
+                .set_password(value)
+                .map_err(|e| format!("OS keychain write failed for {key}: {e}"))
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            let _ = (key, value);
+            Err("OS keychain is unsupported on this platform".to_string())
+        }
+    }
+
+    fn delete_secret(&self, key: &str) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+            let entry = keyring_entry(key)?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(format!("OS keychain delete failed for {key}: {e}")),
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            let _ = key;
+            Err("OS keychain is unsupported on this platform".to_string())
+        }
+    }
+
+    fn has_secret(&self, key: &str) -> bool {
+        self.get_secret(key).is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

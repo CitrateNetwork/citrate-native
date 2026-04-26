@@ -194,7 +194,7 @@ export component WalletView inherits Rectangle {
     callback import-from-key(string, string);
     callback import-from-mnemonic(string, string);
     callback export-private-key(/* password */ string);
-    callback copy-exported-key;
+    callback clear-export-state;
 
     background: Theme.bg;
 
@@ -318,7 +318,7 @@ export component WalletView inherits Rectangle {
                             border-radius: Theme.radius-md;
                             border-width: 1px; border-color: Theme.border;
                             Text { text: "Export Key"; color: Theme.text-muted; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                            TouchArea { clicked => { root.show-export-dialog = true; root.show-account-dropdown = false; } }
+                            TouchArea { clicked => { root.clear-export-state(); root.show-export-dialog = true; root.show-account-dropdown = false; } }
                         }
                     }
                 }
@@ -696,7 +696,7 @@ export component WalletView inherits Rectangle {
     // === EXPORT PRIVATE KEY DIALOG ===
     if root.show-export-dialog : Rectangle {
         background: rgba(0, 0, 0, 0.6);
-        TouchArea { clicked => { root.show-export-dialog = false; } }
+        TouchArea { clicked => { root.clear-export-state(); root.show-export-dialog = false; } }
 
         Rectangle {
             width: min(440px, parent.width - 48px);
@@ -763,13 +763,6 @@ export component WalletView inherits Rectangle {
                             }
                         }
                     }
-                    Rectangle {
-                        height: 32px; width: 120px;
-                        border-radius: Theme.radius-md;
-                        border-width: 1px; border-color: Theme.accent;
-                        Text { text: "Copy to Clipboard"; color: Theme.accent; font-size: 11px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.copy-exported-key(); } }
-                    }
                 }
 
                 HorizontalLayout {
@@ -779,7 +772,7 @@ export component WalletView inherits Rectangle {
                         border-radius: Theme.radius-md;
                         border-width: 1px; border-color: Theme.border;
                         Text { text: "Close"; color: Theme.text; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                        TouchArea { clicked => { root.show-export-dialog = false; } }
+                        TouchArea { clicked => { root.clear-export-state(); root.show-export-dialog = false; } }
                     }
                     if root.exported-key == "" : Rectangle {
                         height: 40px; horizontal-stretch: 1;

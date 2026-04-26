@@ -224,7 +224,7 @@ export component App inherits Window {
     callback wallet-import-mnemonic(string, string);
     callback wallet-select-account(int);
     callback wallet-export-key(/* password */ string);
-    callback wallet-copy-exported-key;
+    callback wallet-clear-export-state;
     callback wallet-request-faucet;
     in property <string> wallet-faucet-status: "";
 
@@ -470,7 +470,7 @@ export component App inherits Window {
                     import-from-key(key, pwd) => { root.wallet-import-mnemonic(key, pwd); }
                     select-account(index) => { root.wallet-select-account(index); }
                     export-private-key(password) => { root.wallet-export-key(password); }
-                    copy-exported-key => { root.wallet-copy-exported-key(); }
+                    clear-export-state => { root.wallet-clear-export-state(); }
                     faucet-status: root.wallet-faucet-status;
                     request-faucet => { root.wallet-request-faucet(); }
                 }
