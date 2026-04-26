@@ -134,6 +134,7 @@ fn spawn_async(
 /// How long after a sensitive copy the clipboard auto-wipes.
 /// RM-B1 / WP-E2.7 (audit GUI-C-03).
 const CLIPBOARD_AUTOCLEAR_SECS: u64 = 30;
+const EXPORTED_KEY_DISPLAY_SECS: u64 = 60;
 
 /// Pure decision: should we wipe the clipboard given what we wrote
 /// (`original`) and what's there now (`current`)? Wipe iff they
@@ -143,6 +144,10 @@ const CLIPBOARD_AUTOCLEAR_SECS: u64 = 30;
 /// Pure function so we can unit-test the policy without driving
 /// the Slint event loop or a real clipboard.
 fn clipboard_should_wipe(original: &str, current: &str) -> bool {
+    !original.is_empty() && original == current
+}
+
+fn exported_key_should_clear(original: &str, current: &str) -> bool {
     !original.is_empty() && original == current
 }
 
@@ -189,6 +194,25 @@ fn schedule_clipboard_autoclear(original: String) {
     );
 }
 
+fn schedule_exported_key_clear(ui_w: slint::Weak<App>, original: String) {
+    slint::Timer::single_shot(
+        std::time::Duration::from_secs(EXPORTED_KEY_DISPLAY_SECS),
+        move || {
+            if let Some(ui) = ui_w.upgrade() {
+                let current = ui.get_wallet_exported_key().to_string();
+                if exported_key_should_clear(&original, &current) {
+                    ui.set_wallet_exported_key("".into());
+                    ui.set_wallet_export_error("Private key display expired.".into());
+                    tracing::info!(
+                        "Exported private key display cleared after {}s",
+                        EXPORTED_KEY_DISPLAY_SECS
+                    );
+                }
+            }
+        },
+    );
+}
+
 #[cfg(test)]
 mod clipboard_autoclear_tests {
     use super::*;
@@ -226,6 +250,36 @@ mod clipboard_autoclear_tests {
         let original = "abandon abandon abandon ability";
         let current = "abandon abandon abandon"; // user truncated/edited
         assert!(!clipboard_should_wipe(original, current));
+    }
+
+    #[test]
+    fn test_t0_04_exported_key_display_clears_only_when_unchanged() {
+        let key = "a".repeat(64);
+        assert!(exported_key_should_clear(&key, &key));
+        assert!(!exported_key_should_clear(&key, "user replaced visible value"));
+        assert!(!exported_key_should_clear("", ""));
+    }
+
+    #[test]
+    fn test_t0_04_exported_key_has_no_clipboard_copy_path() {
+        let source = include_str!("main.rs");
+        let wallet_slint = include_str!("../ui/wallet/wallet.slint");
+        let app_slint = include_str!("../ui/app.slint");
+        let rust_handler = ["on_wallet_", "copy_exported_key"].concat();
+        let slint_callback = ["copy", "-exported-key"].concat();
+        let copy_label = ["Copy", " to Clipboard"].concat();
+
+        assert!(!source.contains(&rust_handler));
+        assert!(!wallet_slint.contains(&slint_callback));
+        assert!(!wallet_slint.contains(&copy_label));
+        assert!(!app_slint.contains(&slint_callback));
+    }
+
+    #[test]
+    fn test_t0_04_export_dialog_close_routes_through_clear_export_state() {
+        let wallet_slint = include_str!("../ui/wallet/wallet.slint");
+        assert!(wallet_slint.contains("callback clear-export-state"));
+        assert!(wallet_slint.contains("root.clear-export-state(); root.show-export-dialog = false"));
     }
 }
 
@@ -2485,10 +2539,13 @@ fn main() {
             match km.export_private_key(&selected_addr, &pwd) {
                 Ok(hex_key) => {
                     tracing::info!("Private key exported for {} (length: {} hex chars)", selected_addr, hex_key.len());
+                    let ui_for_export = ui_w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
+                        if let Some(ui) = ui_for_export.upgrade() {
+                            let key_for_timer = hex_key.clone();
                             ui.set_wallet_exported_key(hex_key.into());
                             ui.set_wallet_export_error("".into());
+                            schedule_exported_key_clear(ui_for_export.clone(), key_for_timer);
                         }
                     });
                 }
@@ -2506,25 +2563,12 @@ fn main() {
         });
     });
 
-    // --- Wallet: Copy Exported Key to Clipboard ---
+    // --- Wallet: Clear Exported Key State ---
     let ui_w = ui.as_weak();
-    ui.on_wallet_copy_exported_key(move || {
+    ui.on_wallet_clear_export_state(move || {
         if let Some(ui) = ui_w.upgrade() {
-            let key = ui.get_wallet_exported_key().to_string();
-            if !key.is_empty() {
-                match arboard::Clipboard::new() {
-                    Ok(mut clipboard) => {
-                        if let Err(e) = clipboard.set_text(&key) {
-                            tracing::error!("Failed to copy to clipboard: {}", e);
-                        } else {
-                            tracing::info!("Exported key copied to clipboard");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to access clipboard: {}", e);
-                    }
-                }
-            }
+            ui.set_wallet_exported_key("".into());
+            ui.set_wallet_export_error("".into());
         }
     });
 
@@ -3674,7 +3718,7 @@ fn main() {
     });
 
     // --- Settings: Save Integration Token ---
-    // Data source: AppConfig.integration_tokens persisted to disk via config.save()
+    // Data source: OS keychain; AppConfig persists only a secret marker.
     let core = app_core.clone();
     let rt_h = rt.handle().clone();
     ui.on_settings_save_integration_token(move |name, token| {
@@ -3684,11 +3728,13 @@ fn main() {
         tracing::info!("Settings: saving integration token for {} ({} chars)", name_str, token_str.len());
         spawn_async(&rt_h, async move {
             let mut config = core.config.write().await;
-            config.integration_tokens.insert(name_str.clone(), token_str);
-            if let Err(e) = config.save() {
-                tracing::error!("Failed to save config: {}", e);
+            let result = config
+                .set_integration_token(&name_str, &token_str)
+                .and_then(|_| config.save());
+            if let Err(e) = result {
+                tracing::error!("Failed to save integration token securely: {}", e);
             } else {
-                tracing::info!("Settings: {} integration token saved to disk", name_str);
+                tracing::info!("Settings: {} integration token saved to OS keychain", name_str);
             }
         });
     });
@@ -4954,11 +5000,13 @@ fn main() {
         tracing::info!("Settings: saving API key for {} ({} chars)", provider_str, key_str.len());
         spawn_async(&rt_h, async move {
             let mut config = core.config.write().await;
-            config.ai_keys.insert(provider_str.clone(), key_str);
-            if let Err(e) = config.save() {
-                tracing::error!("Failed to save config: {}", e);
+            let result = config
+                .set_ai_key(&provider_str, &key_str)
+                .and_then(|_| config.save());
+            if let Err(e) = result {
+                tracing::error!("Failed to save AI API key securely: {}", e);
             } else {
-                tracing::info!("Settings: {} API key saved to disk", provider_str);
+                tracing::info!("Settings: {} API key saved to OS keychain", provider_str);
             }
         });
     });

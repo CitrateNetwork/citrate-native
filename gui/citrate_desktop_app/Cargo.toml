@@ -64,6 +64,15 @@ citrate-agent-core = { path = "../../agent-core" }
 # direct dep so McpHostService owns its own router clearly.
 axum = "0.7"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 proptest = "1"
