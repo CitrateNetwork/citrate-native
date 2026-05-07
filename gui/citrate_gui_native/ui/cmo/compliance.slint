@@ -1,0 +1,303 @@
+// WP-E6.5 — CMO Compliance panel.
+//
+// 2D matrix view: schools on rows, 9 standard compliance gates on
+// columns, status pill per cell. The 9 gates per planset / compliance
+// checklist:
+//
+//   Federal (apply to every school):
+//     1. DPA (Data Processing Agreement)
+//     2. FERPA (Family Educational Rights and Privacy Act)
+//     3. COPPA (Children's Online Privacy Protection Act)
+//     4. CIPA (Children's Internet Protection Act — E-rate schools)
+//
+//   State-specific (apply only when school's NCES state matches):
+//     5. AB 1584 + SOPIPA            (CA)
+//     6. NY Ed Law § 2-d              (NY)
+//     7. IL SOPPA                     (IL)
+//     8. TX TEC § 32.151              (TX)
+//     9. CO C.R.S. § 22-16-104        (CO)
+//
+// State-specific gates render as "N/A" (light gray) for schools whose
+// NCES state doesn't match. CMO admins still see the column for context
+// (a CMO operating in multiple states needs to track per-state status).
+//
+// Status colors (matches CmoSchoolRow's compliance-health pill in E6.3):
+//   Green  → signed + current
+//   Yellow → pending (envelope sent, awaiting signature)
+//   Red    → expired OR rejected
+//   Gray   → N/A (gate doesn't apply to this school)
+//
+// Click-to-drawer for envelope detail is reserved for an E6.5.1 follow-
+// up; v1 displays the status matrix without the drawer interaction.
+//
+// Data sources (Rule 11):
+//   - InstitutionTreeV1.getComplianceMatrix(cmo_id) → 2D matrix (E6.1.5)
+//   - compliance_storage (filesystem QSSP envelope) → per-envelope
+//     detail when the drawer ships (E6.5.1)
+
+import { Theme } from "../theme.slint";
+
+// One cell in the matrix — one (school, gate) pair.
+export struct ComplianceCell {
+    gate-id: string,                  // "dpa" | "ferpa" | "coppa" | "cipa" | "ab1584" | ...
+    gate-label: string,                // Short display label
+    status: string,                    // "Green" | "Yellow" | "Red" | "N/A"
+    last-signed: string,                // ISO-8601 date or empty
+    expires-at: string,                  // ISO-8601 date or empty
+}
+
+// One row in the matrix — one school with its 9 cells.
+export struct ComplianceSchoolMatrixRow {
+    school-id: string,
+    school-name: string,
+    school-state: string,                // "CA" / "NY" / "IL" / "TX" / "CO" / "Other"
+    cells: [ComplianceCell],
+}
+
+component StatusPill inherits Rectangle {
+    in property <string> status;
+    in property <string> tooltip-text;       // optional hover hint
+
+    width: 56px;
+    height: 22px;
+    border-radius: 11px;
+    background:
+        status == "Green" ? #064e3b
+      : status == "Yellow" ? #78350f
+      : status == "Red" ? #7f1d1d
+      : status == "N/A" ? Theme.bg-tertiary
+      : Theme.bg-tertiary;
+
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            text: root.status;
+            color:
+                root.status == "Green" ? #6ee7b7
+              : root.status == "Yellow" ? #fde68a
+              : root.status == "Red" ? #fca5a5
+              : root.status == "N/A" ? Theme.text-muted
+              : Theme.text-muted;
+            font-size: 10px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Each row's gate columns are stretchy with a small min-width.
+// `stretch: 1` per cell means columns share remaining space equally.
+component MatrixRow inherits Rectangle {
+    in property <ComplianceSchoolMatrixRow> data;
+    callback school-clicked(string);
+    callback cell-clicked(string, string);  // (school-id, gate-id)
+
+    height: 52px;
+    background: touch.has-hover ? Theme.bg-tertiary : Theme.surface;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        alignment: stretch;
+
+        // School name column (3-stretch)
+        VerticalLayout {
+            horizontal-stretch: 3;
+            alignment: center;
+            Text {
+                text: root.data.school-name;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 500;
+                overflow: elide;
+            }
+            Text {
+                text: root.data.school-state;
+                color: Theme.text-muted;
+                font-size: 10px;
+            }
+        }
+
+        // 9 gate cells, each ~70px wide
+        for cell[idx] in root.data.cells: Rectangle {
+            width: 70px;
+            HorizontalLayout {
+                alignment: center;
+                StatusPill {
+                    status: cell.status;
+                    tooltip-text: cell.gate-label
+                        + " — " + cell.status
+                        + (cell.last-signed != "" ? "; signed " + cell.last-signed : "")
+                        + (cell.expires-at != "" ? "; expires " + cell.expires-at : "");
+                }
+            }
+            cell-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.cell-clicked(root.data.school-id, cell.gate-id); }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.school-clicked(root.data.school-id); }
+    }
+}
+
+component MatrixHeader inherits Rectangle {
+    height: 44px;
+    background: Theme.bg-tertiary;
+    border-radius: Theme.radius-sm;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        alignment: stretch;
+
+        // School column header
+        VerticalLayout {
+            horizontal-stretch: 3;
+            alignment: center;
+            Text {
+                text: "SCHOOL";
+                color: Theme.text-muted;
+                font-size: 10px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Gate column headers — fixed names matching the 9 gates
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "DPA"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "FERPA"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "COPPA"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "CIPA"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "CA"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "NY"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "IL"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "TX"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+        Rectangle { width: 70px; HorizontalLayout { alignment: center; Text { text: "CO"; color: Theme.text-muted; font-size: 10px; font-weight: 600; vertical-alignment: center; } } }
+    }
+}
+
+component LegendPill inherits Rectangle {
+    in property <string> status;
+    in property <string> meaning;
+
+    height: 22px;
+    HorizontalLayout {
+        spacing: Theme.space-xs;
+        alignment: start;
+
+        StatusPill {
+            status: root.status;
+            tooltip-text: "";
+        }
+        Text {
+            text: root.meaning;
+            color: Theme.text-secondary;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component CmoCompliance inherits Rectangle {
+    in property <[ComplianceSchoolMatrixRow]> rows;
+    callback school-clicked(string);
+    callback cell-clicked(string, string);  // (school-id, gate-id)
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding-top: Theme.space-lg;
+            padding-bottom: Theme.space-lg;
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // Title + intro
+            VerticalLayout {
+                spacing: Theme.space-xs;
+                Text {
+                    text: "Compliance Matrix";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "Per-school × per-gate compliance posture. Federal gates (DPA/FERPA/COPPA/CIPA) apply to every school. State-specific gates (CA/NY/IL/TX/CO) render N/A for schools outside that state.";
+                    color: Theme.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            // Legend
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                LegendPill { status: "Green";  meaning: "Signed + current"; }
+                LegendPill { status: "Yellow"; meaning: "Pending signature"; }
+                LegendPill { status: "Red";    meaning: "Expired or rejected"; }
+                LegendPill { status: "N/A";    meaning: "Doesn't apply"; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // Empty-state
+            if root.rows.length == 0: Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 120px;
+                VerticalLayout {
+                    padding: Theme.space-xl;
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: "No compliance data";
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "On-chain compliance matrix not yet populated. Run `citrate-school-bootstrap` to register schools, then sign each compliance gate via Docusign + CLEAR.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Matrix
+            if root.rows.length > 0: Rectangle {
+                background: Theme.bg-secondary;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-sm;
+
+                    MatrixHeader {}
+
+                    for school-row[idx] in root.rows: MatrixRow {
+                        data: school-row;
+                        school-clicked(id) => { root.school-clicked(id); }
+                        cell-clicked(school-id, gate-id) => { root.cell-clicked(school-id, gate-id); }
+                    }
+                }
+            }
+        }
+    }
+}
