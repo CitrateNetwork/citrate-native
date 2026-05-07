@@ -129,6 +129,16 @@ export component Sidebar inherits Rectangle {
             }
         }
 
+        // WP-E6 — CMO group; visible only when role == CMOSuperAdmin.
+        // The 3 panels (Dashboard / Tenancy / Compliance) are all
+        // CMO-scope. E6.3 ships Dashboard; E6.4/E6.5 add the other two.
+        if root.is-cmo-super-admin: NavGroup {
+            title: "CMO";
+            NavItem { label: "Dashboard"; active: root.active-tab == "cmo_dashboard"; clicked => { root.tab-changed("cmo_dashboard"); } }
+            NavItem { label: "Tenancy"; active: root.active-tab == "cmo_tenancy"; clicked => { root.tab-changed("cmo_tenancy"); } }
+            NavItem { label: "Compliance"; active: root.active-tab == "cmo_compliance"; clicked => { root.tab-changed("cmo_compliance"); } }
+        }
+
         // Blockchain group
         NavGroup {
             title: "BLOCKCHAIN";
