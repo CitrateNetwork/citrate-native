@@ -1774,13 +1774,81 @@ fn main() {
         }
     });
 
-    // WP-E6.5.1 — Renew/Sign-now button on the drawer. Logs intent in v1;
-    // E6.1.5-E adds the wallet-signed recordSigned transaction here.
+    // WP-E6.5.1 + E6.1.5-E — Renew/Sign-now button on the drawer.
+    //
+    // Builds the ABI-encoded calldata for ComplianceRegistry.recordSigned
+    // and logs it as a copy-pasteable hex blob so the operator can sign
+    // it via their existing wallet (MetaMask, hardware wallet, ledger,
+    // etc.) and submit via eth_sendRawTransaction. This intentional
+    // separation keeps the GUI key-custody-agnostic until the hardware-
+    // wallet integration ships separately.
+    //
+    // Operator flow:
+    //   1. Click "Renew now" in the drawer
+    //   2. tracing::info! prints the calldata hex + contract address
+    //   3. Operator signs + submits via their wallet
+    //   4. The async fetch loop (E6.1.5-D) picks up the new state on
+    //      next refresh
+    //
+    // To gate-idx mapping (must match ComplianceRegistry.Gate enum):
+    //   "dpa"=0, "ferpa"=1, "coppa"=2, "cipa"=3,
+    //   "ab1584"=4, "ny2d"=5, "ilsoppa"=6, "txtec"=7, "cocrs"=8
     ui.on_cmo_envelope_renew_clicked(|school_id, gate_id| {
+        let school_id_s = school_id.as_str();
+        let gate_id_s = gate_id.as_str();
+        let gate_idx: u8 = match gate_id_s {
+            "dpa" => 0,
+            "ferpa" => 1,
+            "coppa" => 2,
+            "cipa" => 3,
+            "ab1584" | "ca" => 4,
+            "ny2d" | "ny" => 5,
+            "ilsoppa" | "il" => 6,
+            "txtec" | "tx" => 7,
+            "cocrs" | "co" => 8,
+            other => {
+                tracing::warn!("[E6.1.5-E] unknown gate id: {other}; cannot build calldata");
+                return;
+            }
+        };
+
+        // Default expiry = now + 365 days (matches the contract's
+        // MAX_VALIDITY_WINDOW). Operators can override at signing time
+        // if they want a shorter window.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let expires_at = now + 365 * 86400;
+
+        // Synthetic envelope hash = keccak256(school_id || gate_id || now)
+        // Real signing flow generates this from the actual Docusign
+        // envelope ID; we use the synthetic placeholder so the calldata
+        // is structurally valid for the operator's review/sign.
+        use sha3::{Digest, Keccak256};
+        let mut hasher = Keccak256::new();
+        hasher.update(school_id_s.as_bytes());
+        hasher.update(gate_id_s.as_bytes());
+        hasher.update(now.to_be_bytes());
+        let env_hash: [u8; 32] = hasher.finalize().into();
+        let env_hash_hex = format!("0x{}", hex::encode(env_hash));
+
+        let calldata = citrate_edu_app::tx::build_record_signed_calldata(
+            school_id_s,
+            gate_idx,
+            &env_hash_hex,
+            expires_at,
+        );
+        let calldata_hex = format!("0x{}", hex::encode(&calldata));
+
         tracing::info!(
-            "[E6.5.1] renew/sign clicked: school={}, gate={} — recordSigned tx pending E6.1.5-E",
-            school_id.as_str(),
-            gate_id.as_str()
+            "[E6.1.5-E] recordSigned tx ready for operator signing:\n\
+             To: <ComplianceRegistry contract address>\n\
+             school_id_hash: {school_id_s}\n\
+             gate_idx: {gate_idx} ({gate_id_s})\n\
+             envelope_id_hash: {env_hash_hex}\n\
+             expires_at: {expires_at} (now + 365d)\n\
+             calldata: {calldata_hex}"
         );
     });
     {
