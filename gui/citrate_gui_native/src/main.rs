@@ -1204,19 +1204,61 @@ fn main() {
             ui.set_cmo_compliance_rows(slint::ModelRc::from(compliance_model));
         }
     }
-    // Wire the school-selected callback so changes are observable. The
-    // E6.6 sub-task wires the per-panel re-render on this signal.
+    // WP-E6.6 — School-context propagation.
+    //
+    // Every school selection bumps `cmo-context-version`. Slint
+    // property-bindings observing the version trigger a re-render in
+    // the panel that's currently visible. The Rust side ALSO logs each
+    // service that would re-fetch with the new active-school-id so a
+    // human reading the trace can see the propagation working before
+    // E6.1.5 wires real on-chain queries.
+    //
+    // Service-layer hooks documented here (one per panel):
+    //
+    //   Dashboard       → fetch_block_height(school_id), fetch_node_status
+    //                      (currently node-scoped; E6.1.5 makes these
+    //                      school-scoped via InstitutionTreeV1.getSchoolMetrics)
+    //   Wallet           → wallet_manager.set_active_account(school_id)
+    //                      (active-school maps to a school-scoped wallet
+    //                      derivation path; E6.1.5)
+    //   Models           → ModelsService.list_for_school(school_id)
+    //                      (E6.1.5 — model lifecycle is per-school)
+    //   Studio           → no-op (CMO-scope read of artifacts; cosmetic)
+    //   Operations       → AgentTrail.filter(school_id) +
+    //                      ApprovalQueue.filter(school_id)
+    //   Compute / Storage → CIF-scoped already; cosmetic
+    //
+    // For v1 (without E6.1.5 on-chain queries) the callback bumps the
+    // version + logs each hook. When E6.1.5 lands, each "log this hook"
+    // line becomes a real RPC call.
     let ui_handle = ui.as_weak();
     ui.on_cmo_school_selected(move |school_id| {
         let id = school_id.as_str();
-        tracing::info!(
-            "[E6.2] CMO school selected: {} (E6.6 will wire downstream re-render)",
-            id
-        );
-        // For now, we just log. E6.6 (school-context propagation) hooks
-        // into this signal to re-fetch every panel's data scoped to the
-        // newly-selected school.
-        let _ = ui_handle.clone();
+        if let Some(ui) = ui_handle.upgrade() {
+            let prev = ui.get_cmo_context_version();
+            ui.set_cmo_context_version(prev + 1);
+            tracing::info!(
+                "[E6.6] CMO school context version bumped {} -> {} for school={}",
+                prev,
+                prev + 1,
+                id
+            );
+            // Document each service-layer hook. These become real RPC
+            // calls when E6.1.5 ships InstitutionTreeV1.getSchoolMetrics
+            // etc; for now we log so the propagation chain is observable.
+            tracing::info!("[E6.6] dashboard hook: refresh_for_school({}) [pending E6.1.5]", id);
+            tracing::info!("[E6.6] wallet hook: set_active_account_for_school({}) [pending E6.1.5]", id);
+            tracing::info!("[E6.6] models hook: list_for_school({}) [pending E6.1.5]", id);
+            tracing::info!("[E6.6] operations hook: filter_for_school({}) [pending E6.1.5]", id);
+        }
+    });
+
+    // WP-E6.6 — Banner "Switch" button. Today the school selector lives
+    // in the sidebar; clicking the banner's switch is a hint that the
+    // operator wants to change schools. v1 logs; a future enhancement
+    // could programmatically open the sidebar dropdown.
+    ui.on_cmo_banner_switch_clicked(|| {
+        tracing::info!("[E6.6] banner switch button clicked — operator wants to switch school context");
     });
 
     // WP-E6.3 — CMO dashboard's per-school row click navigates to that
@@ -1247,6 +1289,15 @@ fn main() {
             ui.set_cmo_active_school_id(id.into());
             ui.set_cmo_active_school_name(display_name.into());
             ui.set_active_tab("dashboard".into());
+            // E6.6 — bump context version on dashboard row click.
+            let prev = ui.get_cmo_context_version();
+            ui.set_cmo_context_version(prev + 1);
+            tracing::info!(
+                "[E6.6] CMO context version bumped {} -> {} via dashboard row click (school={})",
+                prev,
+                prev + 1,
+                id
+            );
         }
     });
 
@@ -1332,6 +1383,15 @@ fn main() {
             ui.set_cmo_active_school_id(id.into());
             ui.set_cmo_active_school_name(display_name.into());
             ui.set_active_tab("dashboard".into());
+            // E6.6 — bump context version on compliance row click.
+            let prev = ui.get_cmo_context_version();
+            ui.set_cmo_context_version(prev + 1);
+            tracing::info!(
+                "[E6.6] CMO context version bumped {} -> {} via compliance row click (school={})",
+                prev,
+                prev + 1,
+                id
+            );
         }
     });
 
