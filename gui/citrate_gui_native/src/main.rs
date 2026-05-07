@@ -1032,6 +1032,76 @@ fn main() {
             ];
             let event_model = std::rc::Rc::new(slint::VecModel::from(stub_events));
             ui.set_cmo_dashboard_events(slint::ModelRc::from(event_model));
+
+            // WP-E6.4 — Tenancy tree stub. Flat-list rendering of:
+            //   CMO-root
+            //     ├── KIPP Charter Newark      (4 classrooms · 412 students)
+            //     │     ├── Classroom 7A        (28 students)
+            //     │     └── Classroom 7B        (32 students)
+            //     ├── KIPP Charter Bayonne    (3 classrooms · 287 students)
+            //     └── KIPP Charter Jersey City (5 classrooms · 521 students)
+            // The on-chain version of this list comes from
+            // InstitutionTreeV1.getCmoTree(cmo_id) flattened DFS in
+            // E6.1.5. For demo we hard-code the shape.
+            let stub_nodes: Vec<TenancyNode> = vec![
+                TenancyNode {
+                    node_id: "0xdemo_cmo".into(),
+                    kind: "cmo".into(),
+                    display_name: "KIPP Public Schools NJ".into(),
+                    level: 0,
+                    student_count: 1220,
+                    classroom_count: 0,
+                    expanded: true,
+                },
+                TenancyNode {
+                    node_id: "0xdemo_a".into(),
+                    kind: "school".into(),
+                    display_name: "KIPP Charter Newark".into(),
+                    level: 1,
+                    student_count: 412,
+                    classroom_count: 4,
+                    expanded: true,
+                },
+                TenancyNode {
+                    node_id: "0xdemo_a_7a".into(),
+                    kind: "classroom".into(),
+                    display_name: "Classroom 7A".into(),
+                    level: 2,
+                    student_count: 28,
+                    classroom_count: 0,
+                    expanded: false,
+                },
+                TenancyNode {
+                    node_id: "0xdemo_a_7b".into(),
+                    kind: "classroom".into(),
+                    display_name: "Classroom 7B".into(),
+                    level: 2,
+                    student_count: 32,
+                    classroom_count: 0,
+                    expanded: false,
+                },
+                TenancyNode {
+                    node_id: "0xdemo_b".into(),
+                    kind: "school".into(),
+                    display_name: "KIPP Charter Bayonne".into(),
+                    level: 1,
+                    student_count: 287,
+                    classroom_count: 3,
+                    expanded: false,
+                },
+                TenancyNode {
+                    node_id: "0xdemo_c".into(),
+                    kind: "school".into(),
+                    display_name: "KIPP Charter Jersey City".into(),
+                    level: 1,
+                    student_count: 521,
+                    classroom_count: 5,
+                    expanded: false,
+                },
+            ];
+            let tenancy_model = std::rc::Rc::new(slint::VecModel::from(stub_nodes));
+            ui.set_cmo_tenancy_nodes(slint::ModelRc::from(tenancy_model));
+            ui.set_cmo_tenancy_action_error("".into());
         }
     }
     // Wire the school-selected callback so changes are observable. The
@@ -1077,6 +1147,59 @@ fn main() {
             ui.set_cmo_active_school_id(id.into());
             ui.set_cmo_active_school_name(display_name.into());
             ui.set_active_tab("dashboard".into());
+        }
+    });
+
+    // WP-E6.4 — Tenancy panel callbacks.
+    //
+    // Click on a node row: expand/collapse semantics are reserved for
+    // a future enhancement; for now clicking just logs. The on-chain
+    // role-grant view + audit-log filter the planset describes lands
+    // alongside E6.5 Compliance which has the same shape.
+    ui.on_cmo_tenancy_node_clicked(|node_id| {
+        tracing::info!(
+            "[E6.4] CMO tenancy node clicked: {} — role-grant view + audit filter pending",
+            node_id.as_str()
+        );
+    });
+
+    // Add School / Remove School buttons: surface the action-error
+    // banner because the on-chain RPC integration hasn't landed yet
+    // (E6.1.5). The buttons exist so the UI shape is real, but each
+    // refuses with a clear path forward — partner can see what the
+    // workflow looks like and Saul gets a place to wire the on-chain
+    // call when InstitutionTreeV1.addSchool / removeSchool are ready.
+    let ui_handle_add = ui.as_weak();
+    ui.on_cmo_tenancy_add_school_clicked(move |cmo_id| {
+        tracing::info!(
+            "[E6.4] add-school clicked under cmo={} — refusing (E6.1.5 RPC pending)",
+            cmo_id.as_str()
+        );
+        if let Some(ui) = ui_handle_add.upgrade() {
+            ui.set_cmo_tenancy_action_error(
+                "Add School: on-chain InstitutionTreeV1.addSchool RPC not yet wired (E6.1.5). \
+                 Use `citrate-school-bootstrap init` on the new school's IT machine to register \
+                 it via the bootstrap CLI's tenancy flow until this button goes live."
+                    .into(),
+            );
+        }
+    });
+
+    let ui_handle_rem = ui.as_weak();
+    ui.on_cmo_tenancy_remove_school_clicked(move |school_id| {
+        tracing::info!(
+            "[E6.4] remove-school clicked for school={} — refusing (E6.1.5 RPC pending)",
+            school_id.as_str()
+        );
+        if let Some(ui) = ui_handle_rem.upgrade() {
+            ui.set_cmo_tenancy_action_error(
+                "Remove School: on-chain InstitutionTreeV1.removeSchool RPC not yet wired \
+                 (E6.1.5). This is a destructive action that revokes tenancy + invalidates \
+                 the school's per-student profile packs; explicit chain integration is \
+                 required before going live. Use `cast send` against InstitutionTreeV1 \
+                 manually until this button is enabled."
+                    .into(),
+            );
         }
     });
     {

@@ -1,0 +1,298 @@
+// WP-E6.4 — CMO Tenancy panel.
+//
+// Tree visualization of the 4-level on-chain tenancy hierarchy:
+//
+//   CMO (root)
+//     ├── School A
+//     │    ├── Classroom 1 (N students)
+//     │    └── Classroom 2 (N students)
+//     ├── School B
+//     │    └── ...
+//     └── School C
+//
+// Read-only in v1 — mutations (add school / remove school) are reserved
+// for E6.1.5 alongside the on-chain RPC integration. The UI surfaces
+// the buttons but the click handlers refuse with a clear error message
+// pointing at E6.1.5 until those land.
+//
+// Data sources (Rule 11):
+//   - InstitutionTreeV1.getCmoTree(cmo_id) → full tree (E6.1.5)
+//   - InstitutionTreeV1.addSchool(cmo_id, school_data) → mutation (E6.1.5)
+//   - InstitutionTreeV1.removeSchool(school_id, reason) → mutation (E6.1.5)
+//
+// Slint flat-list pattern: trees are awkward in Slint because there's
+// no built-in TreeView. We render the hierarchy as a flat list of
+// TenancyNode rows where `level` controls indentation and `node-kind`
+// distinguishes CMO / School / Classroom rendering. Rust-side flattens
+// the tree (DFS in InstitutionTreeV1.getCmoTree's response) before
+// passing the list to the Slint binding.
+
+import { Theme } from "../theme.slint";
+
+// One row in the flat tree representation. The Rust binding builds
+// these via a depth-first walk of the on-chain tree.
+export struct TenancyNode {
+    node-id: string,             // pseudonymous on-chain ID
+    kind: string,                 // "cmo" | "school" | "classroom"
+    display-name: string,
+    level: int,                   // 0=cmo, 1=school, 2=classroom (drives indent)
+    student-count: int,           // populated for school + classroom rows
+    classroom-count: int,         // populated for school rows; 0 for others
+    expanded: bool,               // UI-side state; Rust seeds initial value
+}
+
+component LevelIcon inherits Rectangle {
+    in property <string> kind;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background:
+        kind == "cmo" ? Theme.accent.with-alpha(0.15)
+      : kind == "school" ? Theme.aquamarine.with-alpha(0.15)
+      : kind == "classroom" ? Theme.periwinkle.with-alpha(0.15)
+      : Theme.bg-tertiary;
+    Text {
+        text:
+            root.kind == "cmo" ? "C"
+          : root.kind == "school" ? "S"
+          : root.kind == "classroom" ? "R"
+          : "?";
+        color:
+            root.kind == "cmo" ? Theme.accent
+          : root.kind == "school" ? Theme.aquamarine
+          : root.kind == "classroom" ? Theme.periwinkle
+          : Theme.text-muted;
+        font-size: 12px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component TenancyRow inherits Rectangle {
+    in property <TenancyNode> node;
+    callback row-clicked(string);                    // emits node-id
+    callback action-add-school(string);               // CMO-row only; emits node-id
+    callback action-remove-school(string);            // school-row only; emits node-id
+
+    height: 56px;
+    background: touch.has-hover ? Theme.bg-tertiary : Theme.surface;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+
+    HorizontalLayout {
+        // Indent by level: 0 = no indent, 1 = 28px, 2 = 56px
+        padding-left: Theme.space-md + 28px * root.node.level;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        alignment: stretch;
+
+        LevelIcon {
+            kind: root.node.kind;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: root.node.display-name;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: root.node.kind == "cmo" ? 700 : 500;
+                overflow: elide;
+            }
+            Text {
+                text: root.node.kind == "cmo"
+                    ? "Charter Management Organization"
+                    : root.node.kind == "school"
+                        ? root.node.classroom-count + " classrooms · " + root.node.student-count + " students"
+                        : root.node.kind == "classroom"
+                            ? root.node.student-count + " students"
+                            : "";
+                color: Theme.text-muted;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+
+        // Per-row actions, conditional on kind. Buttons are rendered
+        // for ALL CMO/school rows; click handlers route through the
+        // root callbacks so the Rust side can refuse with a clear
+        // "not yet wired (E6.1.5)" message until the on-chain calls
+        // land.
+        if root.node.kind == "cmo": Rectangle {
+            width: 110px;
+            HorizontalLayout {
+                alignment: end;
+                spacing: 0;
+                Rectangle {
+                    width: 96px;
+                    height: 30px;
+                    border-radius: Theme.radius-sm;
+                    background: add-touch.has-hover ? Theme.accent : Theme.bg-tertiary;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    animate background { duration: Theme.duration-fast; }
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: "+ Add School";
+                            color: add-touch.has-hover ? Theme.bg : Theme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    add-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.action-add-school(root.node.node-id); }
+                    }
+                }
+            }
+        }
+        if root.node.kind == "school": Rectangle {
+            width: 110px;
+            HorizontalLayout {
+                alignment: end;
+                spacing: 0;
+                Rectangle {
+                    width: 96px;
+                    height: 30px;
+                    border-radius: Theme.radius-sm;
+                    background: rem-touch.has-hover ? Theme.error.with-alpha(0.15) : Theme.bg-tertiary;
+                    border-width: 1px;
+                    border-color: rem-touch.has-hover ? Theme.error : Theme.border;
+                    animate background { duration: Theme.duration-fast; }
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Remove";
+                            color: rem-touch.has-hover ? Theme.error : Theme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    rem-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.action-remove-school(root.node.node-id); }
+                    }
+                }
+            }
+        }
+        if root.node.kind == "classroom": Rectangle {
+            width: 110px;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.row-clicked(root.node.node-id); }
+    }
+}
+
+export component CmoTenancy inherits Rectangle {
+    in property <[TenancyNode]> nodes;
+    in property <string> action-error;        // empty = no error; non-empty = render banner
+    callback node-clicked(string);
+    callback add-school-clicked(string);       // CMO-id; Rust refuses with action-error
+    callback remove-school-clicked(string);    // school-id; same pattern
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding-top: Theme.space-lg;
+            padding-bottom: Theme.space-lg;
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // Title + intro
+            VerticalLayout {
+                spacing: Theme.space-xs;
+                Text {
+                    text: "Tenancy";
+                    color: Theme.text;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "On-chain hierarchy: CMO → School → Classroom. Pseudonymous IDs only — no PII appears on-chain. Add/remove actions sign transactions to InstitutionTreeV1.";
+                    color: Theme.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            // Banner shown when an action was attempted but the
+            // mutation path hasn't landed yet (E6.1.5).
+            if root.action-error != "": Rectangle {
+                background: #78350f;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.warning;
+                min-height: 44px;
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: "⚠";
+                        color: Theme.warning;
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.action-error;
+                        color: #fde68a;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Empty-state when on-chain getCmoTree hasn't returned data
+            if root.nodes.length == 0: Rectangle {
+                background: Theme.surface;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 120px;
+                VerticalLayout {
+                    padding: Theme.space-xl;
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: "No tenancy data";
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "On-chain tree not yet populated. Use `citrate-school-bootstrap` to register schools under this CMO.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Tree as a flat indented list — one row per node
+            VerticalLayout {
+                spacing: 4px;
+                for node[idx] in root.nodes: TenancyRow {
+                    node: node;
+                    row-clicked(id) => { root.node-clicked(id); }
+                    action-add-school(id) => { root.add-school-clicked(id); }
+                    action-remove-school(id) => { root.remove-school-clicked(id); }
+                }
+            }
+        }
+    }
+}
