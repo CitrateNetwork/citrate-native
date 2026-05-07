@@ -1,0 +1,173 @@
+// WP-E6.2 — School selector dropdown for CMOSuperAdmin role.
+//
+// Lives in the sidebar (top, just below the logo) and is visible only
+// when the user's role is CMOSuperAdmin (per WP-E6.1). Selecting a
+// school sets the application's `active-school-id` property; subsequent
+// E6.6 sub-task wires the per-panel re-render on selection change.
+//
+// Data comes from a Rust-side service that lists schools under the CMO
+// (queries InstitutionTreeV1.getCmoSchools when that contract method
+// ships in a follow-up; v1 ships with a stub provider that returns an
+// empty list for non-CMO accounts, so the dropdown is functional but
+// empty until on-chain wiring lands).
+
+import { Theme } from "../theme.slint";
+
+// One row per school in the CMO. Slint structs are value types; the
+// Rust binding emits Vec<SchoolEntry> which Slint converts to a model.
+export struct SchoolEntry {
+    school-id: string,           // pseudonymous on-chain ID; safe to display
+    display-name: string,         // human-readable name (e.g., "KIPP Charter A")
+    student-count: int,           // for the at-a-glance status line
+}
+
+// Compact dropdown that opens to a list of all schools in the CMO.
+// One row per school; clicking sets the active school and emits the
+// `school-selected` callback.
+export component SchoolSelector inherits Rectangle {
+    in property <[SchoolEntry]> schools;
+    in-out property <string> active-school-id;
+    in-out property <string> active-school-name;
+    callback school-selected(string);  // emits the selected school-id
+
+    height: 56px;
+    background: Theme.bg-secondary;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: open-state.open ? 8px : 0px;
+    drop-shadow-color: #00000040;
+    animate drop-shadow-blur { duration: Theme.duration-fast; easing: ease-in-out; }
+
+    property <bool> hovered: trigger-touch.has-hover;
+
+    open-state := Rectangle {
+        property <bool> open: false;
+        // Outer rectangle is transparent — just holds the open flag
+        background: transparent;
+    }
+
+    // The clickable trigger row showing current selection.
+    trigger := Rectangle {
+        height: 56px;
+        background: root.hovered ? Theme.bg-tertiary : transparent;
+        border-radius: Theme.radius-md;
+        animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+
+        HorizontalLayout {
+            padding-left: Theme.space-md;
+            padding-right: Theme.space-md;
+            spacing: Theme.space-sm;
+            alignment: stretch;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+
+                Text {
+                    text: "ACTIVE SCHOOL";
+                    color: Theme.text-muted;
+                    font-size: 10px;
+                    font-weight: 500;
+                    letter-spacing: 0.5px;
+                }
+                Text {
+                    text: root.active-school-name == "" ? "(select a school)" : root.active-school-name;
+                    color: root.active-school-name == "" ? Theme.text-muted : Theme.text;
+                    font-size: 13px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+            }
+
+            Text {
+                text: open-state.open ? "▲" : "▼";
+                color: Theme.text-secondary;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+        }
+
+        trigger-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { open-state.open = !open-state.open; }
+        }
+    }
+
+    // Dropdown panel. Slides down below the trigger when open. Z-order
+    // is a sibling within the parent layout because Slint doesn't
+    // support overlays in this layout slot — the parent (sidebar) makes
+    // room when open via the dynamic height property.
+    if open-state.open: dropdown := Rectangle {
+        y: 56px;
+        height: schools.length == 0 ? 56px : (schools.length * 48px + Theme.space-sm * 2);
+        background: Theme.surface;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        VerticalLayout {
+            padding: Theme.space-sm;
+            spacing: 2px;
+
+            if schools.length == 0: Text {
+                text: "No schools found in this CMO.\nCheck on-chain registration.";
+                color: Theme.text-muted;
+                font-size: 11px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            for school[idx] in schools: Rectangle {
+                height: 44px;
+                background: school-touch.has-hover
+                    ? Theme.bg-tertiary
+                    : (school.school-id == root.active-school-id ? Theme.bg-secondary : transparent);
+                border-radius: Theme.radius-sm;
+                animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+
+                HorizontalLayout {
+                    padding-left: Theme.space-sm;
+                    padding-right: Theme.space-sm;
+                    alignment: stretch;
+                    spacing: Theme.space-xs;
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text {
+                            text: school.display-name;
+                            color: Theme.text;
+                            font-size: 12px;
+                            font-weight: school.school-id == root.active-school-id ? 600 : 400;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: school.student-count + " students";
+                            color: Theme.text-muted;
+                            font-size: 10px;
+                        }
+                    }
+
+                    if school.school-id == root.active-school-id: Text {
+                        text: "✓";
+                        color: Theme.accent;
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                school-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.active-school-id = school.school-id;
+                        root.active-school-name = school.display-name;
+                        open-state.open = false;
+                        root.school-selected(school.school-id);
+                    }
+                }
+            }
+        }
+    }
+}
