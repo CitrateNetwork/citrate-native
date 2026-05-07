@@ -925,6 +925,62 @@ fn main() {
     ui.set_show_onboarding(is_first_run);
     ui.set_show_lock_screen(!is_first_run);
     ui.set_active_tab("dashboard".into());
+
+    // WP-E6.2 — CMO portal initialization. By default, the user is NOT a
+    // CMOSuperAdmin and the school selector is hidden. The detected role
+    // will flip this when E6.1.5 lands the on-chain getCmoRole RPC call.
+    //
+    // Visual-review override: setting CITRATE_CMO_DEMO=true forces
+    // is-cmo-super-admin=true and populates the schools list with a small
+    // stub set so the UI can be demoed without on-chain wiring. This is
+    // the same env-var pattern as CITRATE_ROLE / CITRATE_DEMO_MODE
+    // documented in citrate_v0.01.1/gui/citrate_learning_center/release/INSTALL.md.
+    {
+        let cmo_demo = std::env::var("CITRATE_CMO_DEMO")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        ui.set_is_cmo_super_admin(cmo_demo);
+        if cmo_demo {
+            // Stub schools — three example schools for visual demo. Replaced
+            // by real `InstitutionTreeV1.getCmoSchools(cmo_id)` query once
+            // the contract method ships (E6.1.5).
+            let stub_schools: Vec<SchoolEntry> = vec![
+                SchoolEntry {
+                    school_id: "0xdemo_a".into(),
+                    display_name: "KIPP Charter Newark".into(),
+                    student_count: 412,
+                },
+                SchoolEntry {
+                    school_id: "0xdemo_b".into(),
+                    display_name: "KIPP Charter Bayonne".into(),
+                    student_count: 287,
+                },
+                SchoolEntry {
+                    school_id: "0xdemo_c".into(),
+                    display_name: "KIPP Charter Jersey City".into(),
+                    student_count: 521,
+                },
+            ];
+            let model = std::rc::Rc::new(slint::VecModel::from(stub_schools));
+            ui.set_cmo_schools(slint::ModelRc::from(model));
+            ui.set_cmo_active_school_id("".into());
+            ui.set_cmo_active_school_name("".into());
+        }
+    }
+    // Wire the school-selected callback so changes are observable. The
+    // E6.6 sub-task wires the per-panel re-render on this signal.
+    let ui_handle = ui.as_weak();
+    ui.on_cmo_school_selected(move |school_id| {
+        let id = school_id.as_str();
+        tracing::info!(
+            "[E6.2] CMO school selected: {} (E6.6 will wire downstream re-render)",
+            id
+        );
+        // For now, we just log. E6.6 (school-context propagation) hooks
+        // into this signal to re-fetch every panel's data scoped to the
+        // newly-selected school.
+        let _ = ui_handle.clone();
+    });
     {
         let config = rt.block_on(app_core.config.read());
         ui.set_environment(config.network.to_uppercase().into());

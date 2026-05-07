@@ -1,5 +1,8 @@
 // Sidebar navigation — grouped nav items matching current GUI
 import { Theme } from "../theme.slint";
+import { SchoolSelector, SchoolEntry } from "../cmo/school_selector.slint";
+
+export { SchoolEntry }
 
 export component NavItem inherits Rectangle {
     in property <string> label;
@@ -56,6 +59,16 @@ export component Sidebar inherits Rectangle {
     in property <bool> compact: false;
     callback tab-changed(string);
 
+    // WP-E6.2: school selector visible only when user is CMOSuperAdmin.
+    // The Rust binding sets `is-cmo-super-admin` based on EduRole detection
+    // (per WP-E6.1) and populates `cmo-schools` from a service that queries
+    // InstitutionTreeV1.getCmoSchools (or returns an empty list pre-wiring).
+    in property <bool> is-cmo-super-admin: false;
+    in property <[SchoolEntry]> cmo-schools;
+    in-out property <string> cmo-active-school-id;
+    in-out property <string> cmo-active-school-name;
+    callback cmo-school-selected(string);
+
     // In compact mode, expand on hover (with smooth animation)
     property <bool> hovered: sidebar-hover.has-hover;
     width: root.compact ? (root.hovered ? Theme.sidebar-width : Theme.sidebar-collapsed) : Theme.sidebar-width;
@@ -92,6 +105,26 @@ export component Sidebar inherits Rectangle {
                     font-size: 18px;
                     font-weight: 700;
                     vertical-alignment: center;
+                }
+            }
+        }
+
+        // WP-E6.2 — School selector for CMOSuperAdmin. Sidebar reserves
+        // ~56px of height when visible; `if` block ensures non-CMO users
+        // don't see it AND don't pay the layout cost.
+        if root.is-cmo-super-admin: Rectangle {
+            height: 64px;
+            HorizontalLayout {
+                padding-left: Theme.space-sm;
+                padding-right: Theme.space-sm;
+                padding-top: Theme.space-xs;
+                padding-bottom: Theme.space-xs;
+
+                SchoolSelector {
+                    schools: root.cmo-schools;
+                    active-school-id <=> root.cmo-active-school-id;
+                    active-school-name <=> root.cmo-active-school-name;
+                    school-selected(id) => { root.cmo-school-selected(id); }
                 }
             }
         }
