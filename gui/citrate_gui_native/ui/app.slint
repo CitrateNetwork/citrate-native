@@ -2,8 +2,9 @@
 import { Theme } from "theme.slint";
 import { Sidebar, SchoolEntry } from "shell/sidebar.slint";
 import { CmoDashboard, CmoDashboardStats, CmoSchoolRow, CmoEvent } from "cmo/dashboard.slint";
+import { CmoTenancy, TenancyNode } from "cmo/tenancy.slint";
 
-export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent }
+export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent, TenancyNode }
 import { StatusBar } from "shell/status_bar.slint";
 import { Onboarding } from "onboarding/onboarding.slint";
 import { LockScreen } from "shell/lock_screen.slint";
@@ -391,6 +392,17 @@ export component App inherits Window {
     in property <[CmoEvent]> cmo-dashboard-events;
     callback cmo-dashboard-school-clicked(/* school_id */ string);
 
+    // WP-E6.4 — CMO Tenancy data. Flat list of TenancyNode rows
+    // representing the depth-first walk of InstitutionTreeV1.getCmoTree.
+    // Mutations (add school / remove school) refuse with the
+    // `cmo-tenancy-action-error` banner until E6.1.5 wires on-chain
+    // RPC; setting an empty string hides the banner.
+    in property <[TenancyNode]> cmo-tenancy-nodes;
+    in-out property <string> cmo-tenancy-action-error;
+    callback cmo-tenancy-node-clicked(/* node_id */ string);
+    callback cmo-tenancy-add-school-clicked(/* cmo_id */ string);
+    callback cmo-tenancy-remove-school-clicked(/* school_id */ string);
+
     if root.show-onboarding : Onboarding {
         current-step <=> root.onboarding-step;
         mnemonic: root.onboarding-mnemonic;
@@ -452,6 +464,16 @@ export component App inherits Window {
                     schools: root.cmo-dashboard-schools;
                     events: root.cmo-dashboard-events;
                     school-row-clicked(id) => { root.cmo-dashboard-school-clicked(id); }
+                }
+
+                // WP-E6.4 — CMO Tenancy panel; visible only via the
+                // CMOSuperAdmin sidebar.
+                if root.active-tab == "cmo_tenancy" : CmoTenancy {
+                    nodes: root.cmo-tenancy-nodes;
+                    action-error: root.cmo-tenancy-action-error;
+                    node-clicked(id) => { root.cmo-tenancy-node-clicked(id); }
+                    add-school-clicked(cmo-id) => { root.cmo-tenancy-add-school-clicked(cmo-id); }
+                    remove-school-clicked(school-id) => { root.cmo-tenancy-remove-school-clicked(school-id); }
                 }
 
                 // Dashboard
