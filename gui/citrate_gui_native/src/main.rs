@@ -1102,6 +1102,106 @@ fn main() {
             let tenancy_model = std::rc::Rc::new(slint::VecModel::from(stub_nodes));
             ui.set_cmo_tenancy_nodes(slint::ModelRc::from(tenancy_model));
             ui.set_cmo_tenancy_action_error("".into());
+
+            // WP-E6.5 — Compliance matrix stub.
+            //
+            // Build one ComplianceSchoolMatrixRow per school. Each row
+            // has 9 cells in fixed order:
+            //   [0] DPA, [1] FERPA, [2] COPPA, [3] CIPA,
+            //   [4] CA AB1584, [5] NY Ed Law 2-d, [6] IL SOPPA,
+            //   [7] TX TEC §32.151, [8] CO C.R.S. §22-16-104
+            //
+            // State-specific gates render N/A unless school's state matches.
+            // Stub schools are all in NJ — so all 5 state-specific cells
+            // render N/A; federal gates show realistic Green/Yellow/Red mix
+            // matching the dashboard's compliance-health column.
+            //
+            // Real version comes from InstitutionTreeV1.getComplianceMatrix
+            // when E6.1.5 wires the on-chain query.
+            let make_cell = |gate_id: &str, gate_label: &str, status: &str,
+                              last_signed: &str, expires_at: &str| -> ComplianceCell {
+                ComplianceCell {
+                    gate_id: gate_id.into(),
+                    gate_label: gate_label.into(),
+                    status: status.into(),
+                    last_signed: last_signed.into(),
+                    expires_at: expires_at.into(),
+                }
+            };
+
+            // Schools are all in NJ, so all 5 state cells = "N/A"
+            let na_cell = |gate_id: &str, gate_label: &str| -> ComplianceCell {
+                make_cell(gate_id, gate_label, "N/A", "", "")
+            };
+
+            // Newark = all federal Green
+            let newark_cells: Vec<ComplianceCell> = vec![
+                make_cell("dpa",   "DPA",   "Green",  "2026-04-01", "2027-04-01"),
+                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("cipa",  "CIPA",  "Green",  "2026-04-01", "2027-04-01"),
+                na_cell("ab1584",   "CA AB1584"),
+                na_cell("nyedlaw",  "NY Ed Law 2-d"),
+                na_cell("ilsoppa",  "IL SOPPA"),
+                na_cell("txtec",    "TX TEC §32.151"),
+                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+            ];
+
+            // Bayonne = DPA Yellow (renewal pending), rest Green/N/A
+            let bayonne_cells: Vec<ComplianceCell> = vec![
+                make_cell("dpa",   "DPA",   "Yellow", "2025-04-01", "2026-04-01"),  // expired & pending renewal
+                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("cipa",  "CIPA",  "Green",  "2026-04-01", "2027-04-01"),
+                na_cell("ab1584",   "CA AB1584"),
+                na_cell("nyedlaw",  "NY Ed Law 2-d"),
+                na_cell("ilsoppa",  "IL SOPPA"),
+                na_cell("txtec",    "TX TEC §32.151"),
+                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+            ];
+
+            // Jersey City = CIPA Red (expired and not renewed)
+            let jersey_cells: Vec<ComplianceCell> = vec![
+                make_cell("dpa",   "DPA",   "Green",  "2026-04-01", "2027-04-01"),
+                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
+                make_cell("cipa",  "CIPA",  "Red",    "2024-04-01", "2025-04-01"),  // expired 1+ yr ago
+                na_cell("ab1584",   "CA AB1584"),
+                na_cell("nyedlaw",  "NY Ed Law 2-d"),
+                na_cell("ilsoppa",  "IL SOPPA"),
+                na_cell("txtec",    "TX TEC §32.151"),
+                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+            ];
+
+            let stub_compliance: Vec<ComplianceSchoolMatrixRow> = vec![
+                ComplianceSchoolMatrixRow {
+                    school_id: "0xdemo_a".into(),
+                    school_name: "KIPP Charter Newark".into(),
+                    school_state: "NJ".into(),
+                    cells: slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+                        newark_cells,
+                    ))),
+                },
+                ComplianceSchoolMatrixRow {
+                    school_id: "0xdemo_b".into(),
+                    school_name: "KIPP Charter Bayonne".into(),
+                    school_state: "NJ".into(),
+                    cells: slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+                        bayonne_cells,
+                    ))),
+                },
+                ComplianceSchoolMatrixRow {
+                    school_id: "0xdemo_c".into(),
+                    school_name: "KIPP Charter Jersey City".into(),
+                    school_state: "NJ".into(),
+                    cells: slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+                        jersey_cells,
+                    ))),
+                },
+            ];
+            let compliance_model =
+                std::rc::Rc::new(slint::VecModel::from(stub_compliance));
+            ui.set_cmo_compliance_rows(slint::ModelRc::from(compliance_model));
         }
     }
     // Wire the school-selected callback so changes are observable. The
@@ -1201,6 +1301,46 @@ fn main() {
                     .into(),
             );
         }
+    });
+
+    // WP-E6.5 — Compliance matrix callbacks. Click on a school name
+    // navigates to that school's per-school dashboard (same pattern as
+    // E6.3); clicking a status pill in a cell logs the (school, gate)
+    // pair for the future drawer (E6.5.1 will surface envelope-detail
+    // panels with signer / signed-date / expiry / Docusign envelope
+    // ID — that requires the compliance_storage filesystem read which
+    // happens in the next sub-task).
+    let ui_handle_compl_school = ui.as_weak();
+    ui.on_cmo_compliance_school_clicked(move |school_id| {
+        use slint::Model;
+        let id = school_id.as_str();
+        tracing::info!(
+            "[E6.5] compliance row school clicked: {} — navigating to per-school dashboard",
+            id
+        );
+        if let Some(ui) = ui_handle_compl_school.upgrade() {
+            let schools = ui.get_cmo_schools();
+            let mut display_name = String::new();
+            for i in 0..schools.row_count() {
+                if let Some(s) = schools.row_data(i) {
+                    if s.school_id.as_str() == id {
+                        display_name = s.display_name.into();
+                        break;
+                    }
+                }
+            }
+            ui.set_cmo_active_school_id(id.into());
+            ui.set_cmo_active_school_name(display_name.into());
+            ui.set_active_tab("dashboard".into());
+        }
+    });
+
+    ui.on_cmo_compliance_cell_clicked(|school_id, gate_id| {
+        tracing::info!(
+            "[E6.5] compliance cell clicked: school={}, gate={} — drawer pending (E6.5.1)",
+            school_id.as_str(),
+            gate_id.as_str()
+        );
     });
     {
         let config = rt.block_on(app_core.config.read());
