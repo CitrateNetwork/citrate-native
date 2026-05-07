@@ -173,6 +173,190 @@ fn configure_learning(app: &App) {
     app.set_active_tab("learning".into());
 }
 
+/// WP-E6.8 — CMO Dashboard panel configuration. Populates stub data
+/// matching the deploy script's seeded portfolio (Newark/Bayonne/JC).
+fn configure_cmo_dashboard(app: &App) {
+    app.set_is_cmo_super_admin(true);
+    app.set_active_tab("cmo_dashboard".into());
+    app.set_cmo_active_school_id("".into());
+    app.set_cmo_active_school_name("".into());
+    app.set_cmo_dashboard_stats(CmoDashboardStats {
+        total_schools: 3,
+        total_students: 1220,
+        total_active_compliance_gates: 27,
+        total_open_issues: 2,
+    });
+    let schools = vec![
+        CmoSchoolRow {
+            school_id: "0xdemo_a".into(),
+            display_name: "KIPP Charter Newark".into(),
+            student_count: 412,
+            compliance_health: "Green".into(),
+            last_activity: "2026-05-07".into(),
+            open_issues: 0,
+        },
+        CmoSchoolRow {
+            school_id: "0xdemo_b".into(),
+            display_name: "KIPP Charter Bayonne".into(),
+            student_count: 287,
+            compliance_health: "Yellow".into(),
+            last_activity: "2026-05-06".into(),
+            open_issues: 1,
+        },
+        CmoSchoolRow {
+            school_id: "0xdemo_c".into(),
+            display_name: "KIPP Charter Jersey City".into(),
+            student_count: 521,
+            compliance_health: "Red".into(),
+            last_activity: "2026-05-05".into(),
+            open_issues: 1,
+        },
+    ];
+    app.set_cmo_dashboard_schools(slint::ModelRc::from(Rc::new(VecModel::from(schools))));
+    let events = vec![
+        CmoEvent {
+            event_type: "Compliance".into(),
+            school_name: "KIPP Charter Bayonne".into(),
+            actor: "0xacea…".into(),
+            summary: "DPA renewal envelope sent — awaiting signature".into(),
+            occurred_at: "2026-05-07 09:14".into(),
+        },
+        CmoEvent {
+            event_type: "Compliance".into(),
+            school_name: "KIPP Charter Jersey City".into(),
+            actor: "0xacea…".into(),
+            summary: "CIPA gate expired — re-sign required for E-rate eligibility".into(),
+            occurred_at: "2026-05-05 16:02".into(),
+        },
+    ];
+    app.set_cmo_dashboard_events(slint::ModelRc::from(Rc::new(VecModel::from(events))));
+}
+
+/// WP-E6.8 — CMO Tenancy panel configuration.
+fn configure_cmo_tenancy(app: &App) {
+    app.set_is_cmo_super_admin(true);
+    app.set_active_tab("cmo_tenancy".into());
+    app.set_cmo_active_school_id("".into());
+    app.set_cmo_tenancy_action_error("".into());
+    let nodes = vec![
+        TenancyNode {
+            node_id: "0xcmo".into(),
+            kind: "cmo".into(),
+            display_name: "KIPP NJ Public Charter".into(),
+            level: 0,
+            student_count: 1220,
+            classroom_count: 0,
+            expanded: true,
+        },
+        TenancyNode {
+            node_id: "0xdemo_a".into(),
+            kind: "school".into(),
+            display_name: "KIPP Charter Newark".into(),
+            level: 1,
+            student_count: 412,
+            classroom_count: 18,
+            expanded: false,
+        },
+        TenancyNode {
+            node_id: "0xdemo_b".into(),
+            kind: "school".into(),
+            display_name: "KIPP Charter Bayonne".into(),
+            level: 1,
+            student_count: 287,
+            classroom_count: 12,
+            expanded: false,
+        },
+        TenancyNode {
+            node_id: "0xdemo_c".into(),
+            kind: "school".into(),
+            display_name: "KIPP Charter Jersey City".into(),
+            level: 1,
+            student_count: 521,
+            classroom_count: 22,
+            expanded: false,
+        },
+    ];
+    app.set_cmo_tenancy_nodes(slint::ModelRc::from(Rc::new(VecModel::from(nodes))));
+}
+
+/// WP-E6.8 — CMO Compliance panel configuration. Builds a 3-school × 9-gate
+/// matrix matching the E2E deploy seed pattern (federal Green/Yellow/Red,
+/// state cells N/A for NJ schools).
+fn configure_cmo_compliance(app: &App) {
+    app.set_is_cmo_super_admin(true);
+    app.set_active_tab("cmo_compliance".into());
+    app.set_cmo_active_school_id("".into());
+
+    let make_cell = |gate_id: &str, gate_label: &str, status: &str, last_signed: &str, expires_at: &str| {
+        ComplianceCell {
+            gate_id: gate_id.into(),
+            gate_label: gate_label.into(),
+            status: status.into(),
+            last_signed: last_signed.into(),
+            expires_at: expires_at.into(),
+        }
+    };
+    let na_cell = |gate_id: &str, gate_label: &str| {
+        make_cell(gate_id, gate_label, "N/A", "", "")
+    };
+
+    let newark_cells = vec![
+        make_cell("dpa", "DPA", "Green", "2026-04-15", "2027-04-15"),
+        make_cell("ferpa", "FERPA", "Green", "2026-04-15", "2027-04-15"),
+        make_cell("coppa", "COPPA", "Green", "2026-04-15", "2027-04-15"),
+        make_cell("cipa", "CIPA", "Green", "2026-04-15", "2027-04-15"),
+        na_cell("ab1584", "CA"),
+        na_cell("ny2d", "NY"),
+        na_cell("ilsoppa", "IL"),
+        na_cell("txtec", "TX"),
+        na_cell("cocrs", "CO"),
+    ];
+    let bayonne_cells = vec![
+        make_cell("dpa", "DPA", "Yellow", "", ""),
+        make_cell("ferpa", "FERPA", "Green", "2026-04-10", "2027-04-10"),
+        make_cell("coppa", "COPPA", "Green", "2026-04-10", "2027-04-10"),
+        make_cell("cipa", "CIPA", "Green", "2026-04-10", "2027-04-10"),
+        na_cell("ab1584", "CA"),
+        na_cell("ny2d", "NY"),
+        na_cell("ilsoppa", "IL"),
+        na_cell("txtec", "TX"),
+        na_cell("cocrs", "CO"),
+    ];
+    let jersey_cells = vec![
+        make_cell("dpa", "DPA", "Green", "2026-04-08", "2027-04-08"),
+        make_cell("ferpa", "FERPA", "Green", "2026-04-08", "2027-04-08"),
+        make_cell("coppa", "COPPA", "Green", "2026-04-08", "2027-04-08"),
+        make_cell("cipa", "CIPA", "Red", "2025-04-01", "2026-04-01"),
+        na_cell("ab1584", "CA"),
+        na_cell("ny2d", "NY"),
+        na_cell("ilsoppa", "IL"),
+        na_cell("txtec", "TX"),
+        na_cell("cocrs", "CO"),
+    ];
+
+    let rows = vec![
+        ComplianceSchoolMatrixRow {
+            school_id: "0xdemo_a".into(),
+            school_name: "KIPP Charter Newark".into(),
+            school_state: "NJ".into(),
+            cells: slint::ModelRc::from(Rc::new(VecModel::from(newark_cells))),
+        },
+        ComplianceSchoolMatrixRow {
+            school_id: "0xdemo_b".into(),
+            school_name: "KIPP Charter Bayonne".into(),
+            school_state: "NJ".into(),
+            cells: slint::ModelRc::from(Rc::new(VecModel::from(bayonne_cells))),
+        },
+        ComplianceSchoolMatrixRow {
+            school_id: "0xdemo_c".into(),
+            school_name: "KIPP Charter Jersey City".into(),
+            school_state: "NJ".into(),
+            cells: slint::ModelRc::from(Rc::new(VecModel::from(jersey_cells))),
+        },
+    ];
+    app.set_cmo_compliance_rows(slint::ModelRc::from(Rc::new(VecModel::from(rows))));
+}
+
 // ============================================================================
 // Snapshot smoke test — all pages × 3 resolutions
 // ============================================================================
@@ -214,6 +398,11 @@ fn ui_visual_proof_suite() {
             ("dag", configure_dag),
             ("storage", configure_storage),
             ("learning", configure_learning),
+            // WP-E6.8 — CMO portal acceptance walkthrough. Captures the
+            // 3 CMOSuperAdmin panels at all 3 resolutions for visual review.
+            ("cmo_dashboard", configure_cmo_dashboard),
+            ("cmo_tenancy", configure_cmo_tenancy),
+            ("cmo_compliance", configure_cmo_compliance),
         ];
 
         let sizes = [(800, 600), (1200, 800), (1440, 960)];
