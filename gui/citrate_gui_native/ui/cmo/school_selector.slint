@@ -28,6 +28,10 @@ export component SchoolSelector inherits Rectangle {
     in property <[SchoolEntry]> schools;
     in-out property <string> active-school-id;
     in-out property <string> active-school-name;
+    // WP-E6.6.1 — externally-controlled open state. The banner's Switch
+    // button (and any future programmatic invokers) write to this; the
+    // selector both reads and writes it (clicking the trigger toggles).
+    in-out property <bool> open: false;
     callback school-selected(string);  // emits the selected school-id
 
     height: 56px;
@@ -35,17 +39,11 @@ export component SchoolSelector inherits Rectangle {
     border-radius: Theme.radius-md;
     border-width: 1px;
     border-color: Theme.border;
-    drop-shadow-blur: open-state.open ? 8px : 0px;
+    drop-shadow-blur: root.open ? 8px : 0px;
     drop-shadow-color: #00000040;
     animate drop-shadow-blur { duration: Theme.duration-fast; easing: ease-in-out; }
 
     property <bool> hovered: trigger-touch.has-hover;
-
-    open-state := Rectangle {
-        property <bool> open: false;
-        // Outer rectangle is transparent — just holds the open flag
-        background: transparent;
-    }
 
     // The clickable trigger row showing current selection.
     trigger := Rectangle {
@@ -81,7 +79,7 @@ export component SchoolSelector inherits Rectangle {
             }
 
             Text {
-                text: open-state.open ? "▲" : "▼";
+                text: root.open ? "▲" : "▼";
                 color: Theme.text-secondary;
                 font-size: 10px;
                 vertical-alignment: center;
@@ -90,7 +88,7 @@ export component SchoolSelector inherits Rectangle {
 
         trigger-touch := TouchArea {
             mouse-cursor: pointer;
-            clicked => { open-state.open = !open-state.open; }
+            clicked => { root.open = !root.open; }
         }
     }
 
@@ -98,7 +96,7 @@ export component SchoolSelector inherits Rectangle {
     // is a sibling within the parent layout because Slint doesn't
     // support overlays in this layout slot — the parent (sidebar) makes
     // room when open via the dynamic height property.
-    if open-state.open: dropdown := Rectangle {
+    if root.open: dropdown := Rectangle {
         y: 56px;
         height: schools.length == 0 ? 56px : (schools.length * 48px + Theme.space-sm * 2);
         background: Theme.surface;
@@ -163,7 +161,7 @@ export component SchoolSelector inherits Rectangle {
                     clicked => {
                         root.active-school-id = school.school-id;
                         root.active-school-name = school.display-name;
-                        open-state.open = false;
+                        root.open = false;
                         root.school-selected(school.school-id);
                     }
                 }

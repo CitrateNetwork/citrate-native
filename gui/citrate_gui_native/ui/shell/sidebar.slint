@@ -64,6 +64,10 @@ export component Sidebar inherits Rectangle {
     // (per WP-E6.1) and populates `cmo-schools` from a service that queries
     // InstitutionTreeV1.getCmoSchools (or returns an empty list pre-wiring).
     in property <bool> is-cmo-super-admin: false;
+    // WP-E6.6.1 — externally-controlled selector-open state. The banner's
+    // Switch button (in app.slint) writes true here; the sidebar's
+    // SchoolSelector binds to this so it pops open programmatically.
+    in-out property <bool> cmo-selector-open: false;
     in property <[SchoolEntry]> cmo-schools;
     in-out property <string> cmo-active-school-id;
     in-out property <string> cmo-active-school-name;
@@ -124,6 +128,7 @@ export component Sidebar inherits Rectangle {
                     schools: root.cmo-schools;
                     active-school-id <=> root.cmo-active-school-id;
                     active-school-name <=> root.cmo-active-school-name;
+                    open <=> root.cmo-selector-open;
                     school-selected(id) => { root.cmo-school-selected(id); }
                 }
             }

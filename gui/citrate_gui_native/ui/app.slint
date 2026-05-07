@@ -429,6 +429,11 @@ export component App inherits Window {
     in property <int> cmo-context-version: 0;
     callback cmo-banner-switch-clicked();
 
+    // WP-E6.6.1 — externally-controlled selector-open state. Bound through
+    // Sidebar to the inner SchoolSelector. The banner's Switch button sets
+    // this true to programmatically pop open the dropdown.
+    in-out property <bool> cmo-selector-open: false;
+
     if root.show-onboarding : Onboarding {
         current-step <=> root.onboarding-step;
         mnemonic: root.onboarding-mnemonic;
@@ -471,6 +476,7 @@ export component App inherits Window {
                 cmo-schools: root.cmo-schools;
                 cmo-active-school-id <=> root.cmo-active-school-id;
                 cmo-active-school-name <=> root.cmo-active-school-name;
+                cmo-selector-open <=> root.cmo-selector-open;
                 cmo-school-selected(id) => { root.cmo-school-selected(id); }
             }
 
@@ -498,7 +504,15 @@ export component App inherits Window {
                        && root.active-tab != "cmo_compliance"
                        : SchoolContextBanner {
                         school-name: root.cmo-active-school-name;
-                        switch-clicked => { root.cmo-banner-switch-clicked(); }
+                        switch-clicked => {
+                            // WP-E6.6.1 — programmatically pop the sidebar's
+                            // SchoolSelector dropdown open. The Slint binding
+                            // chain (app → sidebar → SchoolSelector) flips
+                            // the inner `open` flag without needing a Rust
+                            // round-trip.
+                            root.cmo-selector-open = true;
+                            root.cmo-banner-switch-clicked();
+                        }
                     }
 
                     // Stretchy panel-host. Existing per-tab `if active-tab`
