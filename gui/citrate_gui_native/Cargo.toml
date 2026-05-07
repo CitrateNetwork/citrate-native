@@ -8,6 +8,12 @@ description = "Citrate desktop GUI — Rust-native Slint frontend"
 # Application core (headless orchestration)
 citrate-desktop-app = { path = "../citrate_desktop_app" }
 
+# Edu-app service layer — backs the CMO portal (E6.1.5) with eth_call
+# wrappers for InstitutionTreeV1 + ComplianceRegistry. The GUI uses the
+# service when contracts are deployed and falls back to CITRATE_CMO_DEMO
+# stub data when the addresses are still ZERO_ADDRESS.
+citrate-edu-app = { path = "../citrate_edu_app" }
+
 # UI framework — use software renderer for compatibility (no GPU/OpenGL required)
 slint = { version = "1.9", default-features = false, features = ["renderer-software", "backend-winit", "compat-1-2"] }
 

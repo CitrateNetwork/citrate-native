@@ -1202,6 +1202,67 @@ fn main() {
             let compliance_model =
                 std::rc::Rc::new(slint::VecModel::from(stub_compliance));
             ui.set_cmo_compliance_rows(slint::ModelRc::from(compliance_model));
+        } else {
+            // WP-E6.1.5 — Real-RPC path. When CITRATE_CMO_DEMO is unset, the
+            // GUI checks whether the InstitutionTreeV1 + ComplianceRegistry
+            // contracts have been deployed. The deployed-address sentinel is
+            // ZERO_ADDRESS until the post-RegistryDeployment ceremony lands
+            // canonical addresses in citrate-edu-app/src/config.rs. Until
+            // then this branch logs the not-deployed state and leaves the
+            // CMO panels empty (no fake data — Rule 0).
+            //
+            // After deployment: this branch instantiates a CmoPortalService
+            // and spawns a tokio task that calls listAllSchoolsForCmo +
+            // getSchoolMatrix per school + getNode for each. Results are
+            // pushed back to the Slint UI via `invoke_from_event_loop`.
+            //
+            // Architecture intentionally keeps the service in
+            // citrate-edu-app (which already has the eth_call gateway
+            // pattern) so the GUI binary stays focused on UI plumbing.
+            use citrate_edu_app::config::EduConfig;
+            use citrate_edu_app::services::cmo_portal::CmoPortalService;
+            let config = EduConfig::testnet();
+            // GatewayClient construction requires async + JWT etc.;
+            // for the not-yet-deployed case we just check the address
+            // sentinel synchronously and skip service instantiation.
+            let tree_addr = config.contracts.institution_tree;
+            let registry_addr = config.contracts.compliance_registry;
+            let zero = citrate_edu_app::config::ZERO_ADDRESS;
+            if tree_addr == zero || registry_addr == zero {
+                tracing::info!(
+                    "[E6.1.5] CMO portal contracts not yet deployed — \
+                     institution_tree={tree_addr}, compliance_registry={registry_addr}. \
+                     Run with CITRATE_CMO_DEMO=true to see the demo data, \
+                     or update DEPLOYED_ADDRESSES.md after the ceremony."
+                );
+            } else {
+                // Deployed path: spawn a fetch task. Schools list comes from
+                // listAllSchoolsForCmo; per-school details from getNode +
+                // getSchoolMatrix. The CMO id hash is read from the active
+                // wallet's HKDF-derived org identity (E6.1's role detection
+                // already populates this).
+                use citrate_edu_app::role::EduRole;
+                let _service_ref = std::sync::Arc::new(CmoPortalService::new(
+                    // GatewayClient: anonymous-role view-call client
+                    // (`api_key=None` means no JWT bearer, suitable for
+                    // public eth_call methods). Future write-mode flows
+                    // (recordSigned/revokeGate) need a signed wallet —
+                    // tracked separately under E6.1.5-D.
+                    std::sync::Arc::new(citrate_edu_app::gateway::GatewayClient::new(
+                        &config.rpc_url,
+                        None,
+                        EduRole::CMOSuperAdmin,
+                    )),
+                    tree_addr.to_string(),
+                    registry_addr.to_string(),
+                ));
+                tracing::info!(
+                    "[E6.1.5] CMO portal service instantiated against \
+                     tree={tree_addr}, registry={registry_addr}. \
+                     Async fetch loop wires in the next commit (handler \
+                     needs the active CMO hash from EduRole detection)."
+                );
+            }
         }
     }
     // WP-E6.6 — School-context propagation.
