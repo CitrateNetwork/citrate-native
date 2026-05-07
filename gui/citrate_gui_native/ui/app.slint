@@ -5,6 +5,7 @@ import { CmoDashboard, CmoDashboardStats, CmoSchoolRow, CmoEvent } from "cmo/das
 import { CmoTenancy, TenancyNode } from "cmo/tenancy.slint";
 import { CmoCompliance, ComplianceCell, ComplianceSchoolMatrixRow } from "cmo/compliance.slint";
 import { SchoolContextBanner } from "cmo/school_context_banner.slint";
+import { EnvelopeDrawer, EnvelopeDetail } from "cmo/envelope_drawer.slint";
 
 export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent, TenancyNode, ComplianceCell, ComplianceSchoolMatrixRow }
 import { StatusBar } from "shell/status_bar.slint";
@@ -428,6 +429,12 @@ export component App inherits Window {
     // school-scoped on-chain queries.
     in property <int> cmo-context-version: 0;
     callback cmo-banner-switch-clicked();
+
+    // WP-E6.5.1 — Envelope detail drawer state. Rust populates this on
+    // cmo-compliance-cell-clicked and sets visible=true; the drawer's
+    // close handler clears it.
+    in-out property <EnvelopeDetail> cmo-envelope-detail;
+    callback cmo-envelope-renew-clicked(/*school_id*/ string, /*gate_id*/ string);
 
     // WP-E6.6.1 — externally-controlled selector-open state. Bound through
     // Sidebar to the inner SchoolSelector. The banner's Switch button sets
@@ -886,6 +893,32 @@ export component App inherits Window {
             block-height: root.block-height;
             peer-count: root.peer-count;
             version: root.app-version;
+        }
+    }
+
+    // WP-E6.5.1 — CMO compliance envelope drawer. Top-level overlay so it
+    // sits above panel content and the sidebar. Visibility driven by the
+    // detail.visible field; close handler clears it.
+    EnvelopeDrawer {
+        detail: root.cmo-envelope-detail;
+        close => {
+            root.cmo-envelope-detail = {
+                visible: false,
+                school-id: "",
+                school-display-name: "",
+                school-state: "",
+                gate-id: "",
+                gate-label: "",
+                status: "",
+                envelope-id-hash: "",
+                signer: "",
+                signed-at: "",
+                expires-at: "",
+                explainer: "",
+            };
+        }
+        renew-clicked(school-id, gate-id) => {
+            root.cmo-envelope-renew-clicked(school-id, gate-id);
         }
     }
 

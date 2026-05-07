@@ -1456,9 +1456,79 @@ fn main() {
         }
     });
 
-    ui.on_cmo_compliance_cell_clicked(|school_id, gate_id| {
+    // WP-E6.5.1 — Compliance cell click opens the envelope-detail drawer.
+    //
+    // Cell click flow:
+    //   1. Find the row matching school_id in cmo-compliance-rows
+    //   2. Find the cell matching gate_id in that row's cells
+    //   3. Build an EnvelopeDetail from the cell + school metadata
+    //   4. Set ui.cmo-envelope-detail (which makes the drawer visible)
+    //
+    // The detail is populated entirely from data already in the UI's
+    // compliance model — no extra RPC calls. When E6.1.5-D's async-fetch
+    // loop ships, the same path works because the model contents come
+    // from the live ComplianceRegistry.getSchoolMatrix call.
+    let ui_handle_cell = ui.as_weak();
+    ui.on_cmo_compliance_cell_clicked(move |school_id, gate_id| {
+        use slint::Model;
+        let school_id_s = school_id.as_str();
+        let gate_id_s = gate_id.as_str();
         tracing::info!(
-            "[E6.5] compliance cell clicked: school={}, gate={} — drawer pending (E6.5.1)",
+            "[E6.5.1] compliance cell clicked: school={}, gate={} — opening drawer",
+            school_id_s,
+            gate_id_s
+        );
+        if let Some(ui) = ui_handle_cell.upgrade() {
+            let rows = ui.get_cmo_compliance_rows();
+            for i in 0..rows.row_count() {
+                let Some(row) = rows.row_data(i) else { continue };
+                if row.school_id.as_str() != school_id_s {
+                    continue;
+                }
+                let cells = row.cells.clone();
+                for j in 0..cells.row_count() {
+                    let Some(cell) = cells.row_data(j) else { continue };
+                    if cell.gate_id.as_str() != gate_id_s {
+                        continue;
+                    }
+                    let explainer = match cell.status.as_str() {
+                        "Green" => "This gate is signed and current. The envelope expires on the date below; the keeper sweep will mark it Expired automatically.".to_string(),
+                        "Yellow" => "An envelope has been sent for signature but no signing event is on-chain yet. If the operator has been waiting more than 5 business days, escalate to the school's compliance officer.".to_string(),
+                        "Red" => "The signing window has lapsed or the gate was revoked under audit. Re-signing is required to restore compliance.".to_string(),
+                        "N/A" => "This gate doesn't apply to this school's state. The cell renders for context only — CMOs operating in multiple states track per-state posture across the portfolio.".to_string(),
+                        _ => "This gate has never been signed for this school. Sign the envelope via Docusign + CLEAR to record on-chain.".to_string(),
+                    };
+                    let detail = EnvelopeDetail {
+                        visible: true,
+                        school_id: row.school_id.clone(),
+                        school_display_name: row.school_name.clone(),
+                        school_state: row.school_state.clone(),
+                        gate_id: cell.gate_id.clone(),
+                        gate_label: cell.gate_label.clone(),
+                        status: cell.status.clone(),
+                        envelope_id_hash: "".into(),  // populated by E6.1.5-D fetch
+                        signer: "".into(),             // populated by E6.1.5-D fetch
+                        signed_at: cell.last_signed.clone(),
+                        expires_at: cell.expires_at.clone(),
+                        explainer: explainer.into(),
+                    };
+                    ui.set_cmo_envelope_detail(detail);
+                    return;
+                }
+            }
+            tracing::warn!(
+                "[E6.5.1] compliance cell-click did not match any row/cell: school={}, gate={}",
+                school_id_s,
+                gate_id_s
+            );
+        }
+    });
+
+    // WP-E6.5.1 — Renew/Sign-now button on the drawer. Logs intent in v1;
+    // E6.1.5-E adds the wallet-signed recordSigned transaction here.
+    ui.on_cmo_envelope_renew_clicked(|school_id, gate_id| {
+        tracing::info!(
+            "[E6.5.1] renew/sign clicked: school={}, gate={} — recordSigned tx pending E6.1.5-E",
             school_id.as_str(),
             gate_id.as_str()
         );

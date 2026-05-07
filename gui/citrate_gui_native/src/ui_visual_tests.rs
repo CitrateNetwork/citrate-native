@@ -279,6 +279,27 @@ fn configure_cmo_tenancy(app: &App) {
     app.set_cmo_tenancy_nodes(slint::ModelRc::from(Rc::new(VecModel::from(nodes))));
 }
 
+/// WP-E6.5.1 — CMO Compliance panel WITH envelope drawer open. Same matrix
+/// as configure_cmo_compliance, plus the EnvelopeDetail populated for the
+/// Bayonne DPA cell (Yellow, pending signature) so the drawer renders.
+fn configure_cmo_compliance_drawer(app: &App) {
+    configure_cmo_compliance(app);
+    app.set_cmo_envelope_detail(EnvelopeDetail {
+        visible: true,
+        school_id: "0xdemo_b".into(),
+        school_display_name: "KIPP Charter Bayonne".into(),
+        school_state: "NJ".into(),
+        gate_id: "dpa".into(),
+        gate_label: "DPA".into(),
+        status: "Yellow".into(),
+        envelope_id_hash: "0xa1c9f5bef13afde32f3afa66dd5dbe0b".into(),
+        signer: "0xacea1c9f5b0fe3a466dd5dbe0b1a5f56ce75a2d5e".into(),
+        signed_at: "".into(),
+        expires_at: "2027-04-10".into(),
+        explainer: "An envelope has been sent for signature but no signing event is on-chain yet. If the operator has been waiting more than 5 business days, escalate to the school's compliance officer.".into(),
+    });
+}
+
 /// WP-E6.8 — CMO Compliance panel configuration. Builds a 3-school × 9-gate
 /// matrix matching the E2E deploy seed pattern (federal Green/Yellow/Red,
 /// state cells N/A for NJ schools).
@@ -403,6 +424,9 @@ fn ui_visual_proof_suite() {
             ("cmo_dashboard", configure_cmo_dashboard),
             ("cmo_tenancy", configure_cmo_tenancy),
             ("cmo_compliance", configure_cmo_compliance),
+            // WP-E6.5.1 — captures the compliance panel WITH the drawer
+            // open over the Bayonne-DPA Yellow cell.
+            ("cmo_compliance_drawer", configure_cmo_compliance_drawer),
         ];
 
         let sizes = [(800, 600), (1200, 800), (1440, 960)];

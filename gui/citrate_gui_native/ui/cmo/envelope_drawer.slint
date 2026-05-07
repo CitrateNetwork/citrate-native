@@ -1,0 +1,261 @@
+// WP-E6.5.1 — Compliance cell envelope-detail drawer.
+//
+// Side drawer that surfaces full Record metadata for one (school, gate)
+// pair when the operator clicks a status pill in the compliance matrix.
+// Read-only in v1; "Renew now" button logs intent (write-mode flows for
+// recordSigned ship in E6.1.5-E with wallet integration).
+//
+// Layout: right-anchored 360px-wide overlay panel, 100% viewport height,
+// modal backdrop dim. Closes on backdrop click or X button.
+//
+// Data sources (Rule 11):
+//   - ComplianceRegistry.getRecord(schoolHash, gateIdx) — the raw record
+//   - ComplianceRegistry.getEffectiveStatus — for NotApplicable rendering
+//   - InstitutionTreeV1.getNode(schoolHash) — display name / state
+//   The Rust binding pre-fetches all three when the cell is clicked and
+//   pushes the result into `envelope-detail` before the drawer opens.
+
+import { Theme } from "../theme.slint";
+
+/// All fields the drawer needs to render. Pre-populated by Rust on
+/// cell-clicked; cleared (all empty strings + visible=false) on close.
+export struct EnvelopeDetail {
+    visible: bool,
+    school-id: string,
+    school-display-name: string,
+    school-state: string,           // "NJ" / "CA" / etc., for the header chip
+    gate-id: string,                // "dpa" / "ferpa" / ...
+    gate-label: string,              // "DPA" / "FERPA" / ...
+    status: string,                   // "Green" / "Yellow" / "Red" / "N/A" / "Untouched"
+    envelope-id-hash: string,        // 0x... or empty for Untouched
+    signer: string,                   // 0x... or empty
+    signed-at: string,                // ISO-8601 or empty
+    expires-at: string,               // ISO-8601 or empty
+    explainer: string,                // human-readable explanation per status
+}
+
+component DetailRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> mono: false;
+
+    height: 48px;
+    VerticalLayout {
+        spacing: 2px;
+        Text {
+            text: root.label;
+            color: Theme.text-muted;
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        Text {
+            text: root.value == "" ? "—" : root.value;
+            color: root.value == "" ? Theme.text-muted : Theme.text;
+            font-size: 12px;
+            font-family: root.mono ? Theme.font-mono : "";
+            overflow: elide;
+        }
+    }
+}
+
+component StatusBadge inherits Rectangle {
+    in property <string> status;
+    width: 76px;
+    height: 24px;
+    border-radius: 12px;
+    background:
+        status == "Green" ? #064e3b
+      : status == "Yellow" ? #78350f
+      : status == "Red" ? #7f1d1d
+      : status == "N/A" ? Theme.bg-tertiary
+      : Theme.bg-tertiary;
+
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            text: root.status == "" ? "—" : root.status;
+            color:
+                root.status == "Green" ? #6ee7b7
+              : root.status == "Yellow" ? #fde68a
+              : root.status == "Red" ? #fca5a5
+              : Theme.text-muted;
+            font-size: 11px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component EnvelopeDrawer inherits Rectangle {
+    in property <EnvelopeDetail> detail;
+    callback close;
+    callback renew-clicked(/*school_id*/ string, /*gate_id*/ string);
+
+    visible: detail.visible;
+
+    // Backdrop — semi-transparent overlay that captures clicks-outside.
+    Rectangle {
+        background: #000000a0;
+        TouchArea {
+            mouse-cursor: default;
+            clicked => { root.close(); }
+        }
+    }
+
+    // Side panel — anchored right.
+    Rectangle {
+        x: parent.width - self.width;
+        width: 360px;
+        height: 100%;
+        background: Theme.surface;
+        border-color: Theme.border;
+        border-width: 1px;
+
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // ── Header ──
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "Compliance Detail";
+                    color: Theme.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: close-touch.has-hover ? Theme.bg-tertiary : transparent;
+                    animate background { duration: Theme.duration-fast; }
+                    Text {
+                        text: "×";
+                        color: Theme.text-secondary;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    close-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.close(); }
+                    }
+                }
+            }
+
+            // ── School + gate identification ──
+            VerticalLayout {
+                spacing: Theme.space-sm;
+                Text {
+                    text: detail.school-display-name == "" ? "—" : detail.school-display-name;
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    Rectangle {
+                        width: 36px;
+                        height: 20px;
+                        border-radius: 10px;
+                        background: Theme.bg-tertiary;
+                        Text {
+                            text: detail.school-state;
+                            color: Theme.text-secondary;
+                            font-size: 10px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Text {
+                        text: detail.gate-label + " gate";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    StatusBadge { status: detail.status; }
+                }
+            }
+
+            // ── Explainer ──
+            if detail.explainer != "" : Rectangle {
+                background: Theme.bg-tertiary;
+                border-radius: Theme.radius-md;
+                min-height: 48px;
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    Text {
+                        text: detail.explainer;
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ── Record fields ──
+            VerticalLayout {
+                spacing: Theme.space-md;
+                DetailRow {
+                    label: "ENVELOPE ID HASH";
+                    value: detail.envelope-id-hash;
+                    mono: true;
+                }
+                DetailRow {
+                    label: "SIGNER";
+                    value: detail.signer;
+                    mono: true;
+                }
+                DetailRow {
+                    label: "SIGNED AT";
+                    value: detail.signed-at;
+                }
+                DetailRow {
+                    label: "EXPIRES AT";
+                    value: detail.expires-at;
+                }
+                DetailRow {
+                    label: "SCHOOL ID HASH";
+                    value: detail.school-id;
+                    mono: true;
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // ── Renew action ──
+            // Only shown for status that's actionable: Untouched / Yellow /
+            // Red. Green = current, no renewal needed; N/A = doesn't apply.
+            if detail.status == "Yellow" || detail.status == "Red" || detail.status == "Untouched" : Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-md;
+                background: renew-touch.has-hover ? Theme.accent : Theme.bg-tertiary;
+                border-width: 1px;
+                border-color: Theme.accent;
+                animate background { duration: Theme.duration-fast; }
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: detail.status == "Untouched" ? "Sign now" : "Renew now";
+                        color: renew-touch.has-hover ? Theme.bg : Theme.accent;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+                renew-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.renew-clicked(detail.school-id, detail.gate-id);
+                    }
+                }
+            }
+        }
+    }
+}
