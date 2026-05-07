@@ -840,6 +840,220 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// WP-E6.1.5-D — Fetch live CMO portal data from the chain and push it
+/// into the Slint UI properties.
+///
+/// Sequential fetch:
+///   1. listAllSchoolsForCmo(cmo_hash) → list of school hashes
+///   2. for each school: getNode + getSchoolMatrix
+///   3. Build SchoolEntry / CmoSchoolRow / ComplianceSchoolMatrixRow models
+///   4. invoke_from_event_loop to atomically swap into UI props
+///
+/// Errors are logged and the UI stays empty (no fake fallback).
+async fn fetch_cmo_portal_data(
+    service: std::sync::Arc<citrate_edu_app::services::cmo_portal::CmoPortalService>,
+    cmo_hash: String,
+    ui_weak: slint::Weak<App>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use citrate_edu_app::services::cmo_portal::ComplianceStatus;
+
+    let schools = service.list_schools_for_cmo(&cmo_hash).await?;
+    tracing::info!(
+        "[E6.1.5-D] fetched {} schools under cmo={}",
+        schools.len(),
+        cmo_hash
+    );
+
+    // For each school, fetch its node + matrix concurrently within the
+    // task. Order is preserved so the UI list matches registration order.
+    let mut school_data: Vec<(String, citrate_edu_app::services::cmo_portal::InstitutionNode, [citrate_edu_app::services::cmo_portal::GateRecord; 9])> = Vec::with_capacity(schools.len());
+    for sch_hash in &schools {
+        match service.get_node(sch_hash).await {
+            Ok(node) => match service.get_school_matrix(sch_hash).await {
+                Ok(matrix) => school_data.push((sch_hash.clone(), node, matrix)),
+                Err(e) => {
+                    tracing::warn!("[E6.1.5-D] getSchoolMatrix failed for {sch_hash}: {e}");
+                }
+            },
+            Err(e) => {
+                tracing::warn!("[E6.1.5-D] getNode failed for {sch_hash}: {e}");
+            }
+        }
+    }
+
+    // Atomic UI update via invoke_from_event_loop. All Slint construction
+    // happens inside the closure (Slint types aren't Send).
+    let school_data_clone = school_data.clone();
+    slint::invoke_from_event_loop(move || {
+        let Some(ui) = ui_weak.upgrade() else { return };
+
+        // Stable display-name fallback when the chain doesn't carry it
+        // (the tree only stores pseudonymous hashes; display names are
+        // an off-chain concern). For now use a short-hash form.
+        fn short_label(prefix: &str, hash: &str) -> String {
+            let trimmed = hash.trim_start_matches("0x");
+            let short = if trimmed.len() >= 8 {
+                &trimmed[..8]
+            } else {
+                trimmed
+            };
+            format!("{prefix} 0x{short}")
+        }
+
+        // ── SchoolEntry list (for the sidebar selector) ──
+        let school_entries: Vec<SchoolEntry> = school_data_clone
+            .iter()
+            .map(|(hash, _node, _mx)| SchoolEntry {
+                school_id: hash.clone().into(),
+                display_name: short_label("School", hash).into(),
+                student_count: 0, // student count is not on-chain in v1
+            })
+            .collect();
+        ui.set_cmo_schools(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+            school_entries,
+        ))));
+
+        // ── Dashboard rows ──
+        // Compute per-school compliance health: worst applicable cell wins.
+        // Green if all applicable Signed; Yellow if any Untouched; Red if
+        // any Expired or Revoked.
+        let dash_rows: Vec<CmoSchoolRow> = school_data_clone
+            .iter()
+            .map(|(hash, node, mx)| {
+                let mut has_red = false;
+                let mut has_yellow = false;
+                for (_idx, cell) in mx.iter().enumerate() {
+                    match cell.status {
+                        ComplianceStatus::NotApplicable => {}
+                        ComplianceStatus::Expired | ComplianceStatus::Revoked => has_red = true,
+                        ComplianceStatus::Untouched => has_yellow = true,
+                        ComplianceStatus::Signed => {}
+                    }
+                }
+                let health = if has_red {
+                    "Red"
+                } else if has_yellow {
+                    "Yellow"
+                } else {
+                    "Green"
+                };
+                CmoSchoolRow {
+                    school_id: hash.clone().into(),
+                    display_name: short_label("School", hash).into(),
+                    student_count: 0,
+                    compliance_health: health.into(),
+                    last_activity: format!("0x{:x}", node.registered_at).into(),
+                    open_issues: if has_red { 1 } else { 0 },
+                }
+            })
+            .collect();
+
+        // ── Aggregate stats ──
+        let total_signed = school_data_clone
+            .iter()
+            .map(|(_, _, mx)| {
+                mx.iter()
+                    .filter(|c| c.status == ComplianceStatus::Signed)
+                    .count() as i32
+            })
+            .sum::<i32>();
+        let total_issues = dash_rows
+            .iter()
+            .map(|r| r.open_issues)
+            .sum::<i32>();
+
+        ui.set_cmo_dashboard_stats(CmoDashboardStats {
+            total_schools: school_data_clone.len() as i32,
+            total_students: 0,
+            total_active_compliance_gates: total_signed,
+            total_open_issues: total_issues,
+        });
+        ui.set_cmo_dashboard_schools(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(dash_rows),
+        )));
+        ui.set_cmo_dashboard_events(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(Vec::<CmoEvent>::new()),
+        )));
+
+        // ── Compliance matrix rows ──
+        let compliance_rows: Vec<ComplianceSchoolMatrixRow> = school_data_clone
+            .iter()
+            .map(|(hash, node, mx)| {
+                let state_label = match node.state {
+                    0 => "CA",
+                    1 => "NY",
+                    2 => "IL",
+                    3 => "TX",
+                    4 => "CO",
+                    _ => "Other",
+                };
+                let labels = ["DPA", "FERPA", "COPPA", "CIPA", "CA", "NY", "IL", "TX", "CO"];
+                let cells: Vec<ComplianceCell> = mx
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cell)| ComplianceCell {
+                        gate_id: labels[i].to_lowercase().into(),
+                        gate_label: labels[i].into(),
+                        status: cell.status.display_label().into(),
+                        last_signed: if cell.signed_at > 0 {
+                            format!("@ts:{}", cell.signed_at).into()
+                        } else {
+                            "".into()
+                        },
+                        expires_at: if cell.expires_at > 0 {
+                            format!("@ts:{}", cell.expires_at).into()
+                        } else {
+                            "".into()
+                        },
+                    })
+                    .collect();
+                ComplianceSchoolMatrixRow {
+                    school_id: hash.clone().into(),
+                    school_name: short_label("School", hash).into(),
+                    school_state: state_label.into(),
+                    cells: slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(cells))),
+                }
+            })
+            .collect();
+        ui.set_cmo_compliance_rows(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+            compliance_rows,
+        ))));
+
+        // ── Tenancy nodes (CMO root + flat school list) ──
+        let mut tenancy: Vec<TenancyNode> = Vec::with_capacity(school_data_clone.len() + 1);
+        tenancy.push(TenancyNode {
+            node_id: "0xcmo".into(),
+            kind: "cmo".into(),
+            display_name: "Charter Management Organization".into(),
+            level: 0,
+            student_count: 0,
+            classroom_count: 0,
+            expanded: true,
+        });
+        for (hash, _, _) in &school_data_clone {
+            tenancy.push(TenancyNode {
+                node_id: hash.clone().into(),
+                kind: "school".into(),
+                display_name: short_label("School", hash).into(),
+                level: 1,
+                student_count: 0,
+                classroom_count: 0,
+                expanded: false,
+            });
+        }
+        ui.set_cmo_tenancy_nodes(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
+            tenancy,
+        ))));
+
+        tracing::info!(
+            "[E6.1.5-D] CMO portal UI populated with {} schools (live on-chain data)",
+            school_data_clone.len()
+        );
+    })?;
+
+    Ok(())
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1220,48 +1434,84 @@ fn main() {
             // citrate-edu-app (which already has the eth_call gateway
             // pattern) so the GUI binary stays focused on UI plumbing.
             use citrate_edu_app::config::EduConfig;
+            use citrate_edu_app::role::EduRole;
             use citrate_edu_app::services::cmo_portal::CmoPortalService;
             let config = EduConfig::testnet();
-            // GatewayClient construction requires async + JWT etc.;
-            // for the not-yet-deployed case we just check the address
-            // sentinel synchronously and skip service instantiation.
-            let tree_addr = config.contracts.institution_tree;
-            let registry_addr = config.contracts.compliance_registry;
+
+            // Operator-override env vars (used by E6.7 E2E and visual review
+            // against a local anvil deployment). Production reads from
+            // EduContracts after the deployment ceremony pins the addrs.
+            let env_tree = std::env::var("CITRATE_CMO_E2E_TREE").ok();
+            let env_registry = std::env::var("CITRATE_CMO_E2E_REGISTRY").ok();
+            let env_rpc = std::env::var("CITRATE_CMO_E2E_RPC").ok();
+            let env_cmo_hash = std::env::var("CITRATE_CMO_E2E_CMO_HASH").ok();
+
+            let tree_addr = env_tree
+                .clone()
+                .unwrap_or_else(|| config.contracts.institution_tree.to_string());
+            let registry_addr = env_registry
+                .clone()
+                .unwrap_or_else(|| config.contracts.compliance_registry.to_string());
+            let rpc_url = env_rpc.unwrap_or_else(|| config.rpc_url.clone());
             let zero = citrate_edu_app::config::ZERO_ADDRESS;
+
             if tree_addr == zero || registry_addr == zero {
                 tracing::info!(
                     "[E6.1.5] CMO portal contracts not yet deployed — \
                      institution_tree={tree_addr}, compliance_registry={registry_addr}. \
                      Run with CITRATE_CMO_DEMO=true to see the demo data, \
-                     or update DEPLOYED_ADDRESSES.md after the ceremony."
+                     or update DEPLOYED_ADDRESSES.md after the ceremony, \
+                     or set CITRATE_CMO_E2E_{{RPC,TREE,REGISTRY,CMO_HASH}} \
+                     for local-anvil testing."
                 );
             } else {
-                // Deployed path: spawn a fetch task. Schools list comes from
-                // listAllSchoolsForCmo; per-school details from getNode +
-                // getSchoolMatrix. The CMO id hash is read from the active
-                // wallet's HKDF-derived org identity (E6.1's role detection
-                // already populates this).
-                use citrate_edu_app::role::EduRole;
-                let _service_ref = std::sync::Arc::new(CmoPortalService::new(
-                    // GatewayClient: anonymous-role view-call client
-                    // (`api_key=None` means no JWT bearer, suitable for
-                    // public eth_call methods). Future write-mode flows
-                    // (recordSigned/revokeGate) need a signed wallet —
-                    // tracked separately under E6.1.5-D.
+                ui.set_is_cmo_super_admin(true);
+                // The CMO id hash comes from the active wallet's HKDF-
+                // derived org identity. Until that wiring lands (E6.1
+                // role-detection extension), the operator can override
+                // via CITRATE_CMO_E2E_CMO_HASH for live-anvil testing.
+                let cmo_hash = env_cmo_hash.unwrap_or_else(|| {
+                    use sha3::{Digest, Keccak256};
+                    let h = Keccak256::digest(b"E2E-CMO-KIPP");
+                    format!("0x{}", hex::encode(h))
+                });
+
+                let service = std::sync::Arc::new(CmoPortalService::new(
                     std::sync::Arc::new(citrate_edu_app::gateway::GatewayClient::new(
-                        &config.rpc_url,
+                        &rpc_url,
                         None,
                         EduRole::CMOSuperAdmin,
                     )),
-                    tree_addr.to_string(),
-                    registry_addr.to_string(),
+                    tree_addr.clone(),
+                    registry_addr.clone(),
                 ));
                 tracing::info!(
-                    "[E6.1.5] CMO portal service instantiated against \
-                     tree={tree_addr}, registry={registry_addr}. \
-                     Async fetch loop wires in the next commit (handler \
-                     needs the active CMO hash from EduRole detection)."
+                    "[E6.1.5-D] CMO portal real-RPC fetch starting — \
+                     rpc={rpc_url}, tree={tree_addr}, registry={registry_addr}, \
+                     cmo_hash={cmo_hash}"
                 );
+
+                // Spawn the async fetch task. Three sequential calls:
+                //   1. list_schools_for_cmo(cmo_hash) — bytes32[]
+                //   2. for each school: get_node + get_school_matrix
+                //   3. invoke_from_event_loop to push results to UI props
+                //
+                // We DON'T spawn-per-school in parallel because the GUI
+                // expects a single atomic update; partial population
+                // would render a half-empty UI for tens of milliseconds
+                // and look broken. Single sequential task is fast enough
+                // for a typical CMO (<50 schools).
+                let ui_weak_e615 = ui.as_weak();
+                let cmo_hash_owned = cmo_hash.clone();
+                rt.spawn(async move {
+                    if let Err(err) = fetch_cmo_portal_data(
+                        service,
+                        cmo_hash_owned,
+                        ui_weak_e615,
+                    ).await {
+                        tracing::warn!("[E6.1.5-D] CMO portal fetch failed: {err}");
+                    }
+                });
             }
         }
     }
