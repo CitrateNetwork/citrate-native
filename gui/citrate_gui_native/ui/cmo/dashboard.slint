@@ -1,0 +1,394 @@
+// WP-E6.3 — CMO Dashboard panel.
+//
+// The home view for a CMOSuperAdmin (per WP-E6.1's `home_view` mapping).
+// Three sections per planset Decision 2:
+//
+//   1. Aggregate stat cards across all schools in the CMO
+//   2. Per-school table with click-to-switch behavior
+//   3. Recent CMO-level events feed
+//
+// Data sources (Rule 11):
+//   - InstitutionTreeV1.getCmoSchools(cmo_id) → school list (E6.1.5)
+//   - InstitutionTreeV1.aggregateMetrics(cmo_id) → stat-card totals (E6.1.5)
+//   - ContributionAccounting.getCmoEvents(cmo_id, limit) → recent events
+//
+// All three are stubbed in v1 via the CITRATE_CMO_DEMO env var (matches
+// the E6.2 stub pattern); Rust binding swaps in real RPC queries when
+// E6.1.5 ships the chain methods.
+
+import { Theme } from "../theme.slint";
+
+// Aggregate stat row across all schools.
+export struct CmoDashboardStats {
+    total-schools: int,
+    total-students: int,
+    total-active-compliance-gates: int,
+    total-open-issues: int,
+}
+
+// One row in the per-school table.
+export struct CmoSchoolRow {
+    school-id: string,             // pseudonymous ID, matches SchoolEntry's
+    display-name: string,
+    student-count: int,
+    compliance-health: string,      // "Green" | "Yellow" | "Red" — string for now
+    last-activity: string,           // ISO-8601 short form, e.g. "2026-05-07"
+    open-issues: int,
+}
+
+// One row in the recent-events feed.
+export struct CmoEvent {
+    event-type: string,             // "DPA Renewal" | "Role Grant" | "Policy Change" | etc.
+    school-name: string,             // empty string if CMO-level event (no school scope)
+    actor: string,                   // pseudonymous ID short form, e.g. "0xacea…"
+    summary: string,                 // human-readable one-liner
+    occurred-at: string,             // ISO-8601 timestamp
+}
+
+// One stat card. Mirrors the dashboard/dashboard.slint StatCard pattern
+// but kept local to cmo/ so the CMO dashboard's design can evolve
+// independently of the per-school dashboard.
+component CmoStatCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> accent-color: Theme.success;
+    in property <bool> ok: true;
+
+    min-height: 88px;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-sm;
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: root.label;
+                color: Theme.text-muted;
+                font-size: 11px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+            }
+            Rectangle {
+                width: 8px; height: 8px; border-radius: 4px;
+                background: root.ok ? root.accent-color : Theme.text-muted;
+            }
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 22px;
+            font-weight: 600;
+            overflow: elide;
+        }
+    }
+}
+
+component SchoolTableHeader inherits Rectangle {
+    height: 36px;
+    background: Theme.bg-tertiary;
+    border-radius: Theme.radius-sm;
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+        Text { text: "SCHOOL"; color: Theme.text-muted; font-size: 10px; font-weight: 500; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 3; }
+        Text { text: "STUDENTS"; color: Theme.text-muted; font-size: 10px; font-weight: 500; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: "COMPLIANCE"; color: Theme.text-muted; font-size: 10px; font-weight: 500; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: "OPEN ISSUES"; color: Theme.text-muted; font-size: 10px; font-weight: 500; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: "LAST ACTIVITY"; color: Theme.text-muted; font-size: 10px; font-weight: 500; letter-spacing: 0.5px; vertical-alignment: center; horizontal-stretch: 1; }
+    }
+}
+
+component SchoolTableRow inherits Rectangle {
+    in property <CmoSchoolRow> data;
+    callback row-clicked(string);  // emits school-id on click
+
+    height: 52px;
+    background: touch.has-hover ? Theme.bg-tertiary : Theme.surface;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    animate background { duration: Theme.duration-fast; easing: ease-in-out; }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+        alignment: stretch;
+
+        // School name
+        Text {
+            text: root.data.display-name;
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 3;
+        }
+        // Student count
+        Text {
+            text: root.data.student-count;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        // Compliance health pill
+        Rectangle {
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 76px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: root.data.compliance-health == "Green" ? #064e3b
+                              : root.data.compliance-health == "Yellow" ? #78350f
+                              : root.data.compliance-health == "Red" ? #7f1d1d
+                              : Theme.bg-tertiary;
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: root.data.compliance-health;
+                            color: root.data.compliance-health == "Green" ? #6ee7b7
+                                 : root.data.compliance-health == "Yellow" ? #fde68a
+                                 : root.data.compliance-health == "Red" ? #fca5a5
+                                 : Theme.text-muted;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+        // Open issues
+        Text {
+            text: root.data.open-issues;
+            color: root.data.open-issues > 0 ? Theme.error : Theme.text-muted;
+            font-size: 13px;
+            font-weight: root.data.open-issues > 0 ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        // Last activity
+        Text {
+            text: root.data.last-activity;
+            color: Theme.text-muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.row-clicked(root.data.school-id); }
+    }
+}
+
+component EventRow inherits Rectangle {
+    in property <CmoEvent> event;
+
+    height: 56px;
+    background: Theme.surface;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+
+        // Event type tag
+        Rectangle {
+            width: 120px;
+            HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 110px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: Theme.bg-tertiary;
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: root.event.event-type;
+                            color: Theme.text-secondary;
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+        // Summary
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: root.event.summary;
+                color: Theme.text;
+                font-size: 12px;
+                overflow: elide;
+            }
+            Text {
+                text: root.event.school-name == ""
+                    ? "CMO-level — actor " + root.event.actor
+                    : root.event.school-name + " — actor " + root.event.actor;
+                color: Theme.text-muted;
+                font-size: 10px;
+                overflow: elide;
+            }
+        }
+        // Timestamp
+        Text {
+            text: root.event.occurred-at;
+            color: Theme.text-muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component CmoDashboard inherits Rectangle {
+    in property <CmoDashboardStats> stats;
+    in property <[CmoSchoolRow]> schools;
+    in property <[CmoEvent]> events;
+    callback school-row-clicked(string);  // emit school-id on row click
+
+    background: Theme.bg;
+
+    Flickable {
+        VerticalLayout {
+            padding-top: Theme.space-lg;
+            padding-bottom: Theme.space-lg;
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            // Title
+            Text {
+                text: "CMO Dashboard";
+                color: Theme.text;
+                font-size: 24px;
+                font-weight: 600;
+            }
+
+            // ── Aggregate stat cards ──
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                CmoStatCard {
+                    label: "TOTAL SCHOOLS";
+                    value: root.stats.total-schools;
+                    accent-color: Theme.periwinkle;
+                    horizontal-stretch: 1;
+                }
+                CmoStatCard {
+                    label: "TOTAL STUDENTS";
+                    value: root.stats.total-students;
+                    accent-color: Theme.aquamarine;
+                    horizontal-stretch: 1;
+                }
+                CmoStatCard {
+                    label: "ACTIVE COMPLIANCE GATES";
+                    value: root.stats.total-active-compliance-gates;
+                    accent-color: Theme.success;
+                    horizontal-stretch: 1;
+                }
+                CmoStatCard {
+                    label: "OPEN ISSUES";
+                    value: root.stats.total-open-issues;
+                    ok: root.stats.total-open-issues == 0;
+                    accent-color: root.stats.total-open-issues == 0 ? Theme.success : Theme.error;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            // ── Per-school table ──
+            Rectangle {
+                background: Theme.bg-secondary;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 200px;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-sm;
+
+                    Text {
+                        text: "Schools";
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+
+                    SchoolTableHeader {}
+
+                    if root.schools.length == 0: Rectangle {
+                        height: 80px;
+                        Text {
+                            text: "No schools registered yet.\nUse `citrate-school-bootstrap` to register schools under this CMO.";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    for school[idx] in root.schools: SchoolTableRow {
+                        data: school;
+                        row-clicked(id) => { root.school-row-clicked(id); }
+                    }
+                }
+            }
+
+            // ── Recent CMO-level events ──
+            Rectangle {
+                background: Theme.bg-secondary;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 160px;
+
+                VerticalLayout {
+                    padding: Theme.space-md;
+                    spacing: Theme.space-sm;
+
+                    Text {
+                        text: "Recent Activity";
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+
+                    if root.events.length == 0: Rectangle {
+                        height: 60px;
+                        Text {
+                            text: "No recent CMO-level events.";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    for ev[idx] in root.events: EventRow {
+                        event: ev;
+                    }
+                }
+            }
+        }
+    }
+}

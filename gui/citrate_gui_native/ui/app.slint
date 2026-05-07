@@ -1,8 +1,9 @@
 // Citrate Desktop — Main application shell
 import { Theme } from "theme.slint";
 import { Sidebar, SchoolEntry } from "shell/sidebar.slint";
+import { CmoDashboard, CmoDashboardStats, CmoSchoolRow, CmoEvent } from "cmo/dashboard.slint";
 
-export { SchoolEntry }
+export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent }
 import { StatusBar } from "shell/status_bar.slint";
 import { Onboarding } from "onboarding/onboarding.slint";
 import { LockScreen } from "shell/lock_screen.slint";
@@ -382,6 +383,14 @@ export component App inherits Window {
     in-out property <string> cmo-active-school-name;
     callback cmo-school-selected(/* school_id */ string);
 
+    // WP-E6.3 — CMO Dashboard data. Stubbed via CITRATE_CMO_DEMO until
+    // E6.1.5 wires the on-chain `InstitutionTreeV1.aggregateMetrics`
+    // and `ContributionAccounting.getCmoEvents` queries.
+    in property <CmoDashboardStats> cmo-dashboard-stats;
+    in property <[CmoSchoolRow]> cmo-dashboard-schools;
+    in property <[CmoEvent]> cmo-dashboard-events;
+    callback cmo-dashboard-school-clicked(/* school_id */ string);
+
     if root.show-onboarding : Onboarding {
         current-step <=> root.onboarding-step;
         mnemonic: root.onboarding-mnemonic;
@@ -435,6 +444,15 @@ export component App inherits Window {
             Rectangle {
                 horizontal-stretch: 1;
                 background: Theme.bg;
+
+                // WP-E6.3 — CMO Dashboard panel; visible only via the
+                // CMOSuperAdmin sidebar (per WP-E6.1's sidebar_views).
+                if root.active-tab == "cmo_dashboard" : CmoDashboard {
+                    stats: root.cmo-dashboard-stats;
+                    schools: root.cmo-dashboard-schools;
+                    events: root.cmo-dashboard-events;
+                    school-row-clicked(id) => { root.cmo-dashboard-school-clicked(id); }
+                }
 
                 // Dashboard
                 if root.active-tab == "dashboard" : Dashboard {

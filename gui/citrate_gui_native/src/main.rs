@@ -965,6 +965,73 @@ fn main() {
             ui.set_cmo_schools(slint::ModelRc::from(model));
             ui.set_cmo_active_school_id("".into());
             ui.set_cmo_active_school_name("".into());
+
+            // WP-E6.3 — CMO dashboard stub data. Aggregated across the
+            // 3 stub schools above. Replaced by real RPC queries
+            // (`InstitutionTreeV1.aggregateMetrics(cmo_id)` +
+            // `ContributionAccounting.getCmoEvents(cmo_id, limit)`)
+            // once E6.1.5 lands.
+            ui.set_cmo_dashboard_stats(CmoDashboardStats {
+                total_schools: 3,
+                total_students: 1220, // 412 + 287 + 521
+                total_active_compliance_gates: 27, // 9 gates x 3 schools
+                total_open_issues: 2,
+            });
+
+            let stub_school_rows: Vec<CmoSchoolRow> = vec![
+                CmoSchoolRow {
+                    school_id: "0xdemo_a".into(),
+                    display_name: "KIPP Charter Newark".into(),
+                    student_count: 412,
+                    compliance_health: "Green".into(),
+                    last_activity: "2026-05-07".into(),
+                    open_issues: 0,
+                },
+                CmoSchoolRow {
+                    school_id: "0xdemo_b".into(),
+                    display_name: "KIPP Charter Bayonne".into(),
+                    student_count: 287,
+                    compliance_health: "Yellow".into(),
+                    last_activity: "2026-05-06".into(),
+                    open_issues: 1,
+                },
+                CmoSchoolRow {
+                    school_id: "0xdemo_c".into(),
+                    display_name: "KIPP Charter Jersey City".into(),
+                    student_count: 521,
+                    compliance_health: "Green".into(),
+                    last_activity: "2026-05-05".into(),
+                    open_issues: 1,
+                },
+            ];
+            let school_model = std::rc::Rc::new(slint::VecModel::from(stub_school_rows));
+            ui.set_cmo_dashboard_schools(slint::ModelRc::from(school_model));
+
+            let stub_events: Vec<CmoEvent> = vec![
+                CmoEvent {
+                    event_type: "DPA Renewal".into(),
+                    school_name: "KIPP Charter Newark".into(),
+                    actor: "0xacea…86d1".into(),
+                    summary: "Annual DPA renewed; signed via Docusign + CLEAR".into(),
+                    occurred_at: "2026-05-07 10:14".into(),
+                },
+                CmoEvent {
+                    event_type: "Role Grant".into(),
+                    school_name: "KIPP Charter Bayonne".into(),
+                    actor: "0x9dc0…3b85".into(),
+                    summary: "IT director appointed; admin-can-do-IT bridge enabled".into(),
+                    occurred_at: "2026-05-06 16:42".into(),
+                },
+                CmoEvent {
+                    event_type: "Policy Change".into(),
+                    school_name: "".into(),
+                    actor: "0x4250…00c6".into(),
+                    summary: "CMO content-filter policy updated to K-12 Standard v3".into(),
+                    occurred_at: "2026-05-05 09:01".into(),
+                },
+            ];
+            let event_model = std::rc::Rc::new(slint::VecModel::from(stub_events));
+            ui.set_cmo_dashboard_events(slint::ModelRc::from(event_model));
         }
     }
     // Wire the school-selected callback so changes are observable. The
@@ -980,6 +1047,37 @@ fn main() {
         // into this signal to re-fetch every panel's data scoped to the
         // newly-selected school.
         let _ = ui_handle.clone();
+    });
+
+    // WP-E6.3 — CMO dashboard's per-school row click navigates to that
+    // school's view by setting the active-school + switching the active
+    // tab to "dashboard" (the per-school dashboard). E6.6 finishes the
+    // story by re-rendering all per-school panels with the new context;
+    // for now this just sets the school selection and tab.
+    let ui_handle_dash = ui.as_weak();
+    ui.on_cmo_dashboard_school_clicked(move |school_id| {
+        use slint::Model;
+        let id = school_id.as_str();
+        tracing::info!(
+            "[E6.3] CMO dashboard row clicked: school {} — navigating to per-school dashboard",
+            id
+        );
+        if let Some(ui) = ui_handle_dash.upgrade() {
+            // Look up the school's display name from the schools list.
+            let schools = ui.get_cmo_schools();
+            let mut display_name = String::new();
+            for i in 0..schools.row_count() {
+                if let Some(s) = schools.row_data(i) {
+                    if s.school_id.as_str() == id {
+                        display_name = s.display_name.into();
+                        break;
+                    }
+                }
+            }
+            ui.set_cmo_active_school_id(id.into());
+            ui.set_cmo_active_school_name(display_name.into());
+            ui.set_active_tab("dashboard".into());
+        }
     });
     {
         let config = rt.block_on(app_core.config.read());
