@@ -4,6 +4,7 @@ import { Sidebar, SchoolEntry } from "shell/sidebar.slint";
 import { CmoDashboard, CmoDashboardStats, CmoSchoolRow, CmoEvent } from "cmo/dashboard.slint";
 import { CmoTenancy, TenancyNode } from "cmo/tenancy.slint";
 import { CmoCompliance, ComplianceCell, ComplianceSchoolMatrixRow } from "cmo/compliance.slint";
+import { SchoolContextBanner } from "cmo/school_context_banner.slint";
 
 export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent, TenancyNode, ComplianceCell, ComplianceSchoolMatrixRow }
 import { StatusBar } from "shell/status_bar.slint";
@@ -411,6 +412,23 @@ export component App inherits Window {
     callback cmo-compliance-school-clicked(/* school_id */ string);
     callback cmo-compliance-cell-clicked(/* school_id */ string, /* gate_id */ string);
 
+    // WP-E6.6 — School-context propagation.
+    //
+    // The school-context banner sits above every per-school panel
+    // (Dashboard / Wallet / Models / Studio / etc.) when a CMOSuperAdmin
+    // has selected a school. CMO-scope panels (cmo_dashboard / cmo_tenancy
+    // / cmo_compliance) hide the banner because they show ALL schools at
+    // once.
+    //
+    // `cmo-context-version` is bumped by the Rust binding every time
+    // the school selection changes. Service-layer hooks watching this
+    // property re-fetch with the new active-school-id. v1 logs the
+    // version-bump and documents where each service's refresh hook
+    // lands; concrete RPC re-fetch wires in when E6.1.5 ships the
+    // school-scoped on-chain queries.
+    in property <int> cmo-context-version: 0;
+    callback cmo-banner-switch-clicked();
+
     if root.show-onboarding : Onboarding {
         current-step <=> root.onboarding-step;
         mnemonic: root.onboarding-mnemonic;
@@ -464,6 +482,32 @@ export component App inherits Window {
             Rectangle {
                 horizontal-stretch: 1;
                 background: Theme.bg;
+
+                VerticalLayout {
+                    spacing: 0;
+
+                    // WP-E6.6 — School-context banner. Renders above every
+                    // per-school panel for a CMOSuperAdmin who's selected a
+                    // school. Hidden on the CMO-scope panels (Dashboard /
+                    // Tenancy / Compliance show all schools, so the
+                    // "viewing one school" framing would be misleading).
+                    if root.is-cmo-super-admin
+                       && root.cmo-active-school-id != ""
+                       && root.active-tab != "cmo_dashboard"
+                       && root.active-tab != "cmo_tenancy"
+                       && root.active-tab != "cmo_compliance"
+                       : SchoolContextBanner {
+                        school-name: root.cmo-active-school-name;
+                        switch-clicked => { root.cmo-banner-switch-clicked(); }
+                    }
+
+                    // Stretchy panel-host. Existing per-tab `if active-tab`
+                    // blocks render inside this Rectangle as floating
+                    // siblings (each panel is full-area). Wrapping them in
+                    // a vertical-stretch Rectangle lets the banner consume
+                    // its natural 40px and the panel area absorb the rest.
+                    Rectangle {
+                        vertical-stretch: 1;
 
                 // WP-E6.3 — CMO Dashboard panel; visible only via the
                 // CMOSuperAdmin sidebar (per WP-E6.1's sidebar_views).
@@ -817,6 +861,8 @@ export component App inherits Window {
                         }
                     }
                 }
+                    }       // close inner stretch-Rectangle (E6.6 panel host)
+                }           // close VerticalLayout (E6.6 banner + panel)
             }
         }
 

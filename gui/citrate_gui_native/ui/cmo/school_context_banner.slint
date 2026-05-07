@@ -1,0 +1,114 @@
+// WP-E6.6 — School-context banner.
+//
+// Renders at the top of every per-school panel (Dashboard, Wallet,
+// Models, etc.) when a CMOSuperAdmin has selected a school via the
+// sidebar's SchoolSelector. Tells the operator which school's data
+// they're currently viewing, with a "Switch" button that opens the
+// selector.
+//
+// CMO-level panels (cmo_dashboard / cmo_tenancy / cmo_compliance)
+// do NOT show this banner — those panels are CMO-scope, not
+// school-scope, so adding a "currently viewing school X" indicator
+// would be misleading.
+//
+// Visibility logic (decided in app.slint, not here):
+//   show_banner = is-cmo-super-admin
+//                 && active-school-id != ""
+//                 && active-tab not in {"cmo_dashboard","cmo_tenancy","cmo_compliance"}
+//
+// E6.6 also lands the `cmo-context-version: int` signal that the
+// service layer subscribes to. Each school selection bumps the
+// counter; service-layer hooks (one per data-fetching service) will
+// re-fetch with the new active-school-id when the counter changes.
+// Hooks are stubbed in v1 — they log the version bump and document
+// where the real refresh lives. Concrete service refresh wires in
+// when E6.1.5 adds the school-scoped on-chain queries.
+
+import { Theme } from "../theme.slint";
+
+export component SchoolContextBanner inherits Rectangle {
+    in property <string> school-name;
+    callback switch-clicked;
+
+    height: 40px;
+    background: Theme.accent.with-alpha(0.08);
+
+    // 1px hairline along the bottom edge — Slint's Rectangle only
+    // supports uniform borders, so we render the bottom rule as a
+    // child rectangle pinned to (0, parent.height - 1px).
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.accent.with-alpha(0.25);
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        alignment: stretch;
+
+        Text {
+            text: "🏫";
+            color: Theme.accent;
+            font-size: 14px;
+            vertical-alignment: center;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                Text {
+                    text: "Viewing:";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    font-weight: 500;
+                    letter-spacing: 0.3px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.school-name;
+                    color: Theme.text;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // Switch button — opens the sidebar's school selector
+        // dropdown by emitting `switch-clicked`. The Rust handler
+        // can navigate focus or just trust the operator to click
+        // the sidebar selector themselves; v1 just logs.
+        Rectangle {
+            width: 80px;
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: switch-touch.has-hover ? Theme.accent : Theme.bg-tertiary;
+            border-width: 1px;
+            border-color: Theme.accent.with-alpha(0.5);
+            animate background { duration: Theme.duration-fast; }
+
+            HorizontalLayout {
+                alignment: center;
+                Text {
+                    text: "Switch";
+                    color: switch-touch.has-hover ? Theme.bg : Theme.accent;
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+
+            switch-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.switch-clicked(); }
+            }
+        }
+    }
+}
