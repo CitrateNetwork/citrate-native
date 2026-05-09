@@ -121,9 +121,9 @@ export component ProvenancePanel inherits Rectangle {
 
         TabStrip {
             tabs: [
-                { label: "Configuration", count-text: "" },
-                { label: "Counterfeit", count-text: "" },
-                { label: "Search", count-text: "" },
+                { label: "Configuration", count: 0, show-count: false },
+                { label: "Counterfeit", count: 0, show-count: false },
+                { label: "Search", count: 0, show-count: false },
             ];
             active-index: root.active-tab;
             tab-clicked(i) => { root.tab-changed(i); }
