@@ -98,11 +98,14 @@ export component GovernancePanel inherits Rectangle {
     in property <[DataTableRow]> audit-rows;
     in property <[DataTableRow]> people-rows;
     in property <[DataTableRow]> compliance-rows;
+    // BFR-13 extension: TINA workpapers section
+    in property <[DataTableRow]> tina-rows;
 
     // Callbacks consumed by the host (WP-6 wires them to IPC commands).
     callback audit-row-clicked(int);
     callback person-row-clicked(int);
     callback compliance-row-clicked(int);
+    callback tina-row-clicked(int);
     callback provision-clicked();
     callback export-clicked();
     callback switch-scope-clicked();
@@ -312,6 +315,28 @@ export component GovernancePanel inherits Rectangle {
                         h5: "Expires";
                         rows: root.compliance-rows;
                         row-clicked(i) => { root.compliance-row-clicked(i); }
+                    }
+                }
+            }
+        }
+
+        // BFR-13 extension: TINA workpapers section
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "TINA workpapers (Form 1411)";
+                    meta-text: "TinaWorkpaperRegistry.byScope(scope) — 4-state lifecycle per TinaWorkpaperLifecycle.tla";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "Workpaper";
+                        h2: "PO";
+                        h3: "State";
+                        h4: "Sigs";
+                        h5: "Expires";
+                        rows: root.tina-rows;
+                        row-clicked(i) => { root.tina-row-clicked(i); }
                     }
                 }
             }
