@@ -1,0 +1,320 @@
+// citrate_gui_native / ui/boeing/governance.slint
+//
+// BFR-11 WP-5 — Governance panel. 1:1 fidelity per
+// `06_FIDELITY_MATRIX.md` row 9 (prototype/app.jsx:1184); composes
+// BFR-01 kit primitives + BFR-03 layout shell tokens.
+//
+// State-bearing surfaces and the TLA+ specs that govern them
+// (per WP-2 citation matrix in TLA_CITATION_MATRIX.md):
+//   - Audit log DataTable          -> contracts/AgentDecisionLog.tla
+//   - People & roles tree          -> contracts/RoleEscalationGrant.tla
+//                                    + contracts/ClassificationLadder.tla
+//   - Compliance posture matrix    -> contracts/ComplianceAttestationLifecycle.tla (NEW BFR-11)
+//   - Export profile generation    -> AuditBundleRegistry.anchor (BFR-10)
+//   - Provision-new modal          -> contracts/MultiSigEnvelopeFlow.tla
+//                                    + gui/ModalLifecycle.tla
+//   - Scope-switch confirm modal   -> gui/ScopeSwitchFlow.tla
+//                                    + contracts/TenantHierarchyTree.tla
+//                                    + gui/ModalLifecycle.tla
+//   - Employee detail drawer       -> gui/DrawerLifecycle.tla
+//
+// Data sources (chain 40204; per WP-4 bindings + WP-6 IPC):
+//   - boeing-gov-audit(filter, page) -> AgentDecisionRegistryV2.latestByTenant
+//   - boeing-gov-roles(scope)        -> RoleGrantTenantIndex.byTenant (NEW sidecar)
+//                                       + ClassificationRegistry.getClearance (N times)
+//   - boeing-gov-compliance(fw)      -> BoeingComplianceRegistry.framework(fw, scope) (NEW)
+//   - boeing-gov-provision(...)      -> MultiSigEnvelope.draft + RoleEscalation.setBaseRole
+//   - boeing-gov-export(profile)     -> bundle generator + AuditBundleRegistry.anchor
+//   - boeing-gov-switch-scope(new)   -> TenantHierarchy.getPath + ClassificationRegistry.getClearance
+//
+// Planset deviations (per WP-1):
+//   - D-1: RoleEscalation.byTenant doesn't exist → RoleGrantTenantIndex sidecar
+//   - D-2: ClassificationRegistry.batchClearance doesn't exist → adapter loops
+//   - D-3: BoeingComplianceRegistry is NEW
+
+import { Tokens } from "../../../citrate_boeing_kit/ui/tokens.slint";
+import { DataTable, DataTableRow } from "../../../citrate_boeing_kit/ui/data_table.slint";
+import { KpiTile, BoeingTrendKind } from "../../../citrate_boeing_kit/ui/kpi_tile.slint";
+
+component Card inherits Rectangle {
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.border;
+    border-radius: Tokens.r-md;
+    drop-shadow-blur: 4px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: rgba(0, 0, 0, 0.25);
+}
+
+component CardHead inherits Rectangle {
+    in property <string> title-text;
+    in property <string> meta-text;
+    height: 44px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+        Text {
+            text: root.title-text;
+            color: Tokens.text;
+            font-family: Tokens.font-sans;
+            font-size: Tokens.fs-14;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Rectangle { background: transparent; }
+        Text {
+            text: root.meta-text;
+            color: Tokens.text-3;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-11;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Tokens.border;
+    }
+}
+
+export component GovernancePanel inherits Rectangle {
+    // Scope header
+    in property <string> focused-scope-text: "—";
+
+    // KPI strip
+    in property <string> audit-events-text: "0";
+    in property <string> people-count-text: "0";
+    in property <string> compliance-attested-text: "0";
+    in property <string> export-bundles-text: "0";
+
+    // Tables
+    in property <[DataTableRow]> audit-rows;
+    in property <[DataTableRow]> people-rows;
+    in property <[DataTableRow]> compliance-rows;
+
+    // Callbacks consumed by the host (WP-6 wires them to IPC commands).
+    callback audit-row-clicked(int);
+    callback person-row-clicked(int);
+    callback compliance-row-clicked(int);
+    callback provision-clicked();
+    callback export-clicked();
+    callback switch-scope-clicked();
+
+    background: Tokens.bg;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+
+        // KPI strip — 4 tiles
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "AUDIT EVENTS";
+                    value-text: root.audit-events-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "append-only ledger";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "PEOPLE IN SCOPE";
+                    value-text: root.people-count-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "active grants";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "COMPLIANCE ATTESTED";
+                    value-text: root.compliance-attested-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.success;
+                    sub-tail: "frameworks live";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "EXPORT BUNDLES";
+                    value-text: root.export-bundles-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "IPFS-anchored";
+                }
+            }
+        }
+
+        // Scope header + 3 action buttons
+        Card {
+            height: 60px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 16px;
+                alignment: stretch;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "SCOPE";
+                        color: Tokens.text-4;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-10;
+                        letter-spacing: 0.6px;
+                    }
+                    Text {
+                        text: root.focused-scope-text;
+                        color: Tokens.text;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-14;
+                    }
+                }
+                Rectangle { background: transparent; }
+                VerticalLayout {
+                    alignment: center;
+                    switch-touch := TouchArea {
+                        width: 120px;
+                        height: 32px;
+                        clicked => { root.switch-scope-clicked(); }
+                        Rectangle {
+                            background: switch-touch.has-hover ? Tokens.surface-2 : transparent;
+                            border-width: 1px;
+                            border-color: Tokens.border;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "Switch scope";
+                                color: Tokens.text;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-12;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    export-touch := TouchArea {
+                        width: 120px;
+                        height: 32px;
+                        clicked => { root.export-clicked(); }
+                        Rectangle {
+                            background: export-touch.has-hover ? Tokens.surface-2 : transparent;
+                            border-width: 1px;
+                            border-color: Tokens.border;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "Export bundle";
+                                color: Tokens.text;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-12;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    provision-touch := TouchArea {
+                        width: 140px;
+                        height: 32px;
+                        clicked => { root.provision-clicked(); }
+                        Rectangle {
+                            background: provision-touch.has-hover ? Tokens.accent-hover : Tokens.accent;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "Provision new";
+                                color: #FFFFFF;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-12;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Audit log
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "Audit log";
+                    meta-text: "AgentDecisionRegistryV2.latestByTenant(scope, 50)";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "Decision";
+                        h2: "Class";
+                        h3: "Subject";
+                        h4: "User";
+                        h5: "Block";
+                        rows: root.audit-rows;
+                        row-clicked(i) => { root.audit-row-clicked(i); }
+                    }
+                }
+            }
+        }
+
+        // People & roles
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "People & roles";
+                    meta-text: "RoleGrantTenantIndex.byTenant(scope) + ClassificationRegistry.getClearance (N)";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "User";
+                        h2: "Role";
+                        h3: "Clearance";
+                        h4: "Foreign";
+                        h5: "Granted";
+                        rows: root.people-rows;
+                        row-clicked(i) => { root.person-row-clicked(i); }
+                    }
+                }
+            }
+        }
+
+        // Compliance posture matrix
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "Compliance posture";
+                    meta-text: "BoeingComplianceRegistry.framework(framework, scope) — 5-state lifecycle per ComplianceAttestationLifecycle.tla";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "Framework";
+                        h2: "Posture";
+                        h3: "Evidence CID";
+                        h4: "Attestor";
+                        h5: "Expires";
+                        rows: root.compliance-rows;
+                        row-clicked(i) => { root.compliance-row-clicked(i); }
+                    }
+                }
+            }
+        }
+    }
+}
