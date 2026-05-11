@@ -2738,18 +2738,78 @@ fn main() {
                         });
                     });
                 }
-                // Panels with custom kit types (OverviewKpi, LineageNodeData,
-                // TenantNodeRow, AssistantMessage) need per-struct conversion
-                // helpers — landing in BFR-INT-1 follow-up commits.
-                "boeing_overview"
-                | "boeing_provenance"
-                | "boeing_assistant_pane"
-                | "boeing_ontology" => {
+                "boeing_ontology" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_ontology::fetch::assemble_panel;
+                        let scope = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let data = match assemble_panel(
+                            &*bindings.tenant_children,
+                            &*bindings.entity_registry,
+                            scope,
+                            "Boeing root".into(),
+                            "Boeing root".into(),
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Ontology fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Ontology: tree={}, entities={}, schemas={}",
+                            data.tree_rows.len(),
+                            data.entity_rows.len(),
+                            data.total_schemas_count,
+                        );
+                        use slint::{ModelRc, VecModel};
+                        let total_types = data.total_types_count.to_string();
+                        let total_tenants = data.total_tenants_count.to_string();
+                        let total_schemas = data.total_schemas_count.to_string();
+                        let exports = data.exports_today_count.to_string();
+                        let scope_text = data.focused_scope_text;
+                        let tree: Vec<TenantNodeRow> = data.tree_rows.iter().map(|r| TenantNodeRow {
+                            label: r.label.clone().into(),
+                            full_path: r.full_path.clone().into(),
+                            depth: r.depth,
+                            children_count: r.children_count,
+                        }).collect();
+                        let entities: Vec<DataTableRow> = data.entity_rows.iter().map(|r| DataTableRow {
+                            c1: r.type_id_text.clone().into(),
+                            c2: r.name.clone().into(),
+                            c3: r.scope_text.clone().into(),
+                            c4: r.version_text.clone().into(),
+                            c5: r.updated_text.clone().into(),
+                        }).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_ont_focused_scope_text(scope_text.into());
+                                ui.set_boeing_ont_total_types_text(total_types.into());
+                                ui.set_boeing_ont_total_tenants_text(total_tenants.into());
+                                ui.set_boeing_ont_total_schemas_text(total_schemas.into());
+                                ui.set_boeing_ont_exports_today_text(exports.into());
+                                ui.set_boeing_ont_tree_rows(ModelRc::new(VecModel::from(tree)));
+                                ui.set_boeing_ont_entity_rows(ModelRc::new(VecModel::from(entities)));
+                            }
+                        });
+                    });
+                }
+                // Overview/Provenance need per-struct conversion for their
+                // custom kit types (OverviewKpi×3 + OverviewDecisionRow +
+                // OverviewCompliance + OverviewRevocation + AuditEventData;
+                // LineageNodeData + ProvenanceVerifyState). Brush parsing
+                // from hex-string color tokens lands in the same commit.
+                // The AssistantPane is not tab-activated — it opens from a
+                // chat-tool flow with an existing session_id; wiring the
+                // pane-state transitions sits with the chat integration in
+                // BFR-INT-1.5.
+                "boeing_overview" | "boeing_provenance" | "boeing_assistant_pane" => {
                     let _ = rt_h_inner;
                     tracing::info!(
                         "Boeing tab `{}` activated — custom kit-type conversion \
-                         (OverviewKpi/LineageNodeData/AssistantMessage/TenantNodeRow) \
-                         lands in BFR-INT-1 follow-up commits (panel renders empty-state today)",
+                         (Overview/Provenance) or non-tab activation pattern \
+                         (AssistantPane) lands in BFR-INT-1 follow-up commits",
                         tab_str_owned,
                     );
                 }
