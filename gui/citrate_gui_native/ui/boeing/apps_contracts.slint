@@ -1,0 +1,237 @@
+// citrate_gui_native / ui/boeing/apps_contracts.slint
+//
+// BFR-09 WP-5 — Apps & Contracts panel. 1:1 fidelity per
+// `06_FIDELITY_MATRIX.md` row 7 (prototype/app.jsx:1122); composes
+// BFR-01 kit primitives + BFR-03 layout shell tokens.
+//
+// State-bearing surfaces and the TLA+ specs that govern them
+// (per WP-2 citation matrix):
+//   - App lifecycle (Pending → Deployed → Retired)
+//                          -> contracts/AppRegistryLifecycle.tla (NEW in BFR-09)
+//   - Multi-sig deploy gate -> contracts/MultiSigEnvelopeFlow.tla
+//   - Applet drawer        -> gui/DrawerLifecycle.tla
+//   - Contract code drawer -> gui/DrawerLifecycle.tla (same primitive)
+//   - Deploy modal         -> gui/ModalLifecycle.tla
+//   - Bytecode-hash binding -> AppRegistryLifecycle.tla::BytecodeHashStableOnceDeployed
+//
+// Data sources (chain 40204; per WP-4 bindings + WP-6 IPC):
+//   - boeing-apps-list(scope)     -> AppRegistry.byScope(scope)
+//   - boeing-contracts-list()     -> AppRegistry.allContracts()
+//   - boeing-iot-list(scope)      -> CrossOrgIndex.byCrossOrg(scope) (sidecar — see SPRINT.md D-3)
+//   - boeing-contracts-deploy(..) -> MultiSigEnvelope.draft(...) + AppRegistry.deploy(envelope_id)
+//
+// Planset deviations (per WP-2 + WP-3 docs):
+//   1. AppRegistry.list is the planset wording; actual method is
+//      byScope(scope) — verified in the bindings + adapter.
+//   2. MultiSigEnvelope.byCrossOrg does NOT exist on-chain; the
+//      sidecar CrossOrgIndex contract (new in BFR-09) satisfies the
+//      IPC contract without modifying the live MultiSigEnvelope.
+//   3. AppRegistry.deploy(envelope_id) registers an already-deployed
+//      address rather than CREATE2-deploying in-contract (D-2).
+
+import { Tokens } from "../../../citrate_boeing_kit/ui/tokens.slint";
+import { DataTable, DataTableRow } from "../../../citrate_boeing_kit/ui/data_table.slint";
+import { KpiTile, BoeingTrendKind } from "../../../citrate_boeing_kit/ui/kpi_tile.slint";
+
+component Card inherits Rectangle {
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.border;
+    border-radius: Tokens.r-md;
+    drop-shadow-blur: 4px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: rgba(0, 0, 0, 0.25);
+}
+
+component CardHead inherits Rectangle {
+    in property <string> title-text;
+    in property <string> meta-text;
+    height: 44px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+        Text {
+            text: root.title-text;
+            color: Tokens.text;
+            font-family: Tokens.font-sans;
+            font-size: Tokens.fs-14;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Rectangle { background: transparent; }
+        Text {
+            text: root.meta-text;
+            color: Tokens.text-3;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-11;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Tokens.border;
+    }
+}
+
+export component AppsContractsPanel inherits Rectangle {
+    // Scope header
+    in property <string> focused-scope-text: "—";
+
+    // KPI strip
+    in property <string> total-apps-text: "0";
+    in property <string> deployed-contracts-text: "0";
+    in property <string> cross-org-envelopes-text: "0";
+
+    // Tables — typed as the kit's generic DataTableRow so the panel
+    // remains decoupled from the bindings layer (WP-4/6 supplies these).
+    in property <[DataTableRow]> app-rows;
+    in property <[DataTableRow]> contract-rows;
+
+    // Callbacks consumed by the host (WP-6 wires them to IPC commands).
+    callback app-row-clicked(int);
+    callback contract-row-clicked(int);
+    callback deploy-clicked();
+
+    background: Tokens.bg;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+
+        // KPI strip — Total apps / Deployed contracts / Cross-org envelopes
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "APPS IN SCOPE";
+                    value-text: root.total-apps-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "registered";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "DEPLOYED CONTRACTS";
+                    value-text: root.deployed-contracts-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.success;
+                    sub-tail: "bytecode-verified";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "CROSS-ORG ENVELOPES";
+                    value-text: root.cross-org-envelopes-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "active multi-sig";
+                }
+            }
+        }
+
+        // Scope + Deploy header
+        Card {
+            height: 60px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 24px;
+                alignment: stretch;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "SCOPE";
+                        color: Tokens.text-4;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-10;
+                        letter-spacing: 0.6px;
+                    }
+                    Text {
+                        text: root.focused-scope-text;
+                        color: Tokens.text;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-14;
+                    }
+                }
+                Rectangle { background: transparent; }
+                VerticalLayout {
+                    alignment: center;
+                    deploy-touch := TouchArea {
+                        width: 148px;
+                        height: 32px;
+                        clicked => { root.deploy-clicked(); }
+                        Rectangle {
+                            background: deploy-touch.has-hover ? Tokens.accent-hover : Tokens.accent;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "Deploy contract";
+                                color: #FFFFFF;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-12;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apps grid
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "Apps";
+                    meta-text: "AppRegistry.byScope(scope)";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "App";
+                        h2: "Name";
+                        h3: "State";
+                        h4: "Owner";
+                        h5: "Version";
+                        rows: root.app-rows;
+                        row-clicked(i) => { root.app-row-clicked(i); }
+                    }
+                }
+            }
+        }
+
+        // Contracts list
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "Contract library";
+                    meta-text: "AppRegistry.allContracts() · bytecode-hash verified on-chain";
+                }
+                VerticalLayout {
+                    padding: 12px;
+                    DataTable {
+                        h1: "Address";
+                        h2: "Source CID";
+                        h3: "Bytecode hash";
+                        h4: "Owner app";
+                        h5: "Block";
+                        rows: root.contract-rows;
+                        row-clicked(i) => { root.contract-row-clicked(i); }
+                    }
+                }
+            }
+        }
+    }
+}
