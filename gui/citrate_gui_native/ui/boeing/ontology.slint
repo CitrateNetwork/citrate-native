@@ -1,0 +1,345 @@
+// citrate_gui_native / ui/boeing/ontology.slint
+//
+// BFR-12 WP-5 — Ontology panel. 1:1 fidelity per
+// `06_FIDELITY_MATRIX.md` row 2 (prototype/app.jsx:1398); composes
+// BFR-01 kit primitives.
+//
+// State-bearing surfaces and the TLA+ specs that govern them
+// (per WP-2 citation matrix in TLA_CITATION_MATRIX.md):
+//   - Tenant tree (4-level recursive walk)
+//                          -> contracts/TenantHierarchyTree.tla (BFR-00)
+//   - Entity-type list per scope
+//                          -> contracts/EntityRegistryLifecycle.tla (NEW BFR-12)
+//   - Entity schema preview
+//                          -> contracts/EntityRegistryLifecycle.tla
+//   - Schema preview drawer
+//                          -> gui/DrawerLifecycle.tla (BFR-00)
+//
+// Data sources (chain 40204; per WP-4 bindings + WP-6 IPC):
+//   - boeing-ontology-tree(scope_root)
+//          -> TenantHierarchy.getChildren (recursive client-side walk)
+//   - boeing-ontology-entities(scope)
+//          -> EntityRegistry.types(scope) (NEW)
+//   - boeing-ontology-schema(type_id)
+//          -> EntityRegistry.schema(type_id) (NEW)
+//   - boeing-ontology-export()
+//          -> client-side bundle + AuditBundleRegistry.anchor
+//             (BFR-10)
+//
+// Planset deviation (per WP-1):
+//   - D-1: TenantHierarchy.subtree doesn't exist → adapter recursive
+//     walk over getChildren
+//   - D-2: EntityRegistry is NEW
+
+import { Tokens } from "../../../citrate_boeing_kit/ui/tokens.slint";
+import { DataTable, DataTableRow } from "../../../citrate_boeing_kit/ui/data_table.slint";
+import { KpiTile, BoeingTrendKind } from "../../../citrate_boeing_kit/ui/kpi_tile.slint";
+
+component Card inherits Rectangle {
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.border;
+    border-radius: Tokens.r-md;
+    drop-shadow-blur: 4px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: rgba(0, 0, 0, 0.25);
+}
+
+component CardHead inherits Rectangle {
+    in property <string> title-text;
+    in property <string> meta-text;
+    height: 44px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+        Text {
+            text: root.title-text;
+            color: Tokens.text;
+            font-family: Tokens.font-sans;
+            font-size: Tokens.fs-14;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Rectangle { background: transparent; }
+        Text {
+            text: root.meta-text;
+            color: Tokens.text-3;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-11;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Tokens.border;
+    }
+}
+
+/// One row in the tenant tree display. The host flattens the
+/// recursive subtree into a sequence of TenantNodeRow entries with
+/// a `depth` indent.
+export struct TenantNodeRow {
+    label: string,
+    full-path: string,
+    depth: int,        // 0..3 indent levels
+    children-count: int,
+}
+
+component TreeNodeRow inherits Rectangle {
+    in property <TenantNodeRow> node;
+    callback clicked();
+    height: 28px;
+    background: touch.has-hover ? Tokens.surface-2 : transparent;
+    border-radius: Tokens.r-sm;
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.clicked(); }
+        HorizontalLayout {
+            padding-left: 4px + (node.depth * 16px);
+            padding-right: 8px;
+            spacing: 8px;
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: node.depth == 0 ? "▼" : (node.children-count > 0 ? "▸" : "•");
+                    color: Tokens.text-3;
+                    font-family: Tokens.font-mono;
+                    font-size: Tokens.fs-11;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: node.label;
+                    color: Tokens.text;
+                    font-family: Tokens.font-sans;
+                    font-size: Tokens.fs-12;
+                }
+            }
+            Rectangle { background: transparent; }
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: node.children-count > 0 ? node.children-count + " children" : "";
+                    color: Tokens.text-4;
+                    font-family: Tokens.font-mono;
+                    font-size: Tokens.fs-10;
+                }
+            }
+        }
+    }
+}
+
+export component OntologyPanel inherits Rectangle {
+    in property <string> focused-scope-text: "—";
+
+    // KPI strip
+    in property <string> total-types-text: "0";
+    in property <string> total-tenants-text: "0";
+    in property <string> total-schemas-text: "0";
+    in property <string> exports-today-text: "0";
+
+    // Tenant tree (flattened with depth)
+    in property <[TenantNodeRow]> tree-rows;
+
+    // Entity types DataTable rows
+    in property <[DataTableRow]> entity-rows;
+
+    // Schema preview text (caller fills in)
+    in property <string> selected-type-name-text: "";
+    in property <string> selected-type-version-text: "";
+    in property <string> selected-schema-cid-text: "";
+    in property <string> selected-schema-preview-text: "Select an entity type to preview its schema.";
+
+    // Callbacks
+    callback tree-node-clicked(int);
+    callback entity-row-clicked(int);
+    callback export-clicked();
+
+    background: Tokens.bg;
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+
+        // KPI strip
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "ENTITY TYPES";
+                    value-text: root.total-types-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "registered";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "TENANTS IN TREE";
+                    value-text: root.total-tenants-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "via recursive walk";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "SCHEMA VERSIONS";
+                    value-text: root.total-schemas-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.success;
+                    sub-tail: "monotonic";
+                }
+            }
+            VerticalLayout {
+                alignment: stretch;
+                KpiTile {
+                    label-text: "EXPORTS TODAY";
+                    value-text: root.exports-today-text;
+                    trend-text: "";
+                    trend-kind: BoeingTrendKind.neutral;
+                    sub-tail: "audit-bundle anchored";
+                }
+            }
+        }
+
+        // Scope + export header
+        Card {
+            height: 60px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 24px;
+                alignment: stretch;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "ROOT SCOPE";
+                        color: Tokens.text-4;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-10;
+                        letter-spacing: 0.6px;
+                    }
+                    Text {
+                        text: root.focused-scope-text;
+                        color: Tokens.text;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-14;
+                    }
+                }
+                Rectangle { background: transparent; }
+                VerticalLayout {
+                    alignment: center;
+                    export-touch := TouchArea {
+                        width: 148px;
+                        height: 32px;
+                        clicked => { root.export-clicked(); }
+                        Rectangle {
+                            background: export-touch.has-hover ? Tokens.accent-hover : Tokens.accent;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "Export schema";
+                                color: #FFFFFF;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-12;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2-pane: tenant tree (left) + entity types (right)
+        HorizontalLayout {
+            spacing: 12px;
+
+            // Tenant tree
+            Card {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    CardHead {
+                        title-text: "Tenant tree";
+                        meta-text: "TenantHierarchy.getChildren (recursive walk)";
+                    }
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 2px;
+                        for row[i] in root.tree-rows: TreeNodeRow {
+                            node: row;
+                            clicked => { root.tree-node-clicked(i); }
+                        }
+                    }
+                }
+            }
+
+            // Entity types in selected scope
+            Card {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    CardHead {
+                        title-text: "Entity types";
+                        meta-text: "EntityRegistry.types(scope)";
+                    }
+                    VerticalLayout {
+                        padding: 12px;
+                        DataTable {
+                            h1: "Type id";
+                            h2: "Name";
+                            h3: "Scope";
+                            h4: "Version";
+                            h5: "Updated";
+                            rows: root.entity-rows;
+                            row-clicked(i) => { root.entity-row-clicked(i); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Schema preview
+        Card {
+            VerticalLayout {
+                CardHead {
+                    title-text: "Schema preview" + (root.selected-type-name-text != "" ? " — " + root.selected-type-name-text + " v" + root.selected-type-version-text : "");
+                    meta-text: root.selected-schema-cid-text != "" ? "CID " + root.selected-schema-cid-text : "EntityRegistry.schema(type_id)";
+                }
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    Rectangle {
+                        background: Tokens.surface-2;
+                        border-radius: Tokens.r-sm;
+                        min-height: 120px;
+                        Text {
+                            x: 12px;
+                            y: 12px;
+                            width: parent.width - 24px;
+                            text: root.selected-schema-preview-text;
+                            color: Tokens.text-3;
+                            font-family: Tokens.font-mono;
+                            font-size: Tokens.fs-11;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
