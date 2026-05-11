@@ -2795,6 +2795,129 @@ fn main() {
                         });
                     });
                 }
+                "boeing_overview" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_overview::fetch::fetch_overview_data;
+                        use citrate_boeing_overview::fetch::OverviewFetchParams;
+                        let tenant = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let params = OverviewFetchParams {
+                            tenant,
+                            now_secs,
+                            subjects_to_check: Vec::new(),
+                        };
+                        let data = match fetch_overview_data(&*bindings.rbac, params).await {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Overview fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Overview: kpis={}, ribbon={}, decisions={}, compliance={}, revocations={}",
+                            data.kpis.len(),
+                            data.ribbon_events.len(),
+                            data.decisions.len(),
+                            data.compliance_rows.len(),
+                            data.revocations.len(),
+                        );
+                        use slint::{Brush, Color, ModelRc, VecModel};
+                        // Parse `#RRGGBB` into a Slint solid-color brush.
+                        // Falls back to opaque black on malformed input
+                        // (kit ships only well-formed hex strings, so the
+                        // fallback only fires if the adapter regresses).
+                        fn brush_from_hex(s: &str) -> Brush {
+                            let hex = s.trim_start_matches('#');
+                            let bytes = hex::decode(hex).unwrap_or_default();
+                            if bytes.len() == 3 {
+                                Brush::SolidColor(Color::from_rgb_u8(bytes[0], bytes[1], bytes[2]))
+                            } else {
+                                Brush::SolidColor(Color::from_rgb_u8(0, 0, 0))
+                            }
+                        }
+                        let kpis: Vec<OverviewKpi> = data.kpis.iter().map(|k| OverviewKpi {
+                            label: k.label.clone().into(),
+                            value: k.value.clone().into(),
+                            trend_text: k.trend_text.clone().into(),
+                            trend_kind: match k.trend_kind {
+                                citrate_boeing_overview::data::OverviewTrendKind::Success => BoeingTrendKind::Success,
+                                citrate_boeing_overview::data::OverviewTrendKind::Warn => BoeingTrendKind::Warn,
+                                citrate_boeing_overview::data::OverviewTrendKind::Err => BoeingTrendKind::Err,
+                                citrate_boeing_overview::data::OverviewTrendKind::Neutral => BoeingTrendKind::Neutral,
+                            },
+                            sub_tail: k.sub_tail.clone().into(),
+                        }).collect();
+                        let ribbon: Vec<AuditEventData> = data.ribbon_events.iter().map(|r| AuditEventData {
+                            id: r.id.clone().into(),
+                            color: brush_from_hex(&r.color_hex),
+                            flagged: r.flagged,
+                        }).collect();
+                        // u8 classification ordinal → BoeingClassLevel.
+                        let to_class = |c: u8| match c {
+                            0 => BoeingClassLevel::Public,
+                            1 => BoeingClassLevel::Proprietary,
+                            2 => BoeingClassLevel::Cui,
+                            _ => BoeingClassLevel::Itar,
+                        };
+                        // u8 status ordinal → BoeingDecisionStatus.
+                        let to_status = |s: u8| match s {
+                            0 => BoeingDecisionStatus::Recorded,
+                            1 => BoeingDecisionStatus::Disputed,
+                            _ => BoeingDecisionStatus::Revoked,
+                        };
+                        let decisions: Vec<OverviewDecisionRow> = data.decisions.iter().map(|d| OverviewDecisionRow {
+                            classification: to_class(d.classification),
+                            signer_id: d.signer_id.clone().into(),
+                            auth_mode: d.auth_mode.clone().into(),
+                            auth_color: brush_from_hex(&d.auth_color_hex),
+                            description: d.description.clone().into(),
+                            timestamp: d.timestamp.clone().into(),
+                            correlation_id: d.correlation_id.clone().into(),
+                            tx_short: d.tx_short.clone().into(),
+                            status: to_status(d.status),
+                            flagged: d.flagged,
+                        }).collect();
+                        let compliance: Vec<OverviewCompliance> = data.compliance_rows.iter().map(|c| OverviewCompliance {
+                            name: c.name.clone().into(),
+                            percent: c.percent,
+                            fill_color: brush_from_hex(&c.fill_color_hex),
+                            label: c.label.clone().into(),
+                        }).collect();
+                        let revocations: Vec<OverviewRevocation> = data.revocations.iter().map(|r| OverviewRevocation {
+                            classification: to_class(r.classification),
+                            user_id: r.user_id.clone().into(),
+                            role_text: r.role_text.clone().into(),
+                            reason_text: r.reason_text.clone().into(),
+                            timestamp_short: r.timestamp_short.clone().into(),
+                        }).collect();
+                        let highlight_id = data.ribbon_highlight_id;
+                        let decisions_meta = data.decisions_meta;
+                        let ledger_label = data.ledger_label_text;
+                        let ledger_count = data.ledger_count_text;
+                        let ledger_pct = data.ledger_percent;
+                        let ledger_pct_text = data.ledger_percent_text;
+                        let ledger_cap = data.ledger_cap_text;
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_overview_kpis(ModelRc::new(VecModel::from(kpis)));
+                                ui.set_boeing_overview_ribbon_events(ModelRc::new(VecModel::from(ribbon)));
+                                ui.set_boeing_overview_ribbon_highlight_id(highlight_id.into());
+                                ui.set_boeing_overview_decisions(ModelRc::new(VecModel::from(decisions)));
+                                ui.set_boeing_overview_decisions_meta(decisions_meta.into());
+                                ui.set_boeing_overview_compliance_rows(ModelRc::new(VecModel::from(compliance)));
+                                ui.set_boeing_overview_revocations(ModelRc::new(VecModel::from(revocations)));
+                                ui.set_boeing_overview_ledger_label_text(ledger_label.into());
+                                ui.set_boeing_overview_ledger_count_text(ledger_count.into());
+                                ui.set_boeing_overview_ledger_percent(ledger_pct);
+                                ui.set_boeing_overview_ledger_percent_text(ledger_pct_text.into());
+                                ui.set_boeing_overview_ledger_cap_text(ledger_cap.into());
+                            }
+                        });
+                    });
+                }
                 "boeing_provenance" => {
                     spawn_async(&rt_h, async move {
                         use citrate_boeing_provenance::{fetch_provenance_data, ProvenanceFetchParams};
@@ -2866,19 +2989,16 @@ fn main() {
                         });
                     });
                 }
-                // Overview needs bespoke conversion for 5 custom kit
-                // structs (OverviewKpi/OverviewDecisionRow/
-                // OverviewCompliance/OverviewRevocation/AuditEventData)
-                // including brush parsing from hex-string color tokens.
                 // AssistantPane is not tab-activated — opens from
                 // chat-tool flow with a known session_id; wires
                 // alongside chat integration in BFR-INT-1.5.
-                "boeing_overview" | "boeing_assistant_pane" => {
+                "boeing_assistant_pane" => {
                     let _ = rt_h_inner;
                     tracing::info!(
-                        "Boeing tab `{}` activated — Overview/AssistantPane \
-                         landing in BFR-INT-1 follow-up commits",
-                        tab_str_owned,
+                        "Boeing AssistantPane activated via tab — pane opens \
+                         from chat-tool flow with a session context; tab-based \
+                         activation is informational only (BFR-INT-1.5 wires \
+                         chat→pane handoff)",
                     );
                 }
                 _ => {
