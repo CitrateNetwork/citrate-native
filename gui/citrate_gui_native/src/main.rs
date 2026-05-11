@@ -2795,21 +2795,89 @@ fn main() {
                         });
                     });
                 }
-                // Overview/Provenance need per-struct conversion for their
-                // custom kit types (OverviewKpi×3 + OverviewDecisionRow +
-                // OverviewCompliance + OverviewRevocation + AuditEventData;
-                // LineageNodeData + ProvenanceVerifyState). Brush parsing
-                // from hex-string color tokens lands in the same commit.
-                // The AssistantPane is not tab-activated — it opens from a
-                // chat-tool flow with an existing session_id; wiring the
-                // pane-state transitions sits with the chat integration in
-                // BFR-INT-1.5.
-                "boeing_overview" | "boeing_provenance" | "boeing_assistant_pane" => {
+                "boeing_provenance" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_provenance::{fetch_provenance_data, ProvenanceFetchParams};
+                        // Empty `part_hash` query → adapter returns
+                        // empty lineage + verify_state=NotFound. Same
+                        // shape the visual proofs use for empty-state.
+                        let params = ProvenanceFetchParams {
+                            part_hash: [0u8; 32],
+                            search_query: [0u8; 32],
+                            search_prefix_len: 0,
+                            search_max_results: 32,
+                        };
+                        let data = match fetch_provenance_data(&*bindings.provenance, params).await {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Provenance fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Provenance: lineage={}, search={}",
+                            data.lineage.len(),
+                            data.search_rows.len(),
+                        );
+                        use slint::{ModelRc, VecModel};
+                        // ProvenanceLineageNode → LineageNodeData. Mark-state
+                        // and card-state are int-encoded in the kit
+                        // (0=default, 1=flagged/selected, 2=terminal/flagged).
+                        let lineage: Vec<LineageNodeData> = data.lineage.iter().enumerate().map(|(i, n)| {
+                            let mark = if n.flagged { 1 } else if i + 1 == data.lineage.len() { 2 } else { 0 };
+                            let card = if n.flagged { 2 } else { 0 };
+                            LineageNodeData {
+                                step: n.step_id_short.clone().into(),
+                                title: n.kind_label.clone().into(),
+                                meta: format!(
+                                    "{} · {} · {}",
+                                    n.description, n.timestamp, n.agent_short
+                                ).into(),
+                                mark_state: mark,
+                                card_state: card,
+                            }
+                        }).collect();
+                        let verify_state = match data.verify_state {
+                            citrate_boeing_provenance::ProvenanceVerifyState::Idle => ProvenanceVerifyState::Idle,
+                            citrate_boeing_provenance::ProvenanceVerifyState::Ok => ProvenanceVerifyState::Ok,
+                            citrate_boeing_provenance::ProvenanceVerifyState::Failed => ProvenanceVerifyState::Failed,
+                            citrate_boeing_provenance::ProvenanceVerifyState::NotFound => ProvenanceVerifyState::NotFound,
+                        };
+                        let verify_status_text = data.verify_status_text;
+                        let part_text = data.focused_part_short;
+                        let tail_text = data.focused_tail_short;
+                        // ProvenanceSearchRow → DataTableRow (5-column).
+                        let search: Vec<DataTableRow> = data.search_rows.iter().map(|r| DataTableRow {
+                            c1: r.tail_id_short.clone().into(),
+                            c2: r.display_label.clone().into(),
+                            c3: r.part_count.to_string().into(),
+                            c4: Default::default(),
+                            c5: Default::default(),
+                        }).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_prov_focused_part_text(part_text.into());
+                                ui.set_boeing_prov_focused_tail_text(tail_text.into());
+                                ui.set_boeing_prov_verify_state(verify_state);
+                                ui.set_boeing_prov_verify_status_text(verify_status_text.into());
+                                ui.set_boeing_prov_lineage_nodes(ModelRc::new(VecModel::from(lineage)));
+                                ui.set_boeing_prov_search_rows(ModelRc::new(VecModel::from(search)));
+                            }
+                        });
+                    });
+                }
+                // Overview needs bespoke conversion for 5 custom kit
+                // structs (OverviewKpi/OverviewDecisionRow/
+                // OverviewCompliance/OverviewRevocation/AuditEventData)
+                // including brush parsing from hex-string color tokens.
+                // AssistantPane is not tab-activated — opens from
+                // chat-tool flow with a known session_id; wires
+                // alongside chat integration in BFR-INT-1.5.
+                "boeing_overview" | "boeing_assistant_pane" => {
                     let _ = rt_h_inner;
                     tracing::info!(
-                        "Boeing tab `{}` activated — custom kit-type conversion \
-                         (Overview/Provenance) or non-tab activation pattern \
-                         (AssistantPane) lands in BFR-INT-1 follow-up commits",
+                        "Boeing tab `{}` activated — Overview/AssistantPane \
+                         landing in BFR-INT-1 follow-up commits",
                         tab_str_owned,
                     );
                 }
