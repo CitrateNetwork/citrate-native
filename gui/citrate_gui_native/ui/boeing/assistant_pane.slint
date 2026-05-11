@@ -1,0 +1,381 @@
+// citrate_gui_native / ui/boeing/assistant_pane.slint
+//
+// BFR-10 WP-5 — Slide-in Assistant pane. 1:1 fidelity per
+// `06_FIDELITY_MATRIX.md` row 8 prototype/app.jsx:1451 (pane part).
+//
+// State-bearing surfaces and the TLA+ specs that govern them
+// (per WP-2 citation matrix in TLA_CITATION_MATRIX.md):
+//   - 5-state pane machine → gui/AssistantPaneFlow.tla
+//        (Closed, Conversing, Generating, AwaitingApproval, Closing)
+//   - Tool approval card   → gui/ModalLifecycle.tla
+//   - Decision-log strip   → contracts/AgentDecisionLog.tla
+//   - Detail drawer        → gui/DrawerLifecycle.tla
+//
+// Data sources (chain 40204; per WP-4 bindings + WP-6 IPC):
+//   - boeing-assist-decisions(corr_id) -> AgentDecisionRegistryV2.byCorrId
+//   - boeing-assist-approve(tool_call_id) -> AgentDecisionRegistryV2.record(...)
+//
+// Composition:
+//   - The pane is a right-edge column (340..420px wide). The host
+//     panel layout (BFR-03 shell) reserves space when `is-open`.
+//   - The pane state property drives which sub-component (transcript,
+//     generating spinner, tool-approval card) is visible.
+
+import { Tokens } from "../../../citrate_boeing_kit/ui/tokens.slint";
+
+// 5 states map 1:1 onto AssistantPaneFlow.tla::States. The transient
+// "Closing" state is collapsed visually into "Closed" — Slint's
+// animation system handles the slide-out.
+export enum AssistantPaneState {
+    closed,
+    conversing,
+    generating,
+    awaiting-approval,
+    closing,
+}
+
+// Generic message row for the transcript.
+export struct AssistantMessage {
+    role: string,       // "user", "agent", "tool"
+    text: string,
+    corr-id-short: string,
+    block-text: string, // "block 971,205" or empty for un-anchored
+}
+
+component MessageBubble inherits Rectangle {
+    in property <AssistantMessage> msg;
+    border-radius: Tokens.r-md;
+    background: msg.role == "user"
+        ? Tokens.surface-2
+        : (msg.role == "tool" ? Tokens.surface : Tokens.surface);
+    border-width: 1px;
+    border-color: Tokens.border;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 4px;
+        // Role tag
+        Text {
+            text: msg.role == "user" ? "OPERATOR"
+                : (msg.role == "tool" ? "TOOL CALL" : "AGENT");
+            color: msg.role == "user" ? Tokens.accent
+                : (msg.role == "tool" ? Tokens.warning : Tokens.success);
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-10;
+            letter-spacing: 0.6px;
+        }
+        Text {
+            text: msg.text;
+            color: Tokens.text;
+            font-family: Tokens.font-sans;
+            font-size: Tokens.fs-12;
+            wrap: word-wrap;
+        }
+        // Audit footer
+        Text {
+            text: msg.corr-id-short + (msg.block-text != "" ? " · " + msg.block-text : "");
+            color: Tokens.text-4;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-10;
+        }
+    }
+}
+
+component ToolApprovalCard inherits Rectangle {
+    in property <string> tool-name-text;
+    in property <string> tool-args-text;
+    in property <string> tool-call-id-short;
+    callback approve();
+    callback reject();
+
+    background: Tokens.surface-2;
+    border-width: 2px;
+    border-color: Tokens.warning;
+    border-radius: Tokens.r-md;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        Text {
+            text: "TOOL APPROVAL REQUIRED";
+            color: Tokens.warning;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-10;
+            letter-spacing: 0.6px;
+        }
+        Text {
+            text: root.tool-name-text;
+            color: Tokens.text;
+            font-family: Tokens.font-sans;
+            font-size: Tokens.fs-14;
+            font-weight: 600;
+        }
+        Rectangle {
+            background: Tokens.bg;
+            border-radius: Tokens.r-sm;
+            height: 72px;
+            Text {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                text: root.tool-args-text;
+                color: Tokens.text-3;
+                font-family: Tokens.font-mono;
+                font-size: Tokens.fs-11;
+                wrap: word-wrap;
+            }
+        }
+        Text {
+            text: "id: " + root.tool-call-id-short;
+            color: Tokens.text-4;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.fs-10;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: stretch;
+            reject-touch := TouchArea {
+                height: 32px;
+                horizontal-stretch: 1;
+                clicked => { root.reject(); }
+                Rectangle {
+                    background: reject-touch.has-hover ? Tokens.error : Tokens.surface;
+                    border-width: 1px;
+                    border-color: Tokens.error;
+                    border-radius: Tokens.r-sm;
+                    Text {
+                        text: "Reject";
+                        color: reject-touch.has-hover ? #FFFFFF : Tokens.error;
+                        font-family: Tokens.font-sans;
+                        font-size: Tokens.fs-12;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            approve-touch := TouchArea {
+                height: 32px;
+                horizontal-stretch: 1;
+                clicked => { root.approve(); }
+                Rectangle {
+                    background: approve-touch.has-hover ? Tokens.success-soft : Tokens.success;
+                    border-radius: Tokens.r-sm;
+                    Text {
+                        text: "Approve";
+                        color: #FFFFFF;
+                        font-family: Tokens.font-sans;
+                        font-size: Tokens.fs-12;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component AssistantPane inherits Rectangle {
+    // Pane state — drives visibility of sub-components.
+    in property <AssistantPaneState> pane-state: AssistantPaneState.closed;
+
+    // Header
+    in property <string> session-id-short-text: "—";
+    in property <string> decision-log-count-text: "0";
+
+    // Transcript
+    in property <[AssistantMessage]> messages;
+
+    // Tool approval (visible iff state == awaiting-approval)
+    in property <string> pending-tool-name-text;
+    in property <string> pending-tool-args-text;
+    in property <string> pending-tool-call-id-short;
+
+    // Input
+    in property <string> input-placeholder-text: "Ask about this…";
+    in property <bool> input-disabled: false;
+
+    // Callbacks
+    callback close-clicked();
+    callback submit-prompt(string);
+    callback approve-tool();
+    callback reject-tool();
+    callback decision-detail-clicked(int);
+
+    width: 400px;
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.border;
+    drop-shadow-blur: 8px;
+    drop-shadow-offset-x: -2px;
+    drop-shadow-color: rgba(0, 0, 0, 0.4);
+
+    // Visible iff pane-state != Closed
+    visible: pane-state != AssistantPaneState.closed;
+
+    VerticalLayout {
+        // Header row
+        Rectangle {
+            background: Tokens.surface-2;
+            border-width: 0px;
+            height: 44px;
+            Rectangle {
+                x: 0;
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Tokens.border;
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                alignment: stretch;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "ASSISTANT";
+                        color: Tokens.text-4;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-10;
+                        letter-spacing: 0.6px;
+                    }
+                    Text {
+                        text: "session " + root.session-id-short-text + " · " + root.decision-log-count-text + " decisions";
+                        color: Tokens.text-3;
+                        font-family: Tokens.font-mono;
+                        font-size: Tokens.fs-11;
+                    }
+                }
+                Rectangle { background: transparent; }
+                VerticalLayout {
+                    alignment: center;
+                    close-touch := TouchArea {
+                        width: 28px;
+                        height: 28px;
+                        clicked => { root.close-clicked(); }
+                        Rectangle {
+                            background: close-touch.has-hover ? Tokens.surface : transparent;
+                            border-radius: Tokens.r-sm;
+                            Text {
+                                text: "✕";
+                                color: Tokens.text-3;
+                                font-family: Tokens.font-sans;
+                                font-size: Tokens.fs-14;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // State pill row
+        Rectangle {
+            height: 28px;
+            background: pane-state == AssistantPaneState.generating
+                ? Tokens.accent
+                : (pane-state == AssistantPaneState.awaiting-approval
+                    ? Tokens.warning
+                    : Tokens.surface);
+            HorizontalLayout {
+                padding-left: 12px;
+                Text {
+                    text: pane-state == AssistantPaneState.conversing
+                        ? "READY"
+                        : (pane-state == AssistantPaneState.generating
+                            ? "GENERATING…"
+                            : (pane-state == AssistantPaneState.awaiting-approval
+                                ? "TOOL APPROVAL"
+                                : "CLOSING"));
+                    color: pane-state == AssistantPaneState.conversing
+                        ? Tokens.text-3
+                        : #FFFFFF;
+                    font-family: Tokens.font-mono;
+                    font-size: Tokens.fs-10;
+                    letter-spacing: 0.6px;
+                    vertical-alignment: center;
+                }
+                Rectangle { background: transparent; }
+            }
+        }
+
+        // Transcript body
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+            vertical-stretch: 1;
+            for msg[i] in root.messages: MessageBubble {
+                msg: msg;
+            }
+
+            // Tool approval card slot (only when AwaitingApproval).
+            if pane-state == AssistantPaneState.awaiting-approval:
+                ToolApprovalCard {
+                    tool-name-text: root.pending-tool-name-text;
+                    tool-args-text: root.pending-tool-args-text;
+                    tool-call-id-short: root.pending-tool-call-id-short;
+                    approve => { root.approve-tool(); }
+                    reject => { root.reject-tool(); }
+                }
+        }
+
+        // Input row
+        Rectangle {
+            background: Tokens.surface-2;
+            border-width: 0px;
+            height: 56px;
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Tokens.border;
+            }
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 8px;
+                alignment: stretch;
+                Rectangle {
+                    background: Tokens.bg;
+                    border-width: 1px;
+                    border-color: Tokens.border;
+                    border-radius: Tokens.r-sm;
+                    horizontal-stretch: 1;
+                    Text {
+                        x: 10px;
+                        text: root.input-placeholder-text;
+                        color: Tokens.text-4;
+                        font-family: Tokens.font-sans;
+                        font-size: Tokens.fs-12;
+                        vertical-alignment: center;
+                    }
+                }
+                send-touch := TouchArea {
+                    width: 64px;
+                    height: 32px;
+                    enabled: !root.input-disabled;
+                    clicked => { root.submit-prompt(""); }
+                    Rectangle {
+                        background: root.input-disabled
+                            ? Tokens.surface
+                            : (send-touch.has-hover ? Tokens.accent-hover : Tokens.accent);
+                        border-radius: Tokens.r-sm;
+                        Text {
+                            text: "Send";
+                            color: root.input-disabled ? Tokens.text-4 : #FFFFFF;
+                            font-family: Tokens.font-sans;
+                            font-size: Tokens.fs-12;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
