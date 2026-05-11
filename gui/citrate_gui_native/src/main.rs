@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 slint::include_modules!();
 
 mod app_binder;
+mod boeing_binder;
 mod storage_service;
 mod compute_service;
 mod marketplace_client;
