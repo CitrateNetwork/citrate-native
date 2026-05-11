@@ -2420,22 +2420,336 @@ fn main() {
                         });
                     });
                 }
-                // Remaining 9 panels: dispatch their adapter so chain
-                // reads happen + counts log; row conversion lands in
-                // BFR-INT-1 follow-up commits.
+                "boeing_suppliers" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_suppliers::{fetch_suppliers_data, SuppliersFetchParams};
+                        let scope = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let params = SuppliersFetchParams {
+                            scope,
+                            program: scope, // BFR-INT-2 introduces a program selector
+                            scope_label: "Boeing root".into(),
+                            program_label: "All programs".into(),
+                            threshold_bps: 500, // 5% Belnap variance — planset default
+                            now_secs,
+                        };
+                        let data = match fetch_suppliers_data(
+                            &*bindings.suppliers,
+                            &*bindings.moqs,
+                            params,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Suppliers fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Suppliers: queue={}, network={}, moq={}",
+                            data.queue_rows.len(),
+                            data.network_rows.len(),
+                            data.moq_rows.len(),
+                        );
+                        use slint::{ModelRc, SharedString, VecModel};
+                        let queue: Vec<DataTableRow> = data.queue_rows.iter().map(|r| DataTableRow {
+                            c1: r.supplier_id_short.clone().into(),
+                            c2: r.display_name.clone().into(),
+                            c3: r.state.label.clone().into(),
+                            c4: r.registered_at.clone().into(),
+                            c5: SharedString::from(format!("{} days", r.days_remaining)),
+                        }).collect();
+                        let network: Vec<DataTableRow> = data.network_rows.iter().map(|r| DataTableRow {
+                            c1: r.supplier_id_short.clone().into(),
+                            c2: r.display_name.clone().into(),
+                            c3: r.state.label.clone().into(),
+                            c4: r.registered_at.clone().into(),
+                            c5: SharedString::from(format!("{} days", r.days_remaining)),
+                        }).collect();
+                        let moq: Vec<DataTableRow> = data.moq_rows.iter().map(|r| DataTableRow {
+                            c1: r.commitment_id_short.clone().into(),
+                            c2: r.supplier_name.clone().into(),
+                            c3: r.part_family.clone().into(),
+                            c4: r.belnap.letter.clone().into(),
+                            c5: r.commit_qty_text.clone().into(),
+                        }).collect();
+                        let scope_text = data.focused_scope_text;
+                        let prog_text = data.focused_program_text;
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_suppliers_focused_scope_text(scope_text.into());
+                                ui.set_boeing_suppliers_focused_program_text(prog_text.into());
+                                ui.set_boeing_suppliers_queue_rows(ModelRc::new(VecModel::from(queue)));
+                                ui.set_boeing_suppliers_network_rows(ModelRc::new(VecModel::from(network)));
+                                ui.set_boeing_suppliers_moq_rows(ModelRc::new(VecModel::from(moq)));
+                            }
+                        });
+                    });
+                }
+                "boeing_models_compute" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_models_compute::{
+                            fetch_models_compute_data, ModelsComputeFetchParams,
+                        };
+                        let params = ModelsComputeFetchParams {
+                            scope_label: "Boeing root".into(),
+                            current_block: 0, // BFR-INT-2 wires eth_blockNumber
+                        };
+                        let data = match fetch_models_compute_data(
+                            &*bindings.model_registry,
+                            &*bindings.compute_marketplace,
+                            &*bindings.tee_attestation,
+                            params,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Models&Compute fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Models&Compute: models={}, jobs={}, attested={}",
+                            data.model_rows.len(),
+                            data.job_rows.len(),
+                            data.attested_job_count,
+                        );
+                        use slint::{ModelRc, VecModel};
+                        let total_models = data.model_rows.len().to_string();
+                        let total_jobs = data.job_rows.len().to_string();
+                        let attested = data.attested_job_count.to_string();
+                        let scope_text = data.focused_scope_text;
+                        let models: Vec<DataTableRow> = data.model_rows.iter().map(|r| DataTableRow {
+                            c1: r.hash_text.clone().into(),
+                            c2: r.name.clone().into(),
+                            c3: r.state.label.clone().into(),
+                            c4: r.owner_text.clone().into(),
+                            c5: r.revenue_text.clone().into(),
+                        }).collect();
+                        let jobs: Vec<DataTableRow> = data.job_rows.iter().map(|r| DataTableRow {
+                            c1: r.job_id_text.clone().into(),
+                            c2: r.model_name.clone().into(),
+                            c3: r.state.label.clone().into(),
+                            c4: r.provider_text.clone().into(),
+                            c5: r.attestation.label.clone().into(),
+                        }).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_mc_focused_scope_text(scope_text.into());
+                                ui.set_boeing_mc_total_models_text(total_models.into());
+                                ui.set_boeing_mc_active_jobs_text(total_jobs.into());
+                                ui.set_boeing_mc_attested_jobs_text(attested.into());
+                                ui.set_boeing_mc_model_rows(ModelRc::new(VecModel::from(models)));
+                                ui.set_boeing_mc_job_rows(ModelRc::new(VecModel::from(jobs)));
+                            }
+                        });
+                    });
+                }
+                "boeing_apps_contracts" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_apps_contracts::{
+                            fetch_apps_contracts_data, AppsContractsFetchParams,
+                        };
+                        let scope = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let params = AppsContractsFetchParams {
+                            scope,
+                            scope_label: "Boeing root".into(),
+                        };
+                        let data = match fetch_apps_contracts_data(
+                            &*bindings.app_registry,
+                            &*bindings.cross_org_index,
+                            params,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Apps&Contracts fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Apps&Contracts: apps={}, contracts={}, envelopes={}",
+                            data.app_rows.len(),
+                            data.contract_rows.len(),
+                            data.cross_org_envelope_count,
+                        );
+                        use slint::{ModelRc, VecModel};
+                        let total_apps = data.app_rows.len().to_string();
+                        let total_contracts = data.contract_rows.len().to_string();
+                        let envelope_count = data.cross_org_envelope_count.to_string();
+                        let scope_text = data.focused_scope_text;
+                        let apps: Vec<DataTableRow> = data.app_rows.iter().map(|r| DataTableRow {
+                            c1: r.app_id_text.clone().into(),
+                            c2: r.name.clone().into(),
+                            c3: r.state_label.clone().into(),
+                            c4: r.owner_text.clone().into(),
+                            c5: r.version.clone().into(),
+                        }).collect();
+                        let contracts: Vec<DataTableRow> = data.contract_rows.iter().map(|r| DataTableRow {
+                            c1: r.addr_text.clone().into(),
+                            c2: r.source_cid_text.clone().into(),
+                            c3: r.bytecode_hash_text.clone().into(),
+                            c4: r.owner_app_text.clone().into(),
+                            c5: r.block_text.clone().into(),
+                        }).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_ac_focused_scope_text(scope_text.into());
+                                ui.set_boeing_ac_total_apps_text(total_apps.into());
+                                ui.set_boeing_ac_deployed_contracts_text(total_contracts.into());
+                                ui.set_boeing_ac_cross_org_envelopes_text(envelope_count.into());
+                                ui.set_boeing_ac_app_rows(ModelRc::new(VecModel::from(apps)));
+                                ui.set_boeing_ac_contract_rows(ModelRc::new(VecModel::from(contracts)));
+                            }
+                        });
+                    });
+                }
+                "boeing_assistant_logs" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_assistant::fetch::assemble_logs_panel;
+                        let scope = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let data = match assemble_logs_panel(
+                            &*bindings.assistant,
+                            &*bindings.audit_bundle,
+                            scope,
+                            "Boeing root".into(),
+                            32,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing AssistantLogs fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing AssistantLogs: decisions={}, bundles={}",
+                            data.decision_rows.len(),
+                            data.bundle_rows.len(),
+                        );
+                        use slint::{ModelRc, VecModel};
+                        let sessions = data.sessions_today_count.to_string();
+                        let pending = data.pending_tool_calls_count.to_string();
+                        let recorded = data.decisions_recorded_count.to_string();
+                        let anchored = data.bundles_anchored_count.to_string();
+                        let scope_text = data.focused_scope_text;
+                        let decisions: Vec<DataTableRow> = data.decision_rows.iter().map(|r| DataTableRow {
+                            c1: r.decision_id_text.clone().into(),
+                            c2: r.class_label.clone().into(),
+                            c3: r.corr_id_text.clone().into(),
+                            c4: r.user_text.clone().into(),
+                            c5: r.block_text.clone().into(),
+                        }).collect();
+                        let bundles: Vec<DataTableRow> = data.bundle_rows.iter().map(|r| DataTableRow {
+                            c1: r.bundle_id_text.clone().into(),
+                            c2: r.session_id_text.clone().into(),
+                            c3: r.kind_label.clone().into(),
+                            c4: r.entries_text.clone().into(),
+                            c5: r.block_text.clone().into(),
+                        }).collect();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_al_focused_scope_text(scope_text.into());
+                                ui.set_boeing_al_sessions_today_text(sessions.into());
+                                ui.set_boeing_al_pending_tool_calls_text(pending.into());
+                                ui.set_boeing_al_decisions_recorded_text(recorded.into());
+                                ui.set_boeing_al_bundles_anchored_text(anchored.into());
+                                ui.set_boeing_al_decision_rows(ModelRc::new(VecModel::from(decisions)));
+                                ui.set_boeing_al_bundle_rows(ModelRc::new(VecModel::from(bundles)));
+                            }
+                        });
+                    });
+                }
+                "boeing_governance" => {
+                    spawn_async(&rt_h, async move {
+                        use citrate_boeing_governance::fetch::assemble_governance_panel;
+                        let scope = boeing_binder::BoeingBindings::boeing_tenant_root();
+                        let data = match assemble_governance_panel(
+                            &*bindings.assistant,
+                            &*bindings.role_grant_tenant_index,
+                            &*bindings.compliance,
+                            scope,
+                            "Boeing root".into(),
+                            32,
+                        )
+                        .await
+                        {
+                            Ok(d) => d,
+                            Err(e) => {
+                                tracing::warn!("Boeing Governance fetch failed: {e}");
+                                return;
+                            }
+                        };
+                        tracing::info!(
+                            "Boeing Governance: audit={}, people={}, compliance={}",
+                            data.audit_rows.len(),
+                            data.people_rows.len(),
+                            data.compliance_rows.len(),
+                        );
+                        use slint::{ModelRc, VecModel};
+                        let audit_count = data.audit_events_count.to_string();
+                        let people_count = data.people_count.to_string();
+                        let attested = data.compliance_attested_count.to_string();
+                        let exports = data.export_bundles_count.to_string();
+                        let scope_text = data.focused_scope_text;
+                        let audit: Vec<DataTableRow> = data.audit_rows.iter().map(|r| DataTableRow {
+                            c1: r.decision_id_text.clone().into(),
+                            c2: r.class_label.clone().into(),
+                            c3: r.subject_text.clone().into(),
+                            c4: r.user_text.clone().into(),
+                            c5: r.block_text.clone().into(),
+                        }).collect();
+                        let people: Vec<DataTableRow> = data.people_rows.iter().map(|r| DataTableRow {
+                            c1: r.user_text.clone().into(),
+                            c2: r.role_text.clone().into(),
+                            c3: r.clearance_label.clone().into(),
+                            c4: r.foreign_text.clone().into(),
+                            c5: r.granted_text.clone().into(),
+                        }).collect();
+                        let compliance: Vec<DataTableRow> = data.compliance_rows.iter().map(|r| DataTableRow {
+                            c1: r.framework_label.clone().into(),
+                            c2: r.posture_label.clone().into(),
+                            c3: r.evidence_cid_text.clone().into(),
+                            c4: r.attestor_text.clone().into(),
+                            c5: r.expires_text.clone().into(),
+                        }).collect();
+                        // tina-rows is part of the panel's surface but not populated by
+                        // the BFR-11 governance assembler (TinaWorkpaperRegistry has its
+                        // own adapter — wired in BFR-INT-1 follow-up alongside the
+                        // procurement panel). Leave the property at its default [].
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_boeing_gov_focused_scope_text(scope_text.into());
+                                ui.set_boeing_gov_audit_events_text(audit_count.into());
+                                ui.set_boeing_gov_people_count_text(people_count.into());
+                                ui.set_boeing_gov_compliance_attested_text(attested.into());
+                                ui.set_boeing_gov_export_bundles_text(exports.into());
+                                ui.set_boeing_gov_audit_rows(ModelRc::new(VecModel::from(audit)));
+                                ui.set_boeing_gov_people_rows(ModelRc::new(VecModel::from(people)));
+                                ui.set_boeing_gov_compliance_rows(ModelRc::new(VecModel::from(compliance)));
+                            }
+                        });
+                    });
+                }
+                // Panels with custom kit types (OverviewKpi, LineageNodeData,
+                // TenantNodeRow, AssistantMessage) need per-struct conversion
+                // helpers — landing in BFR-INT-1 follow-up commits.
                 "boeing_overview"
                 | "boeing_provenance"
-                | "boeing_suppliers"
-                | "boeing_models_compute"
-                | "boeing_apps_contracts"
-                | "boeing_assistant_logs"
                 | "boeing_assistant_pane"
-                | "boeing_governance"
                 | "boeing_ontology" => {
                     let _ = rt_h_inner;
                     tracing::info!(
-                        "Boeing tab `{}` activated — adapter dispatch lands in \
-                         BFR-INT-1 follow-up commits (panel renders empty-state today)",
+                        "Boeing tab `{}` activated — custom kit-type conversion \
+                         (OverviewKpi/LineageNodeData/AssistantMessage/TenantNodeRow) \
+                         lands in BFR-INT-1 follow-up commits (panel renders empty-state today)",
                         tab_str_owned,
                     );
                 }
