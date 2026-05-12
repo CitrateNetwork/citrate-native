@@ -8,21 +8,7 @@ description = "Citrate desktop GUI — Rust-native Slint frontend"
 # Application core (headless orchestration)
 citrate-desktop-app = { path = "../citrate_desktop_app" }
 
-# BFR-INT-1 — Boeing FedRAMP panel adapters + live eth_call bindings.
-# `citrate-rbac-bindings/live` enables the LiveXxxBindings impls that
-# wrap `eth_call` against the chain 40204 deployments. Each adapter
-# crate exposes a `fetch_*` / `assemble_*` function that takes typed
-# binding trait objects and returns a `*PanelData` view model.
-citrate-rbac-bindings = { path = "../citrate_rbac_bindings", features = ["live"] }
-citrate-boeing-overview = { path = "../citrate_boeing_overview" }
-citrate-boeing-provenance = { path = "../citrate_boeing_provenance" }
-citrate-boeing-suppliers = { path = "../citrate_boeing_suppliers" }
-citrate-boeing-fl = { path = "../citrate_boeing_fl" }
-citrate-boeing-models-compute = { path = "../citrate_boeing_models_compute" }
-citrate-boeing-apps-contracts = { path = "../citrate_boeing_apps_contracts" }
-citrate-boeing-assistant = { path = "../citrate_boeing_assistant" }
-citrate-boeing-governance = { path = "../citrate_boeing_governance" }
-citrate-boeing-ontology = { path = "../citrate_boeing_ontology" }
+# BFR-INT-4: Boeing FedRAMP panel adapters moved to `citrate-boeing-shell`.
 thiserror = "1"
 
 # Edu-app service layer — backs the CMO portal (E6.1.5) with eth_call
