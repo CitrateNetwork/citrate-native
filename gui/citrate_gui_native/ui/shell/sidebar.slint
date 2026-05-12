@@ -178,22 +178,7 @@ export component Sidebar inherits Rectangle {
             NavItem { label: "Agent Center"; active: root.active-tab == "operations"; clicked => { root.tab-changed("operations"); } }
         }
 
-        // BFR-INT-1 — Boeing (FedRAMP / inter-org) panels. Routes are
-        // visible to every contributor for now; gate to a federated-
-        // role check once RoleEscalation wiring lands in BFR-INT-2.
-        NavGroup {
-            title: "BOEING";
-            NavItem { label: "Overview"; active: root.active-tab == "boeing_overview"; clicked => { root.tab-changed("boeing_overview"); } }
-            NavItem { label: "Provenance"; active: root.active-tab == "boeing_provenance"; clicked => { root.tab-changed("boeing_provenance"); } }
-            NavItem { label: "Suppliers"; active: root.active-tab == "boeing_suppliers"; clicked => { root.tab-changed("boeing_suppliers"); } }
-            NavItem { label: "Federated Learning"; active: root.active-tab == "boeing_fl"; clicked => { root.tab-changed("boeing_fl"); } }
-            NavItem { label: "Models & Compute"; active: root.active-tab == "boeing_models_compute"; clicked => { root.tab-changed("boeing_models_compute"); } }
-            NavItem { label: "Apps & Contracts"; active: root.active-tab == "boeing_apps_contracts"; clicked => { root.tab-changed("boeing_apps_contracts"); } }
-            NavItem { label: "Assistant Logs"; active: root.active-tab == "boeing_assistant_logs"; clicked => { root.tab-changed("boeing_assistant_logs"); } }
-            NavItem { label: "Assistant Pane"; active: root.active-tab == "boeing_assistant_pane"; clicked => { root.tab-changed("boeing_assistant_pane"); } }
-            NavItem { label: "Governance"; active: root.active-tab == "boeing_governance"; clicked => { root.tab-changed("boeing_governance"); } }
-            NavItem { label: "Ontology"; active: root.active-tab == "boeing_ontology"; clicked => { root.tab-changed("boeing_ontology"); } }
-        }
+        // BFR-INT-4: Boeing NavGroup moved to `citrate-boeing-shell` crate.
 
         // Spacer
         Rectangle { vertical-stretch: 1; }
