@@ -597,6 +597,16 @@ impl ChatService {
         }
     }
 
+    /// BFR-INT-11 WP-5 — set the system prompt directly. Used by
+    /// `citrate-boeing-shell` to inject `prompts/boeing.md` at
+    /// startup so the assistant carries Boeing/FedRAMP identity +
+    /// panel awareness from the first message. The consumer GUI
+    /// continues to use `set_context` for the wallet-context-baked
+    /// prompt; the two are mutually exclusive — last-writer wins.
+    pub async fn set_system_prompt(&self, prompt: String) {
+        *self.system_prompt.write().await = prompt;
+    }
+
     /// Set the system prompt with wallet context.
     /// Chain ID is derived from network name.
     ///
