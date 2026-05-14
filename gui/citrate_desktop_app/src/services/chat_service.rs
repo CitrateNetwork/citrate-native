@@ -10,7 +10,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Message in the chat thread.
-#[derive(Debug, Clone)]
+///
+/// `Serialize + Deserialize` derived for BFR-INT-11 follow-up:
+/// `citrate-boeing-shell` persists chat history to disk between
+/// runs (`~/.local/share/citrate-boeing-shell/chat_history.json`)
+/// and re-loads it via `ChatService::load_history`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub id: String,
     pub role: String,     // "user", "assistant", "system", "tool_request", "tool_result"
@@ -20,7 +25,7 @@ pub struct ChatMessage {
 }
 
 /// A tool action requested by the AI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolAction {
     pub tool_type: String,   // "send_tx", "check_balance", "deploy_contract", "query_chain"
     pub params: String,      // JSON-encoded parameters
@@ -856,6 +861,16 @@ impl ChatService {
     /// Clear conversation history.
     pub async fn clear_history(&self) {
         self.messages.write().await.clear();
+    }
+
+    /// BFR-INT-11 follow-up — replace the in-memory message history
+    /// with a previously-persisted thread. Called at shell startup
+    /// after reading `chat_history.json` so the operator's last
+    /// session resumes naturally instead of starting blank.
+    /// Overwrites the existing buffer — callers should only invoke
+    /// at init, not mid-session.
+    pub async fn load_history(&self, messages: Vec<ChatMessage>) {
+        *self.messages.write().await = messages;
     }
 
     /// Check if the AI backend is connected.
