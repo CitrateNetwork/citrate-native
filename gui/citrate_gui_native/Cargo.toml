@@ -39,7 +39,7 @@ hex = "0.4"
 citrate-wallet-core = { path = "../../wallet-core" }
 
 # Agent substrate (for approval requests in tool executor)
-citrate-agent-core = { path = "../../agent-core" }
+citrate-agent-core = { path = "../../agent-legacy", package = "citrate-agent-legacy" }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
