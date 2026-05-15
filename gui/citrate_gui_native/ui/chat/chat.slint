@@ -198,6 +198,11 @@ export component ChatView inherits Rectangle {
     callback approve-tool;
     callback reject-tool;
     callback copy-to-clipboard(string);
+    // CIT-AGENT-9c-shell-wire-cutover follow-on: close button
+    // inside the drawer. The outer header's "CLOSE CHAT" toggle
+    // can be visually covered when the drawer overlays it; an
+    // in-drawer X is the always-reachable dismiss path.
+    callback close-clicked;
 
     background: Theme.bg;
 
@@ -219,6 +224,27 @@ export component ChatView inherits Rectangle {
                 PrivacyIndicator { source: root.backend-type; }
                 Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.model-loaded ? Theme.success : Theme.text-muted; }
                 Text { text: root.model-name; color: Theme.text-muted; font-size: 11px; vertical-alignment: center; overflow: elide; max-width: 200px; }
+            }
+
+            // Close-X — always reachable dismiss button inside the drawer.
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: Theme.radius-md;
+                background: close-touch.has-hover ? Theme.bg-tertiary : transparent;
+                border-width: 1px;
+                border-color: Theme.border;
+                Text {
+                    text: "✕";
+                    color: Theme.text-muted;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                close-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.close-clicked(); }
+                }
             }
         }
 
