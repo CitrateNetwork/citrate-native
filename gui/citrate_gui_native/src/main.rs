@@ -4420,126 +4420,18 @@ fn main() {
     // DAG EXPLORER WIRING — Search, select block, back
     // =========================================================================
 
-    // --- DAG: Search by height or hash ---
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_dag_search(move |query| {
-        let query_str = query.to_string().trim().to_string();
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("DAG: searching for '{}'", query_str);
-
-        if let Ok(height) = query_str.parse::<u64>() {
-            // Read block directly from local RocksDB via NodeService
-            spawn_async(&rt_h, async move {
-                let summaries = core.node.get_recent_blocks(50).await
-                    .unwrap_or_default();
-                let block = summaries.iter().find(|b| b.height == height);
-                match block {
-                    Some(block) => {
-                        tracing::info!("DAG: found block at height {}", block.height);
-                        let hash = block.hash.clone();
-                        let h = block.height as i32;
-                        let ts = block.timestamp.to_string();
-                        let tx = block.tx_count as i32;
-                        let parent = block.selected_parent.clone();
-                        let bs = block.blue_score as i32;
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_w.upgrade() {
-                                ui.set_dag_show_detail(true);
-                                ui.set_dag_detail_hash(hash.into());
-                                ui.set_dag_detail_height(h);
-                                ui.set_dag_detail_timestamp(ts.into());
-                                ui.set_dag_detail_tx_count(tx);
-                                ui.set_dag_detail_parent(parent.into());
-                                ui.set_dag_detail_blue_score(bs);
-                                ui.set_dag_detail_proposer("".into());
-                            }
-                        });
-                    }
-                    None => tracing::warn!("DAG: block {} not in local storage", height),
-                }
-            });
-        }
-    });
-
-    // --- DAG: Select block (click on block row) ---
-    let core = app_core.clone();
-    let ui_w = ui.as_weak();
-    let rt_h = rt.handle().clone();
-    ui.on_dag_select_block(move |height| {
-        let core = core.clone();
-        let ui_w = ui_w.clone();
-        tracing::info!("DAG: selecting block at height {}", height);
-
-        // Read block detail directly from local RocksDB storage via NodeService
-        // (not via HTTP RPC which requires a running JSON-RPC server)
-        spawn_async(&rt_h, async move {
-            let all_summaries = core.node.get_recent_blocks(50).await
-                .unwrap_or_default();
-            let block = all_summaries.iter().find(|b| b.height == height as u64);
-
-            match block {
-                Some(block) => {
-                    let hash = block.hash.clone();
-                    let h = block.height as i32;
-                    let ts = block.timestamp.to_string();
-                    let tx = block.tx_count as i32;
-                    let parent = block.selected_parent.clone();
-                    let bs = block.blue_score as i32;
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() {
-                            ui.set_dag_show_detail(true);
-                            ui.set_dag_detail_hash(hash.into());
-                            ui.set_dag_detail_height(h);
-                            ui.set_dag_detail_timestamp(ts.into());
-                            ui.set_dag_detail_tx_count(tx);
-                            ui.set_dag_detail_parent(parent.into());
-                            ui.set_dag_detail_blue_score(bs);
-                            ui.set_dag_detail_proposer("".into());
-                        }
-                    });
-                }
-                None => {
-                    tracing::warn!("DAG: block at height {} not found in local storage", height);
-                }
-            }
-        });
-    });
-
-    // --- DAG: Back to list ---
-    let ui_w = ui.as_weak();
-    ui.on_dag_back_to_list(move || {
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_dag_show_detail(false);
-            // Clear the tx list so it doesn't flash through on next open.
-            ui.set_dag_detail_transactions(slint::ModelRc::from(std::rc::Rc::new(
-                slint::VecModel::from(Vec::<TxRowData>::new()),
-            )));
-        }
-    });
-
-    // --- DAG: TX modal close ---
-    let ui_w = ui.as_weak();
-    ui.on_tx_modal_close(move || {
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_tx_modal_visible(false);
-        }
-    });
-
     // BFR-INT-5b: shared cache of the most recently loaded block's tx
     // details, keyed by tx_hash. On block detail open we populate it +
     // the Slint VecModel for the row list. On tx-row click we look up
     // the full detail here and populate the modal properties.
+    // Declared up-front so both the search and select-block handlers
+    // can fire `load_block_txs` inline on success (AT-5b-1; replaces
+    // the prior 500 ms `slint::Timer` polling pattern).
     let dag_tx_cache: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, citrate_desktop_app::services::node_service::BlockTxDetail>>,
     > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
-    // Helper closure: given a block hash, fetch its txs, populate the
-    // model + cache, and push results back to the UI. Used by both the
-    // search and select-block paths.
-    let load_block_txs = {
+    let load_block_txs: std::sync::Arc<dyn Fn(String) + Send + Sync> = {
         let core = app_core.clone();
         let rt_h = rt.handle().clone();
         let ui_w = ui.as_weak();
@@ -4550,7 +4442,6 @@ fn main() {
             let cache = cache.clone();
             spawn_async(&rt_h, async move {
                 let txs = core.node.get_block_transactions(&block_hash).await;
-                // Build a hash-keyed map for the modal click-through.
                 let mut map = std::collections::HashMap::with_capacity(txs.len());
                 let mut rows: Vec<TxRowData> = Vec::with_capacity(txs.len());
                 for tx in &txs {
@@ -4582,8 +4473,128 @@ fn main() {
                     }
                 });
             });
-        }) as std::sync::Arc<dyn Fn(String) + Send + Sync>
+        })
     };
+
+    // --- DAG: Search by height or hash ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    let load_txs_search = load_block_txs.clone();
+    ui.on_dag_search(move |query| {
+        let query_str = query.to_string().trim().to_string();
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        let load_txs = load_txs_search.clone();
+        tracing::info!("DAG: searching for '{}'", query_str);
+
+        if let Ok(height) = query_str.parse::<u64>() {
+            // Read block directly from local RocksDB via NodeService
+            spawn_async(&rt_h, async move {
+                let summaries = core.node.get_recent_blocks(50).await
+                    .unwrap_or_default();
+                let block = summaries.iter().find(|b| b.height == height);
+                match block {
+                    Some(block) => {
+                        tracing::info!("DAG: found block at height {}", block.height);
+                        let hash = block.hash.clone();
+                        let h = block.height as i32;
+                        let ts = block.timestamp.to_string();
+                        let tx = block.tx_count as i32;
+                        let parent = block.selected_parent.clone();
+                        let bs = block.blue_score as i32;
+                        let hash_for_tx_load = hash.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_dag_show_detail(true);
+                                ui.set_dag_detail_hash(hash.into());
+                                ui.set_dag_detail_height(h);
+                                ui.set_dag_detail_timestamp(ts.into());
+                                ui.set_dag_detail_tx_count(tx);
+                                ui.set_dag_detail_parent(parent.into());
+                                ui.set_dag_detail_blue_score(bs);
+                                ui.set_dag_detail_proposer("".into());
+                            }
+                        });
+                        // AT-5b-1 — load tx list inline once we know the
+                        // block exists. spawn_async inside load_block_txs
+                        // does the actual fetch + UI push.
+                        load_txs(hash_for_tx_load);
+                    }
+                    None => tracing::warn!("DAG: block {} not in local storage", height),
+                }
+            });
+        }
+    });
+
+    // --- DAG: Select block (click on block row) ---
+    let core = app_core.clone();
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    let load_txs_select = load_block_txs.clone();
+    ui.on_dag_select_block(move |height| {
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        let load_txs = load_txs_select.clone();
+        tracing::info!("DAG: selecting block at height {}", height);
+
+        // Read block detail directly from local RocksDB storage via NodeService
+        // (not via HTTP RPC which requires a running JSON-RPC server)
+        spawn_async(&rt_h, async move {
+            let all_summaries = core.node.get_recent_blocks(50).await
+                .unwrap_or_default();
+            let block = all_summaries.iter().find(|b| b.height == height as u64);
+
+            match block {
+                Some(block) => {
+                    let hash = block.hash.clone();
+                    let h = block.height as i32;
+                    let ts = block.timestamp.to_string();
+                    let tx = block.tx_count as i32;
+                    let parent = block.selected_parent.clone();
+                    let bs = block.blue_score as i32;
+                    let hash_for_tx_load = hash.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_dag_show_detail(true);
+                            ui.set_dag_detail_hash(hash.into());
+                            ui.set_dag_detail_height(h);
+                            ui.set_dag_detail_timestamp(ts.into());
+                            ui.set_dag_detail_tx_count(tx);
+                            ui.set_dag_detail_parent(parent.into());
+                            ui.set_dag_detail_blue_score(bs);
+                            ui.set_dag_detail_proposer("".into());
+                        }
+                    });
+                    // AT-5b-1 — load tx list inline.
+                    load_txs(hash_for_tx_load);
+                }
+                None => {
+                    tracing::warn!("DAG: block at height {} not found in local storage", height);
+                }
+            }
+        });
+    });
+
+    // --- DAG: Back to list ---
+    let ui_w = ui.as_weak();
+    ui.on_dag_back_to_list(move || {
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_dag_show_detail(false);
+            // Clear the tx list so it doesn't flash through on next open.
+            ui.set_dag_detail_transactions(slint::ModelRc::from(std::rc::Rc::new(
+                slint::VecModel::from(Vec::<TxRowData>::new()),
+            )));
+        }
+    });
+
+    // --- DAG: TX modal close ---
+    let ui_w = ui.as_weak();
+    ui.on_tx_modal_close(move || {
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_tx_modal_visible(false);
+        }
+    });
 
     // --- DAG: TX row clicked → open modal with full detail ---
     let ui_w = ui.as_weak();
@@ -4617,42 +4628,6 @@ fn main() {
         ui.set_tx_modal_block_height(tx.block_height as i32);
         ui.set_tx_modal_visible(true);
     });
-
-    // Trigger tx-loading whenever the block detail opens. We re-check
-    // every 500 ms via a Timer to catch both the dag-search and
-    // dag-select-block paths without coupling to either.
-    let ui_w = ui.as_weak();
-    let cache = dag_tx_cache.clone();
-    let load_block_txs_timer = load_block_txs.clone();
-    let timer = slint::Timer::default();
-    let last_loaded: std::rc::Rc<std::cell::RefCell<String>> =
-        std::rc::Rc::new(std::cell::RefCell::new(String::new()));
-    timer.start(
-        slint::TimerMode::Repeated,
-        std::time::Duration::from_millis(500),
-        move || {
-            let Some(ui) = ui_w.upgrade() else { return };
-            if !ui.get_dag_show_detail() {
-                return;
-            }
-            let hash = ui.get_dag_detail_hash().to_string();
-            if hash.is_empty() {
-                return;
-            }
-            let last = last_loaded.borrow().clone();
-            if last == hash {
-                return;
-            }
-            *last_loaded.borrow_mut() = hash.clone();
-            let _ = cache.lock().map(|mut c| c.clear());
-            load_block_txs_timer(hash);
-        },
-    );
-    // Keep the timer alive for the lifetime of the application by
-    // leaking — `slint::Timer` cancels on drop, but main.rs owns it
-    // until process exit. Stash it in a Box::leak to make ownership
-    // explicit.
-    Box::leak(Box::new(timer));
 
     // =========================================================================
     // MODELS WIRING — Load, deploy, inference, browse
