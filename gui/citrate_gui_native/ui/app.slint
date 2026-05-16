@@ -14,7 +14,7 @@ import { LockScreen } from "shell/lock_screen.slint";
 import { Dashboard } from "dashboard/dashboard.slint";
 import { WalletView, AccountData, TxData } from "wallet/wallet.slint";
 import { SettingsView } from "settings/settings.slint";
-import { DagExplorer, DagDotData } from "dag/dag_explorer.slint";
+import { DagExplorer, DagDotData, TxRowData, TransactionModal } from "dag/dag_explorer.slint";
 import { SendDialog } from "wallet/send_dialog.slint";
 import { ChatView, ChatMessageData } from "chat/chat.slint";
 import { ModelsView } from "models/models.slint";
@@ -106,6 +106,21 @@ export component App inherits Window {
     in property <int> dag-tips-count: 0;
     in property <int> dag-blue-score: 0;
     in property <int> dag-finalized-height: 0;
+
+    // BFR-INT-5b: per-block tx list + tx modal state.
+    in property <[TxRowData]> dag-detail-transactions: [];
+    in-out property <bool> tx-modal-visible: false;
+    in property <string> tx-modal-hash: "";
+    in property <string> tx-modal-status: "";
+    in property <string> tx-modal-from: "";
+    in property <string> tx-modal-to: "";
+    in property <string> tx-modal-value: "";
+    in property <string> tx-modal-nonce: "";
+    in property <string> tx-modal-gas-used: "";
+    in property <string> tx-modal-gas-price: "";
+    in property <string> tx-modal-method: "";
+    in property <string> tx-modal-input-hex: "";
+    in property <int> tx-modal-block-height: 0;
     // T2-13: mini-viz scatter dots — Rust computes x/y normalized
     in property <[DagDotData]> dag-dots: [];
     in property <string> wallet-selected-address: "";
@@ -272,6 +287,9 @@ export component App inherits Window {
     callback dag-search(string);
     callback dag-select-block(int);
     callback dag-back-to-list;
+    // BFR-INT-5b
+    callback dag-tx-row-clicked(string /* tx_hash */);
+    callback tx-modal-close;
 
     // Models callbacks
     callback models-load-model;
@@ -638,10 +656,12 @@ export component App inherits Window {
                     detail-parent: root.dag-detail-parent;
                     detail-blue-score: root.dag-detail-blue-score;
                     detail-proposer: root.dag-detail-proposer;
+                    detail-transactions: root.dag-detail-transactions;
                     search(query) => { root.dag-search(query); }
                     select-block(height) => { root.dag-select-block(height); }
                     back-to-list => { root.dag-back-to-list(); }
                     copy-text(text) => { root.copy-to-clipboard(text); }
+                    tx-row-clicked(tx-hash) => { root.dag-tx-row-clicked(tx-hash); }
                 }
 
                 // Settings
@@ -969,6 +989,27 @@ export component App inherits Window {
             root.show-send-dialog = false;
             root.wallet-send-close();
         }
+    }
+
+    // BFR-INT-5b: DAG transaction modal — right-edge drawer over the
+    // entire app, visible only when the user clicked a tx row inside
+    // the block-detail view of DagExplorer.
+    if root.tx-modal-visible : TransactionModal {
+        x: 0; y: 0; width: 100%; height: 100%;
+        visible-prop: root.tx-modal-visible;
+        tx-hash: root.tx-modal-hash;
+        status: root.tx-modal-status;
+        from-addr: root.tx-modal-from;
+        to-addr: root.tx-modal-to;
+        value-display: root.tx-modal-value;
+        nonce-display: root.tx-modal-nonce;
+        gas-used-display: root.tx-modal-gas-used;
+        gas-price-display: root.tx-modal-gas-price;
+        method-label: root.tx-modal-method;
+        input-hex: root.tx-modal-input-hex;
+        block-height: root.tx-modal-block-height;
+        close-modal => { root.tx-modal-close(); }
+        copy-text(text) => { root.copy-to-clipboard(text); }
     }
 
     // T2-9: create-pool overlay. Inline modal — name + description

@@ -71,6 +71,14 @@ pub trait NodeBackend: Send + Sync {
     async fn get_transactions_for(&self, _address: &str, _limit: usize) -> Vec<TxSummary> {
         Vec::new()
     }
+    /// Full transaction details for every tx in a block.
+    ///
+    /// `block_hash` is the `0x`-prefixed hex of the 32-byte block hash. Returns
+    /// an empty vec if the block is not in local storage. Backends that don't
+    /// hold receipts can return entries with `status = TxStatus::ReceiptMissing`.
+    async fn get_block_transactions(&self, _block_hash: &str) -> Vec<BlockTxDetail> {
+        Vec::new()
+    }
 }
 
 /// Transaction summary for GUI display
@@ -82,6 +90,51 @@ pub struct TxSummary {
     pub counterparty: String,
     pub status: String,
     pub timestamp: String,
+}
+
+/// Full transaction detail for DAG explorer modal.
+///
+/// Data sources: `Block.transactions` (RocksDB block store) for everything
+/// except `status` + `gas_used` + `effective_gas_price`, which come from
+/// `CF_RECEIPTS` via `TransactionStore::get_receipt`.
+#[derive(Clone, Debug)]
+pub struct BlockTxDetail {
+    pub tx_hash: String,
+    pub from: String,
+    /// `None` for contract-creation transactions.
+    pub to: Option<String>,
+    pub value_wei: String,
+    pub nonce: u64,
+    pub gas_limit: u64,
+    pub gas_price_wei: u64,
+    pub gas_used: u64,
+    pub effective_gas_price_wei: u64,
+    pub status: TxStatus,
+    /// Raw calldata, lower-case hex without `0x` prefix. Empty for value transfers.
+    pub input_hex: String,
+    pub block_height: u64,
+    pub eth_tx_type: u8,
+}
+
+/// Receipt status of a transaction in a confirmed block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxStatus {
+    /// Receipt present, `status == true`.
+    Confirmed,
+    /// Receipt present, `status == false` (EVM revert / halt).
+    Failed,
+    /// Block present but receipt missing in storage. Treated as informational.
+    ReceiptMissing,
+}
+
+impl TxStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TxStatus::Confirmed => "confirmed",
+            TxStatus::Failed => "failed",
+            TxStatus::ReceiptMissing => "receipt-missing",
+        }
+    }
 }
 
 /// Embedded node backend — connects to the real citrate node crates.
@@ -708,6 +761,85 @@ impl NodeBackend for EmbeddedNodeBackend {
         *self.bootnodes.write().await = bootnodes;
     }
 
+    /// Full per-transaction detail for a block, including receipt status + gas used.
+    ///
+    /// Data source: `citrate_storage::BlockStore::get_block` (CF_BLOCKS) for the tx
+    /// list; `citrate_storage::TransactionStore::get_receipt` (CF_RECEIPTS) for
+    /// `status` + `gas_used` + `effective_gas_price`. Returns empty when the
+    /// block hash is malformed or absent.
+    async fn get_block_transactions(&self, block_hash: &str) -> Vec<BlockTxDetail> {
+        let storage_guard = self.storage.read().await;
+        let storage = match storage_guard.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let hash_hex = block_hash.trim_start_matches("0x");
+        let hash_bytes = match hex::decode(hash_hex) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return Vec::new(),
+        };
+        let mut h_arr = [0u8; 32];
+        h_arr.copy_from_slice(&hash_bytes);
+        let block_hash_typed = citrate_consensus::types::Hash::new(h_arr);
+
+        let block = match storage.blocks.get_block(&block_hash_typed) {
+            Ok(Some(b)) => b,
+            _ => return Vec::new(),
+        };
+
+        let derive_addr = |pk: &citrate_consensus::types::PublicKey| -> String {
+            let bytes = pk.as_bytes();
+            let is_evm = bytes[20..].iter().all(|&b| b == 0)
+                && !bytes[..20].iter().all(|&b| b == 0);
+            if is_evm {
+                format!("0x{}", hex::encode(&bytes[..20]))
+            } else {
+                use sha3::{Digest, Keccak256};
+                let kh = Keccak256::digest(bytes);
+                format!("0x{}", hex::encode(&kh[12..]))
+            }
+        };
+
+        let mut out = Vec::with_capacity(block.transactions.len());
+        for tx in &block.transactions {
+            let receipt = storage
+                .transactions
+                .get_receipt(&tx.hash)
+                .ok()
+                .flatten();
+            let (status, gas_used, eff_gas) = match &receipt {
+                Some(r) => (
+                    if r.status {
+                        TxStatus::Confirmed
+                    } else {
+                        TxStatus::Failed
+                    },
+                    r.gas_used,
+                    r.effective_gas_price,
+                ),
+                None => (TxStatus::ReceiptMissing, 0, 0),
+            };
+
+            out.push(BlockTxDetail {
+                tx_hash: format!("0x{}", tx.hash.to_hex()),
+                from: derive_addr(&tx.from),
+                to: tx.to.as_ref().map(derive_addr),
+                value_wei: tx.value.to_string(),
+                nonce: tx.nonce,
+                gas_limit: tx.gas_limit,
+                gas_price_wei: tx.gas_price,
+                gas_used,
+                effective_gas_price_wei: eff_gas,
+                status,
+                input_hex: hex::encode(&tx.data),
+                block_height: block.header.height,
+                eth_tx_type: tx.eth_tx_type,
+            });
+        }
+        out
+    }
+
     /// Scan local blocks for transactions involving the given address.
     /// Data source: RocksDB block store — iterates recent blocks and filters txs.
     async fn get_transactions_for(&self, address: &str, limit: usize) -> Vec<TxSummary> {
@@ -907,6 +1039,12 @@ impl NodeService {
     /// Get recent blocks from local storage (reads real data from RocksDB)
     pub async fn get_recent_blocks(&self, count: usize) -> Result<Vec<BlockSummary>, AppError> {
         Ok(self.backend.get_block_summaries(count).await)
+    }
+
+    /// Full transaction details for every tx in a block.
+    /// Data source: see `NodeBackend::get_block_transactions`.
+    pub async fn get_block_transactions(&self, block_hash: &str) -> Vec<BlockTxDetail> {
+        self.backend.get_block_transactions(block_hash).await
     }
 
     /// Update bootnodes for network switching
@@ -1300,5 +1438,36 @@ mod tests {
         let result = svc.start().await;
         assert!(result.is_err());
         assert!(!svc.get_status().await.running);
+    }
+
+    // ---- BFR-INT-5b: BlockTxDetail ----
+
+    #[test]
+    fn tx_status_as_str_round_trip() {
+        assert_eq!(TxStatus::Confirmed.as_str(), "confirmed");
+        assert_eq!(TxStatus::Failed.as_str(), "failed");
+        assert_eq!(TxStatus::ReceiptMissing.as_str(), "receipt-missing");
+    }
+
+    #[tokio::test]
+    async fn test_get_block_transactions_default_returns_empty() {
+        // TestNodeBackend uses the trait's default impl, which returns an empty vec.
+        let svc = test_service();
+        let txs = svc.get_block_transactions("0xdeadbeef").await;
+        assert!(txs.is_empty(), "default backend should return empty");
+    }
+
+    #[tokio::test]
+    async fn embedded_get_block_transactions_rejects_malformed_hash() {
+        // Embedded backend with no storage initialized — should bail before storage anyway,
+        // but the malformed-hash branch is the contract we want to exercise.
+        let backend = EmbeddedNodeBackend::new();
+        // Not a hex string at all.
+        assert!(backend.get_block_transactions("not-a-hex").await.is_empty());
+        // Hex but wrong length.
+        assert!(backend.get_block_transactions("0xabcd").await.is_empty());
+        // Hex of correct length but no storage initialised — still empty (no panic).
+        let bogus = "0x".to_string() + &"ab".repeat(32);
+        assert!(backend.get_block_transactions(&bogus).await.is_empty());
     }
 }

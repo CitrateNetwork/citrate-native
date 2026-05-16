@@ -12,6 +12,7 @@ mod app_binder;
 mod storage_service;
 mod compute_service;
 mod marketplace_client;
+mod calldata_decoder;
 
 #[cfg(test)]
 mod ui_visual_tests;
@@ -839,6 +840,40 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+/// BFR-INT-5b: short-form wei display for table rows (e.g. "0.5 SALT").
+/// Falls back to the raw decimal when value < 0.0001 SALT or parse fails.
+fn format_wei_short(wei_str: &str) -> String {
+    let wei: u128 = match wei_str.parse() {
+        Ok(w) => w,
+        Err(_) => return wei_str.to_string(),
+    };
+    if wei == 0 {
+        return "0 SALT".to_string();
+    }
+    const ONE_SALT: u128 = 1_000_000_000_000_000_000;
+    let salt = wei as f64 / ONE_SALT as f64;
+    if salt >= 0.0001 {
+        format!("{:.4} SALT", salt)
+    } else {
+        format!("{} wei", wei)
+    }
+}
+
+/// BFR-INT-5b: full wei display for the modal — shows both SALT and wei
+/// so the operator has the exact integer when needed.
+fn format_wei_long(wei_str: &str) -> String {
+    let wei: u128 = match wei_str.parse() {
+        Ok(w) => w,
+        Err(_) => return wei_str.to_string(),
+    };
+    if wei == 0 {
+        return "0 SALT".to_string();
+    }
+    const ONE_SALT: u128 = 1_000_000_000_000_000_000;
+    let salt = wei as f64 / ONE_SALT as f64;
+    format!("{:.6} SALT  ({} wei)", salt, wei)
 }
 
 /// WP-E6.1.5-D — Fetch live CMO portal data from the chain and push it
@@ -4478,8 +4513,146 @@ fn main() {
     ui.on_dag_back_to_list(move || {
         if let Some(ui) = ui_w.upgrade() {
             ui.set_dag_show_detail(false);
+            // Clear the tx list so it doesn't flash through on next open.
+            ui.set_dag_detail_transactions(slint::ModelRc::from(std::rc::Rc::new(
+                slint::VecModel::from(Vec::<TxRowData>::new()),
+            )));
         }
     });
+
+    // --- DAG: TX modal close ---
+    let ui_w = ui.as_weak();
+    ui.on_tx_modal_close(move || {
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_tx_modal_visible(false);
+        }
+    });
+
+    // BFR-INT-5b: shared cache of the most recently loaded block's tx
+    // details, keyed by tx_hash. On block detail open we populate it +
+    // the Slint VecModel for the row list. On tx-row click we look up
+    // the full detail here and populate the modal properties.
+    let dag_tx_cache: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, citrate_desktop_app::services::node_service::BlockTxDetail>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    // Helper closure: given a block hash, fetch its txs, populate the
+    // model + cache, and push results back to the UI. Used by both the
+    // search and select-block paths.
+    let load_block_txs = {
+        let core = app_core.clone();
+        let rt_h = rt.handle().clone();
+        let ui_w = ui.as_weak();
+        let cache = dag_tx_cache.clone();
+        std::sync::Arc::new(move |block_hash: String| {
+            let core = core.clone();
+            let ui_w = ui_w.clone();
+            let cache = cache.clone();
+            spawn_async(&rt_h, async move {
+                let txs = core.node.get_block_transactions(&block_hash).await;
+                // Build a hash-keyed map for the modal click-through.
+                let mut map = std::collections::HashMap::with_capacity(txs.len());
+                let mut rows: Vec<TxRowData> = Vec::with_capacity(txs.len());
+                for tx in &txs {
+                    let elide = |s: &str| -> String {
+                        if s.len() > 14 {
+                            format!("{}…{}", &s[..8], &s[s.len().saturating_sub(6)..])
+                        } else {
+                            s.to_string()
+                        }
+                    };
+                    let method = calldata_decoder::decode_selector(&tx.input_hex);
+                    rows.push(TxRowData {
+                        tx_hash: tx.tx_hash.clone().into(),
+                        hash_short: elide(&tx.tx_hash).into(),
+                        method_label: method.label().into(),
+                        value_display: format_wei_short(&tx.value_wei).into(),
+                        status: tx.status.as_str().into(),
+                    });
+                    map.insert(tx.tx_hash.clone(), tx.clone());
+                }
+                if let Ok(mut c) = cache.lock() {
+                    *c = map;
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_dag_detail_transactions(slint::ModelRc::from(
+                            std::rc::Rc::new(slint::VecModel::from(rows)),
+                        ));
+                    }
+                });
+            });
+        }) as std::sync::Arc<dyn Fn(String) + Send + Sync>
+    };
+
+    // --- DAG: TX row clicked → open modal with full detail ---
+    let ui_w = ui.as_weak();
+    let cache = dag_tx_cache.clone();
+    ui.on_dag_tx_row_clicked(move |tx_hash| {
+        let tx_hash_s = tx_hash.to_string();
+        let Some(ui) = ui_w.upgrade() else { return };
+        let Ok(c) = cache.lock() else { return };
+        let Some(tx) = c.get(&tx_hash_s) else {
+            tracing::warn!("DAG: tx-row clicked for unknown hash {}", tx_hash_s);
+            return;
+        };
+        let method = calldata_decoder::decode_selector(&tx.input_hex);
+        ui.set_tx_modal_hash(tx.tx_hash.clone().into());
+        ui.set_tx_modal_status(tx.status.as_str().into());
+        ui.set_tx_modal_from(tx.from.clone().into());
+        ui.set_tx_modal_to(tx.to.clone().unwrap_or_default().into());
+        ui.set_tx_modal_value(format_wei_long(&tx.value_wei).into());
+        ui.set_tx_modal_nonce(tx.nonce.to_string().into());
+        ui.set_tx_modal_gas_used(format!("{}", tx.gas_used).into());
+        ui.set_tx_modal_gas_price(format!("{} wei", tx.effective_gas_price_wei).into());
+        ui.set_tx_modal_method(method.label().into());
+        ui.set_tx_modal_input_hex(
+            if tx.input_hex.is_empty() {
+                String::new()
+            } else {
+                format!("0x{}", tx.input_hex)
+            }
+            .into(),
+        );
+        ui.set_tx_modal_block_height(tx.block_height as i32);
+        ui.set_tx_modal_visible(true);
+    });
+
+    // Trigger tx-loading whenever the block detail opens. We re-check
+    // every 500 ms via a Timer to catch both the dag-search and
+    // dag-select-block paths without coupling to either.
+    let ui_w = ui.as_weak();
+    let cache = dag_tx_cache.clone();
+    let load_block_txs_timer = load_block_txs.clone();
+    let timer = slint::Timer::default();
+    let last_loaded: std::rc::Rc<std::cell::RefCell<String>> =
+        std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(500),
+        move || {
+            let Some(ui) = ui_w.upgrade() else { return };
+            if !ui.get_dag_show_detail() {
+                return;
+            }
+            let hash = ui.get_dag_detail_hash().to_string();
+            if hash.is_empty() {
+                return;
+            }
+            let last = last_loaded.borrow().clone();
+            if last == hash {
+                return;
+            }
+            *last_loaded.borrow_mut() = hash.clone();
+            let _ = cache.lock().map(|mut c| c.clear());
+            load_block_txs_timer(hash);
+        },
+    );
+    // Keep the timer alive for the lifetime of the application by
+    // leaking — `slint::Timer` cancels on drop, but main.rs owns it
+    // until process exit. Stash it in a Box::leak to make ownership
+    // explicit.
+    Box::leak(Box::new(timer));
 
     // =========================================================================
     // MODELS WIRING — Load, deploy, inference, browse
