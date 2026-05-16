@@ -11,6 +11,20 @@ export struct BlockData {
     proposer: string,
 }
 
+// BFR-INT-5b: per-tx row in the block-detail tx list.
+// `tx-hash` is the full hex hash; `hash-short` is the elided form
+// (e.g. `0xabcd…1234`). `method-label` is the decoded selector name
+// (or "Transfer" for value-only txs, or "0xdeadbeef (unknown)" for
+// unmatched selectors). `status` is `confirmed` / `failed` /
+// `receipt-missing`; the row colors the status pill accordingly.
+export struct TxRowData {
+    tx-hash: string,
+    hash-short: string,
+    method-label: string,
+    value-display: string,
+    status: string,
+}
+
 // T2-13: lightweight DAG viz data — Rust-computed normalized x/y
 // in [0, 1] based on recent block height + blue_score, plus flags
 // for rendering (is tip? is selected parent chain?).
@@ -115,6 +129,327 @@ component BlockListRow inherits Rectangle {
     TouchArea { clicked => { root.clicked(); } }
 }
 
+// BFR-INT-5b: clickable tx-list row inside the block detail view.
+component TxListRow inherits Rectangle {
+    in property <TxRowData> data;
+    callback clicked;
+
+    height: 36px;
+    border-radius: Theme.radius-sm;
+    background: tx-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+    animate background { duration: Theme.duration-fast; }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+
+        Text {
+            text: root.data.hash-short;
+            color: Theme.text;
+            font-size: 12px;
+            font-family: Theme.font-mono;
+            min-width: 140px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.data.method-label;
+            color: Theme.accent;
+            font-size: 12px;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.data.value-display;
+            color: Theme.text-muted;
+            font-size: 12px;
+            min-width: 100px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        // Status pill
+        Rectangle {
+            width: 80px;
+            height: 22px;
+            border-radius: Theme.radius-full;
+            background:
+                root.data.status == "confirmed" ? Theme.success.with-alpha(0.18) :
+                root.data.status == "failed"    ? Theme.error.with-alpha(0.18)   :
+                                                  Theme.warning.with-alpha(0.18);
+            border-width: 1px;
+            border-color:
+                root.data.status == "confirmed" ? Theme.success :
+                root.data.status == "failed"    ? Theme.error   :
+                                                  Theme.warning;
+            Text {
+                text: root.data.status;
+                color:
+                    root.data.status == "confirmed" ? Theme.success :
+                    root.data.status == "failed"    ? Theme.error   :
+                                                      Theme.warning;
+                font-size: 10px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    tx-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// BFR-INT-5b: right-edge drawer with full tx detail. Composed inline
+// because citrate-gui-native has no shared modal kit primitive.
+// Width matches the kit's standard drawer geometry used in
+// citrate-boeing-shell's RowDetailDrawer.
+export component TransactionModal inherits Rectangle {
+    in property <bool> visible-prop: false;
+    in property <string> tx-hash: "";
+    in property <string> status: "";
+    in property <string> from-addr: "";
+    in property <string> to-addr: "";
+    in property <string> value-display: "";
+    in property <string> nonce-display: "";
+    in property <string> gas-used-display: "";
+    in property <string> gas-price-display: "";
+    in property <string> method-label: "";
+    in property <string> input-hex: "";
+    in property <int> block-height: 0;
+
+    callback close-modal;
+    callback copy-text(string);
+
+    visible: root.visible-prop;
+    background: rgba(0, 0, 0, 0.55);
+    width: 100%;
+    height: 100%;
+
+    // Scrim — clicking off-drawer closes the modal
+    TouchArea {
+        clicked => { root.close-modal(); }
+    }
+
+    // Drawer panel
+    Rectangle {
+        x: parent.width - self.width;
+        width: 520px;
+        height: parent.height;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+
+        // Catch clicks inside the drawer so they don't dismiss
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            // Header
+            HorizontalLayout {
+                Text {
+                    text: "Transaction";
+                    color: Theme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 32px; height: 32px;
+                    border-radius: Theme.radius-md;
+                    background: close-touch.has-hover ? Theme.bg-tertiary : transparent;
+                    Text {
+                        text: "✕";
+                        color: Theme.text-muted;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    close-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.close-modal(); }
+                    }
+                }
+            }
+
+            // Tx hash (click-to-copy)
+            Rectangle {
+                background: hash-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                animate background { duration: Theme.duration-fast; }
+                border-radius: Theme.radius-sm;
+                height: 28px;
+                HorizontalLayout {
+                    padding: 4px;
+                    Text { text: "Hash"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                    Text { text: root.tx-hash; color: Theme.text; font-size: 11px; font-family: Theme.font-mono; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                    Text { text: hash-touch.has-hover ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; }
+                }
+                hash-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.copy-text(root.tx-hash); }
+                }
+            }
+
+            // Status pill
+            HorizontalLayout {
+                Text { text: "Status"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Rectangle {
+                    width: 110px;
+                    height: 24px;
+                    border-radius: Theme.radius-full;
+                    background:
+                        root.status == "confirmed" ? Theme.success.with-alpha(0.18) :
+                        root.status == "failed"    ? Theme.error.with-alpha(0.18)   :
+                                                     Theme.warning.with-alpha(0.18);
+                    border-width: 1px;
+                    border-color:
+                        root.status == "confirmed" ? Theme.success :
+                        root.status == "failed"    ? Theme.error   :
+                                                     Theme.warning;
+                    Text {
+                        text: root.status;
+                        color:
+                            root.status == "confirmed" ? Theme.success :
+                            root.status == "failed"    ? Theme.error   :
+                                                         Theme.warning;
+                        font-size: 11px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // Section: Parties
+            Text { text: "Parties"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+            Rectangle {
+                background: from-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                animate background { duration: Theme.duration-fast; }
+                border-radius: Theme.radius-sm;
+                height: 28px;
+                HorizontalLayout {
+                    padding: 4px;
+                    Text { text: "From"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                    Text { text: root.from-addr; color: Theme.text; font-size: 11px; font-family: Theme.font-mono; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                    Text { text: from-touch.has-hover ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; }
+                }
+                from-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.copy-text(root.from-addr); }
+                }
+            }
+            Rectangle {
+                background: to-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : transparent;
+                animate background { duration: Theme.duration-fast; }
+                border-radius: Theme.radius-sm;
+                height: 28px;
+                HorizontalLayout {
+                    padding: 4px;
+                    Text { text: "To"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                    Text {
+                        text: root.to-addr == "" ? "(contract creation)" : root.to-addr;
+                        color: root.to-addr == "" ? Theme.text-muted : Theme.text;
+                        font-size: 11px; font-family: Theme.font-mono; overflow: elide; horizontal-stretch: 1; vertical-alignment: center;
+                    }
+                    Text { text: (root.to-addr != "" && to-touch.has-hover) ? "⧉" : " "; color: Theme.text-muted; font-size: 12px; width: 16px; }
+                }
+                to-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { if (root.to-addr != "") { root.copy-text(root.to-addr); } }
+                }
+            }
+            HorizontalLayout {
+                Text { text: "Value"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: root.value-display; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; }
+            }
+            HorizontalLayout {
+                Text { text: "Nonce"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: root.nonce-display; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; }
+            }
+            HorizontalLayout {
+                Text { text: "Block"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: "#" + root.block-height; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; }
+            }
+
+            // Section: Gas
+            Text { text: "Gas"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+            HorizontalLayout {
+                Text { text: "Gas used"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: root.gas-used-display; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; }
+            }
+            HorizontalLayout {
+                Text { text: "Gas price"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: root.gas-price-display; color: Theme.text; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; }
+            }
+
+            // Section: Method
+            Text { text: "Method"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+            HorizontalLayout {
+                Text { text: "Decoded"; color: Theme.text-muted; font-size: 12px; min-width: 110px; vertical-alignment: center; }
+                Text { text: root.method-label; color: Theme.accent; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+            }
+            // Input hex — scrollable mono block (click to copy)
+            Rectangle {
+                background: input-touch.has-hover ? Theme.bg-tertiary.brighter(0.2) : Theme.bg-secondary;
+                animate background { duration: Theme.duration-fast; }
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                min-height: 64px;
+                max-height: 200px;
+                vertical-stretch: 1;
+                Flickable {
+                    Text {
+                        text: root.input-hex == "" ? "(empty calldata)" : root.input-hex;
+                        color: root.input-hex == "" ? Theme.text-muted : Theme.text;
+                        font-size: 10px;
+                        font-family: Theme.font-mono;
+                        wrap: word-wrap;
+                        x: Theme.space-sm;
+                        y: Theme.space-sm;
+                        width: parent.width - 2 * Theme.space-sm;
+                    }
+                }
+                input-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { if (root.input-hex != "") { root.copy-text(root.input-hex); } }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // Footer: close
+            HorizontalLayout {
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    width: 96px;
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: footer-close-touch.has-hover ? Theme.accent-hover : Theme.accent;
+                    Text {
+                        text: "Close";
+                        color: #ffffff;
+                        font-size: 12px;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    footer-close-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.close-modal(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component DagExplorer inherits Rectangle {
     in property <int> current-height: 0;
     in property <bool> loading: false;
@@ -138,12 +473,17 @@ export component DagExplorer inherits Rectangle {
     in property <int> detail-blue-score: 0;
     in property <string> detail-proposer: "";
 
+    // BFR-INT-5b: per-block transaction list (lazy-loaded on detail open).
+    in property <[TxRowData]> detail-transactions: [];
+
     in-out property <string> search-query: "";
 
     callback search(string);
     callback select-block(int);
     callback back-to-list;
     callback copy-text(string);
+    // BFR-INT-5b
+    callback tx-row-clicked(string /* tx_hash */);
 
     background: Theme.bg;
 
@@ -323,6 +663,47 @@ export component DagExplorer inherits Rectangle {
                         prop-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.copy-text(root.detail-proposer); }
+                        }
+                    }
+                }
+
+                // BFR-INT-5b: transaction list — empty state if none, else rows.
+                Text {
+                    text: "Transactions (" + root.detail-transactions.length + ")";
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                if root.detail-transactions.length == 0 : Rectangle {
+                    height: 48px;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    background: Theme.bg-secondary;
+                    Text {
+                        text: root.detail-tx-count == 0
+                            ? "No transactions in this block"
+                            : "Loading transactions…";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.detail-transactions.length > 0 : Rectangle {
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    background: Theme.bg-secondary;
+                    min-height: 80px;
+                    vertical-stretch: 1;
+                    clip: true;
+                    Flickable {
+                        VerticalLayout {
+                            for tx in root.detail-transactions : TxListRow {
+                                data: tx;
+                                clicked => { root.tx-row-clicked(tx.tx-hash); }
+                            }
                         }
                     }
                 }
