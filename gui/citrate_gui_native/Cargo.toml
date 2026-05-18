@@ -15,7 +15,7 @@ thiserror = "1"
 # wrappers for InstitutionTreeV1 + ComplianceRegistry. The GUI uses the
 # service when contracts are deployed and falls back to CITRATE_CMO_DEMO
 # stub data when the addresses are still ZERO_ADDRESS.
-citrate-edu-app = { path = "../citrate_edu_app" }
+citrate-edu-app = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", branch = "main" }
 
 # UI framework — use software renderer for compatibility (no GPU/OpenGL required)
 slint = { version = "1.9", default-features = false, features = ["renderer-software", "backend-winit", "compat-1-2"] }
@@ -36,15 +36,15 @@ sha3 = "0.10"
 hex = "0.4"
 
 # Wallet core (for SALT→wei conversion in send flow)
-citrate-wallet-core = { path = "../../wallet-core" }
+citrate-wallet-core = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
 
 # Agent substrate (for approval requests in tool executor)
-citrate-agent-core = { path = "../../agent-legacy", package = "citrate-agent-legacy" }
+citrate-agent-core = { git = "ssh://git@github-citrate-agent-runtime/CitrateNetwork/citrate-agent-runtime", branch = "main", package = "citrate-agent-legacy" }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # IPFS daemon and HTTP client for Storage tab
-citrate-storage = { path = "../../core/storage" }
+citrate-storage = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 serde_json = "1"
 futures-util = "0.3"
