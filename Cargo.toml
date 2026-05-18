@@ -100,15 +100,15 @@ halo2curves = { version = "0.7.0", default-features = false, features = ["bn256-
 # Note: deps with package = "..." overrides (citrate-agent-core →
 # citrate-agent-legacy) stay inline in members because workspace inheritance
 # + package rename has rough edges in older cargo.
-citrate-wallet-core = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-storage     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-consensus   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-execution   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-sequencer   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-network     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-economics   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-api         = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", branch = "main" }
-citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", branch = "main" }
+citrate-wallet-core = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-storage     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-consensus   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-execution   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-sequencer   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-network     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-economics   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-api         = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "0f2d16b486a9ec1ed8a0394440dac480075d6942" }
+citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", rev = "7b7eb9fa9f0855b468dcd12ec4dd856fe196f7e2" }
 
 [profile.release]
 opt-level = 3
