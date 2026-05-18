@@ -82,7 +82,7 @@ jobs:
       - name: Install system deps (Slint)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config libfontconfig1-dev xvfb
+          sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config libfontconfig1-dev libdbus-1-dev xvfb
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
