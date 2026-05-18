@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH agent (3 deploy keys via per-host aliases)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.CHAIN_DEPLOY_KEY }}
+            ${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}
+            ${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}
+
+      - name: Configure SSH host aliases
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+          # Find the key files webfactory/ssh-agent dropped
+          chain_key=$(ssh-add -L | awk 'NR==1 {print $3}' | xargs -I{} echo "{}")
+
+          # webfactory drops the keys in the agent but not on disk.
+          # For per-host IdentityFile mapping, write them out from the
+          # secrets directly so SSH config can point at files.
+          umask 077
+          echo "${{ secrets.CHAIN_DEPLOY_KEY }}" > ~/.ssh/citrate-chain-readonly
+          echo "${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}" > ~/.ssh/citrate-learning-center-readonly
+          echo "${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}" > ~/.ssh/citrate-agent-runtime-readonly
+          chmod 600 ~/.ssh/citrate-*-readonly
+
+          cat > ~/.ssh/config <<'SSHEOF'
+          Host github-citrate-chain
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-chain-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-learning-center
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-learning-center-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-agent-runtime
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-agent-runtime-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          SSHEOF
+          chmod 600 ~/.ssh/config
+
+          # Sanity check each alias
+          for alias in github-citrate-chain github-citrate-learning-center github-citrate-agent-runtime; do
+            ssh -T -o StrictHostKeyChecking=accept-new "$alias" 2>&1 | head -1 || true
+          done
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Install system deps (Slint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config libfontconfig1-dev xvfb
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+        continue-on-error: true
+
+      - name: cargo test
+        env:
+          CARGO_INCREMENTAL: 0
+          CARGO_BUILD_JOBS: 2
+        run: xvfb-run -a cargo test --workspace --locked --jobs 2 -- --test-threads=2

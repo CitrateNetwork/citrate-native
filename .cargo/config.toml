@@ -1,0 +1,8 @@
+# Use system git for fetches so SSH config host aliases work.
+# Required because cargo's bundled libgit2 doesn't read ~/.ssh/config.
+# This repo uses 3 deploy keys to 3 different sibling repos via aliases:
+#   github-citrate-chain          → reads citrate-wallet-core, storage, ...
+#   github-citrate-learning-center → reads citrate-edu-app
+#   github-citrate-agent-runtime  → reads citrate-agent-legacy
+[net]
+git-fetch-with-cli = true
