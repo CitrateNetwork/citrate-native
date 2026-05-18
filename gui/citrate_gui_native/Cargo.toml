@@ -5,6 +5,7 @@ edition = "2021"
 description = "Citrate desktop GUI — Rust-native Slint frontend"
 
 [dependencies]
+citrate-ui-kit = { path = "../citrate_ui_kit" }
 # Application core (headless orchestration)
 citrate-desktop-app = { path = "../citrate_desktop_app" }
 

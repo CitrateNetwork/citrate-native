@@ -1,0 +1,18 @@
+// citrate-ui-kit root: re-export shared components so slint::include_modules!()
+// in lib.rs picks them up as Rust types.
+//
+// This file is what citrate-ui-kit's own build.rs compiles. DOWNSTREAM
+// consumers that want the .slint forms (e.g. `import { ChatView } from
+// "@citrate-ui-kit/chat/chat.slint"`) import the source .slint files
+// directly via Slint's library-path mechanism — see build.rs.
+
+export { Theme } from "theme.slint";
+export { ChatView, ChatMessageData } from "chat/chat.slint";
+export {
+    LoadingButton,
+    StatusBadge,
+    PrimaryButton,
+    SecondaryButton,
+    Pressable,
+    PrivacyIndicator,
+} from "shared/feedback.slint";
