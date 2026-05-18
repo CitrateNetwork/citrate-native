@@ -15,7 +15,12 @@ concurrency:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     permissions:
       contents: read
     steps:
@@ -80,6 +85,7 @@ jobs:
           components: clippy,rustfmt
 
       - name: Install system deps (Slint)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config libfontconfig1-dev libdbus-1-dev xvfb
