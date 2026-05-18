@@ -4,6 +4,7 @@
 # citrate-chain via SSH; edu-app from citrate-learning-center; agent
 # from citrate-agent-runtime.
 members = [
+    "gui/citrate_ui_kit",
     "gui/citrate_gui_native",
     "gui/citrate_desktop_app",
 ]
