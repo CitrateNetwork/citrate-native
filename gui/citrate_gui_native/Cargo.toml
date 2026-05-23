@@ -40,7 +40,7 @@ hex = "0.4"
 citrate-wallet-core = { workspace = true }
 
 # Agent substrate (for approval requests in tool executor)
-citrate-agent-core = { git = "ssh://git@github-citrate-agent-runtime/CitrateNetwork/citrate-agent-runtime", rev = "2591ed2d28780ca7938befe853be7cd1620029cc", package = "citrate-agent-legacy" }
+citrate-agent-core = { git = "ssh://git@github-citrate-agent-runtime/CitrateNetwork/citrate-agent-runtime", rev = "557f6ee614c4a2db28ca9c13f3b2341c83d43e19", package = "citrate-agent-legacy" }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
