@@ -384,15 +384,26 @@ impl NodeBackend for EmbeddedNodeBackend {
         let configured_bootnodes = self.bootnodes.read().await.clone();
         let mut connected_count = 0u32;
         for s in &configured_bootnodes {
-            // Shared resolver: handles ip:port, hostname:port, and an optional
-            // noise_<hex>@ / peer_id@ identity prefix (hostnames resolved via DNS),
-            // so the baked hostname-based testnet config connects out of the box.
-            let addr = match citrate_network::resolve_bootnode(s).await {
-                Some((_, a)) => a,
-                None => {
-                    tracing::warn!("Cannot resolve bootnode address: {}", s);
-                    continue;
-                }
+            // Resolve [identity@]host:port, performing DNS for hostnames so the
+            // baked hostname-based testnet config (boot1.citrate.ai, …) connects
+            // out of the box. Inlined rather than calling
+            // citrate_network::resolve_bootnode because this repo pins an older
+            // citrate-network rev that predates that shared helper; bump the pin
+            // to de-duplicate once the chain rev is advanced federation-wide.
+            let host_port = s.split_once('@').map(|(_, rest)| rest).unwrap_or(s.as_str()).trim();
+            let addr = match host_port.parse::<std::net::SocketAddr>() {
+                Ok(a) => a,
+                Err(_) => match tokio::net::lookup_host(host_port)
+                    .await
+                    .ok()
+                    .and_then(|mut it| it.next())
+                {
+                    Some(a) => a,
+                    None => {
+                        tracing::warn!("Cannot resolve bootnode address: {}", s);
+                        continue;
+                    }
+                },
             };
 
             tracing::info!("=== Connecting to bootnode {} ===", addr);
