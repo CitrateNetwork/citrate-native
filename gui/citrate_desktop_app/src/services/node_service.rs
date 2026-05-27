@@ -191,19 +191,9 @@ impl EmbeddedNodeBackend {
     }
 }
 
-/// Parse bootnode string: "noise_<hex>@<ip>:<port>" → (PeerId, SocketAddr)
-fn parse_bootnode(s: &str) -> Option<(citrate_network::PeerId, std::net::SocketAddr)> {
-    let (peer_part, addr_part) = if let Some((pid, rest)) = s.split_once('@') {
-        (Some(pid.trim()), rest.trim())
-    } else {
-        (None, s.trim())
-    };
-    let addr: std::net::SocketAddr = addr_part.parse().ok()?;
-    let peer_id = peer_part
-        .map(|p| citrate_network::PeerId::new(p.to_string()))
-        .unwrap_or_else(citrate_network::PeerId::random);
-    Some((peer_id, addr))
-}
+// Bootnode parsing + DNS resolution now lives in the shared
+// `citrate_network::resolve_bootnode` so the embedded node resolves hostname
+// bootnodes (e.g. boot1.citrate.ai) identically to the standalone daemon.
 
 #[async_trait::async_trait]
 impl NodeBackend for EmbeddedNodeBackend {
@@ -386,16 +376,14 @@ impl NodeBackend for EmbeddedNodeBackend {
         let configured_bootnodes = self.bootnodes.read().await.clone();
         let mut connected_count = 0u32;
         for s in &configured_bootnodes {
-            let addr: std::net::SocketAddr = match s.parse() {
-                Ok(a) => a,
-                Err(_) => {
-                    // Try parsing as noise_<hex>@ip:port format
-                    if let Some((_, a)) = parse_bootnode(s) {
-                        a
-                    } else {
-                        tracing::warn!("Cannot parse bootnode address: {}", s);
-                        continue;
-                    }
+            // Shared resolver: handles ip:port, hostname:port, and an optional
+            // noise_<hex>@ / peer_id@ identity prefix (hostnames resolved via DNS),
+            // so the baked hostname-based testnet config connects out of the box.
+            let addr = match citrate_network::resolve_bootnode(s).await {
+                Some((_, a)) => a,
+                None => {
+                    tracing::warn!("Cannot resolve bootnode address: {}", s);
+                    continue;
                 }
             };
 
