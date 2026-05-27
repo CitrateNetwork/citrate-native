@@ -170,7 +170,15 @@ impl EmbeddedNodeBackend {
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             background_tasks: tokio::sync::Mutex::new(Vec::new()),
-            bootnodes: tokio::sync::RwLock::new(vec!["159.65.227.42:30303".to_string()]),
+            // Current testnet-beta bootnodes (boot{1,2,3} discovery + sequencer
+            // for sync). Hostnames resolve via citrate_network::resolve_bootnode.
+            // Overridden by set_bootnodes() when the app config is loaded.
+            bootnodes: tokio::sync::RwLock::new(vec![
+                "noise_f356d3ebb07371eaad371b3960272f9d58fc457cde409c34549ef03776b78141@boot1.citrate.ai:30303".to_string(),
+                "noise_4ed281386422f6a65b92d8760d24baa82bb1b476e9dd3e21d5a070d026802c07@boot2.citrate.ai:30303".to_string(),
+                "noise_2b4924671e0babc9f52eb1695c72141a9c639e17ad95a2a2d2a715eae34a420e@boot3.citrate.ai:30303".to_string(),
+                "noise_6ee549718d522c9ccc122585dfedef72aea8df24f4a2bb0264e7658a91118b4a@rpc.citrate.ai:30303".to_string(),
+            ]),
             ipfs_daemon: tokio::sync::RwLock::new(None),
             lifecycle: tokio::sync::Mutex::new(()),
         }
