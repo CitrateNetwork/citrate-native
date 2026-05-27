@@ -163,8 +163,15 @@ impl Default for AppConfig {
             rpc_port: 18545,
             p2p_port: 30304,
             mcp_port: services::mcp_host::DEFAULT_MCP_PORT,
+            // Current testnet-beta bootnodes (mirror of citrate-chain
+            // node/config/testnet-beta.toml). boot{1,2,3} are discovery; the
+            // sequencer (rpc.citrate.ai) is the block source that drives sync.
+            // Hostnames resolve via the shared citrate_network::resolve_bootnode.
             bootnodes: vec![
-                "159.65.227.42:30303".to_string(),
+                "noise_f356d3ebb07371eaad371b3960272f9d58fc457cde409c34549ef03776b78141@boot1.citrate.ai:30303".to_string(),
+                "noise_4ed281386422f6a65b92d8760d24baa82bb1b476e9dd3e21d5a070d026802c07@boot2.citrate.ai:30303".to_string(),
+                "noise_2b4924671e0babc9f52eb1695c72141a9c639e17ad95a2a2d2a715eae34a420e@boot3.citrate.ai:30303".to_string(),
+                "noise_6ee549718d522c9ccc122585dfedef72aea8df24f4a2bb0264e7658a91118b4a@rpc.citrate.ai:30303".to_string(),
             ],
             theme: "dark".to_string(),
             ai_keys: HashMap::new(),
