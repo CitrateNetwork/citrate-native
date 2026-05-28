@@ -194,7 +194,7 @@ jobs:
         run: |
           set -e
           cargo build --release --locked --target ${{ matrix.target }} \
-            -p citrate_desktop_app
+            -p citrate-desktop-app
 
       - name: Package installers
         shell: bash
