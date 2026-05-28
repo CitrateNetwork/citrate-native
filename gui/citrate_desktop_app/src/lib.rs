@@ -494,6 +494,19 @@ impl AppCore {
             "devnet" => format!("http://127.0.0.1:{}", loaded.rpc_port),
             _ => "https://rpc.citrate.ai".to_string(),
         };
+
+        // First-run bundled-model seeding. The installer ships
+        // gemma-4-E4B-it-Q4_K_M.gguf inside the .app/.deb/.msi (see
+        // citrate-labs/branding/models/MODEL_GEMMA_4_E4B.md for provenance).
+        // The GGUF engine looks for models in ~/.citrate/models/. On first
+        // run we copy the bundled file there so the chat works out of the box
+        // — no manual download, no Ollama dependency, no registry round-trip.
+        // Subsequent launches see the file present and skip the copy; the
+        // user can `rm` it to fall back to download / re-bundling.
+        if let Err(e) = Self::seed_bundled_model() {
+            tracing::warn!("First-run bundled-model copy failed (non-fatal): {}", e);
+        }
+
         let config = Arc::new(RwLock::new(loaded));
         let events = Arc::new(event_bus::EventBus::new());
         let node = Arc::new(services::NodeService::new(
@@ -587,6 +600,75 @@ impl AppCore {
         }
     }
 
+    /// Copy the GGUF model the installer bundles next to the binary into the
+    /// user's `~/.citrate/models/` directory if it isn't already there.
+    ///
+    /// The bundled model is shipped inside the installer's resources tree:
+    ///   * macOS:   `<app>/Contents/Resources/branding/models/*.gguf`
+    ///   * Linux:   `<install_prefix>/share/<binary>/branding/models/*.gguf`
+    ///   * Windows: `<install_dir>\branding\models\*.gguf`
+    ///
+    /// We probe a few likely locations relative to the running executable
+    /// rather than hardcoding any single OS layout — cargo-packager's exact
+    /// placement varies per format. First match wins.
+    fn seed_bundled_model() -> std::io::Result<()> {
+        let target_dir = dirs::home_dir()
+            .map(|d| d.join(".citrate").join("models"))
+            .ok_or_else(|| std::io::Error::other("no home directory"))?;
+        std::fs::create_dir_all(&target_dir)?;
+
+        let exe = std::env::current_exe()?;
+        let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
+
+        // Candidate roots where cargo-packager may have placed `branding/models/`.
+        let candidates: Vec<std::path::PathBuf> = vec![
+            // macOS .app: Contents/MacOS/<binary> → ../Resources/branding/models/
+            exe_dir.join("..").join("Resources").join("branding").join("models"),
+            // Linux .deb / .AppImage convention: alongside the binary
+            exe_dir.join("branding").join("models"),
+            // Linux .deb absolute install layout
+            std::path::PathBuf::from("/usr/share/citrate-gui-native/branding/models"),
+            std::path::PathBuf::from("/usr/share/citrate-wallet/branding/models"),
+            // Repo-relative — useful during `cargo run` from a workspace checkout
+            exe_dir.join("..").join("..").join("..").join("branding").join("models"),
+        ];
+
+        for root in &candidates {
+            if !root.is_dir() {
+                continue;
+            }
+            let entries = match std::fs::read_dir(root) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) if n.ends_with(".gguf") => n.to_string(),
+                    _ => continue,
+                };
+                let dest = target_dir.join(&name);
+                if dest.exists() {
+                    tracing::debug!("Bundled model already seeded: {}", dest.display());
+                    continue;
+                }
+                tracing::info!(
+                    "Seeding bundled model: {} → {}",
+                    path.display(),
+                    dest.display()
+                );
+                std::fs::copy(&path, &dest)?;
+            }
+            return Ok(());
+        }
+
+        tracing::debug!(
+            "No bundled GGUF found in installer resources (checked {} locations) — \
+             user must download a model via Settings → AI Configuration",
+            candidates.len()
+        );
+        Ok(())
+    }
 }
 
 impl Default for AppCore {
