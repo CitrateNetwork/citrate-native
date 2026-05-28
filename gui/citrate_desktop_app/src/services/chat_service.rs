@@ -548,47 +548,56 @@ impl ChatService {
             };
         }
 
-        // 2. Check for local GGUF files
+        // 2. Check for local GGUF files. We prefer the bundled Gemma over any
+        //    stale leftover (e.g. an old qwen2.5-1.5b-instruct-q4_0.gguf from a
+        //    previous wallet version) so the UI matches what the installer
+        //    ships. Ordering: name starts with "gemma" → wins; otherwise
+        //    deterministic alphabetical (read_dir is unsorted on macOS/Linux).
+        fn pick_local_gguf(dir: &std::path::Path) -> Option<String> {
+            let mut files: Vec<String> = std::fs::read_dir(dir)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            files.sort_by(|a, b| {
+                let a_gemma = a.to_lowercase().starts_with("gemma");
+                let b_gemma = b.to_lowercase().starts_with("gemma");
+                match (a_gemma, b_gemma) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.cmp(b),
+                }
+            });
+            files.into_iter().next()
+        }
+
         let model_dir = dirs::data_local_dir()
             .map(|d| d.join("citrate").join("models"));
         if let Some(ref dir) = model_dir {
             if dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    let gguf_files: Vec<String> = entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
-                        .map(|e| e.file_name().to_string_lossy().to_string())
-                        .collect();
-                    if let Some(first) = gguf_files.first() {
-                        tracing::info!("Detected local GGUF model: {}", first);
-                        return DetectedBackend {
-                            display_name: first.clone(),
-                            model_id: first.clone(),
-                            backend_type: "gguf".to_string(),
-                        };
-                    }
+                if let Some(first) = pick_local_gguf(dir) {
+                    tracing::info!("Detected local GGUF model: {}", first);
+                    return DetectedBackend {
+                        display_name: first.clone(),
+                        model_id: first.clone(),
+                        backend_type: "gguf".to_string(),
+                    };
                 }
             }
         }
 
-        // Also check ~/.citrate/models/ (download target)
+        // Also check ~/.citrate/models/ (download / first-run seed target)
         if let Some(home) = dirs::home_dir() {
             let alt_dir = home.join(".citrate").join("models");
             if alt_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&alt_dir) {
-                    let gguf_files: Vec<String> = entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
-                        .map(|e| e.file_name().to_string_lossy().to_string())
-                        .collect();
-                    if let Some(first) = gguf_files.first() {
-                        tracing::info!("Detected local GGUF model (home): {}", first);
-                        return DetectedBackend {
-                            display_name: first.clone(),
-                            model_id: first.clone(),
-                            backend_type: "gguf".to_string(),
-                        };
-                    }
+                if let Some(first) = pick_local_gguf(&alt_dir) {
+                    tracing::info!("Detected local GGUF model (home): {}", first);
+                    return DetectedBackend {
+                        display_name: first.clone(),
+                        model_id: first.clone(),
+                        backend_type: "gguf".to_string(),
+                    };
                 }
             }
         }

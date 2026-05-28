@@ -626,12 +626,24 @@ impl AppCore {
         let exe = std::env::current_exe()?;
         let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
 
-        // Candidate roots where cargo-packager may have placed `branding/models/`.
+        // Candidate roots cargo-packager may have placed the GGUF in. Note that
+        // cargo-packager FLATTENS a single-file `resources` entry into the
+        // bundle's Resources/ root rather than preserving the source's
+        // `branding/models/` parent path — empirically verified on the
+        // 0.4.0-aarch64 .app where the file lives at
+        // `Contents/Resources/gemma-4-E4B-it-Q4_K_M.gguf` directly. We probe
+        // both layouts (flat first, nested second) so the seeder also works
+        // for any future builder that does preserve the parent path.
         let candidates: Vec<std::path::PathBuf> = vec![
-            // macOS .app: Contents/MacOS/<binary> → ../Resources/branding/models/
+            // macOS .app, flat layout (cargo-packager 0.11.x today):
+            //   Contents/MacOS/<binary> → ../Resources/*.gguf
+            exe_dir.join("..").join("Resources"),
+            // macOS .app, nested layout (defensive):
+            //   ../Resources/branding/models/*.gguf
             exe_dir.join("..").join("Resources").join("branding").join("models"),
             // Linux .deb / .AppImage convention: alongside the binary
             exe_dir.join("branding").join("models"),
+            exe_dir.to_path_buf(),
             // Linux .deb absolute install layout
             std::path::PathBuf::from("/usr/share/citrate-gui-native/branding/models"),
             std::path::PathBuf::from("/usr/share/citrate-wallet/branding/models"),
