@@ -56,7 +56,7 @@ resources = [
 # Explicit binary inventory. `main = true` marks the entrypoint for
 # launcher menus (Start Menu group, Dock icon, .desktop Exec=).
 [[binaries]]
-path = "citrate_desktop_app"
+path = "citrate-desktop-app"
 main = true
 
 # ─────────────────────────── macOS ───────────────────────────
