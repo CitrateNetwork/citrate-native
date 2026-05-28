@@ -26,7 +26,6 @@ End-user desktop wallet for the Citrate Network. Manage accounts, send tCTR tran
 """
 authors  = ["Citrate Labs <support@citrate.ai>"]
 homepage = "https://citrate.ai"
-license-file = "../../LICENSE"
 category = "Finance"
 copyright = "© 2026 Citrate Labs. BUSL-1.1."
 # Output formats. cargo-packager skips formats whose toolchain isn't
