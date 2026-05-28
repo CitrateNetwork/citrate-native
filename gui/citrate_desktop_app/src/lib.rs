@@ -482,7 +482,18 @@ impl AppCore {
     /// Create a new application core with default configuration.
     pub fn new() -> Self {
         let loaded = AppConfig::load();
-        let rpc_url = format!("http://127.0.0.1:{}", loaded.rpc_port);
+        // RPC URL — the embedded node DELIBERATELY does not serve HTTP JSON-RPC
+        // (only P2P sync), so a local-port URL is wrong by design for every
+        // network except an isolated devnet. Testnet/anything-else points at
+        // the public sequencer (https://rpc.citrate.ai), matching the same
+        // network-aware selector used by the GUI's `active_rpc_url` and the
+        // wallet-core default. This fixes the chat/model/block/learning/compute
+        // services that previously failed with "Chat RPC failed: error sending
+        // request for url(…127.0.0.1:18545)".
+        let rpc_url = match loaded.network.as_str() {
+            "devnet" => format!("http://127.0.0.1:{}", loaded.rpc_port),
+            _ => "https://rpc.citrate.ai".to_string(),
+        };
         let config = Arc::new(RwLock::new(loaded));
         let events = Arc::new(event_bus::EventBus::new());
         let node = Arc::new(services::NodeService::new(
