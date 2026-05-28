@@ -119,6 +119,9 @@ export component AIConfigSection inherits VerticalLayout {
             ActionButton { width: 50px; label: "Scan"; clicked => { root.scan-models(); } }
         }
 
-        ActionButton { label: "Download Qwen 2.5 7B (~4.7 GB)"; clicked => { root.download-model(); } }
+        // Label reflects what the installer actually bundles. The handler
+        // re-seeds the .app's embedded Gemma 4 E4B into ~/.citrate/models/
+        // (no network round-trip required; the GGUF ships inside the dmg).
+        ActionButton { label: "Seed bundled Gemma 4 E4B (5 GB)"; clicked => { root.download-model(); } }
     }
 }
