@@ -611,6 +611,12 @@ impl AppCore {
     /// We probe a few likely locations relative to the running executable
     /// rather than hardcoding any single OS layout — cargo-packager's exact
     /// placement varies per format. First match wins.
+    /// Synchronous, public variant invokable from the GUI's Settings → Download
+    /// Model handler. Same logic as the private first-run seeder.
+    pub fn seed_bundled_model_public() -> std::io::Result<()> {
+        Self::seed_bundled_model()
+    }
+
     fn seed_bundled_model() -> std::io::Result<()> {
         let target_dir = dirs::home_dir()
             .map(|d| d.join(".citrate").join("models"))
