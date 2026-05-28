@@ -4314,6 +4314,92 @@ fn main() {
         });
     });
 
+    // --- Settings: Remove Bootnode ---
+    // Mirror of add_bootnode. The UI surfaces a row-level Remove button on
+    // each entry in peer_connections.slint; clicking it was a no-op before
+    // this handler landed.
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    ui.on_settings_remove_bootnode(move |addr| {
+        let addr_str = addr.to_string();
+        tracing::info!("Settings: removing bootnode {}", addr_str);
+        let core = core.clone();
+        spawn_async(&rt_h, async move {
+            let mut config = core.config.write().await;
+            config.bootnodes.retain(|b| b != &addr_str);
+            let _ = config.save();
+        });
+    });
+
+    // --- Settings: Retry Bootnode connectivity ---
+    // Re-runs the full health pipeline (bootnode TCP + IPFS HTTP + RPC).
+    // Mapped from system_health.slint's "Retry" button next to the
+    // bootnode row. Cheap (~6s worst case); also serves retry-node-rpc
+    // and refresh-health since they all rebuild the same view.
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    let ui_w_retry = ui.as_weak();
+    ui.on_settings_retry_bootnode(move || {
+        tracing::info!("Settings: retry bootnode probe");
+        let core = core.clone();
+        let ui_w = ui_w_retry.clone();
+        spawn_async(&rt_h, async move {
+            run_health_probes(&core, ui_w).await;
+        });
+    });
+
+    // --- Settings: Retry Node RPC ---
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    let ui_w_retry_rpc = ui.as_weak();
+    ui.on_settings_retry_node_rpc(move || {
+        tracing::info!("Settings: retry node RPC probe");
+        let core = core.clone();
+        let ui_w = ui_w_retry_rpc.clone();
+        spawn_async(&rt_h, async move {
+            run_health_probes(&core, ui_w).await;
+        });
+    });
+
+    // --- Settings: Refresh Health (all probes) ---
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    let ui_w_refresh = ui.as_weak();
+    ui.on_settings_refresh_health(move || {
+        tracing::info!("Settings: refresh all health probes");
+        let core = core.clone();
+        let ui_w = ui_w_refresh.clone();
+        spawn_async(&rt_h, async move {
+            run_health_probes(&core, ui_w).await;
+        });
+    });
+
+    // --- Settings: Start IPFS ---
+    // The IPFS daemon currently boots inside NodeService::start_node()
+    // alongside the embedded chain node, so the canonical way to start
+    // IPFS is "start the node." The dedicated button restarts the node to
+    // re-run that init, which is the simplest way to recover when IPFS
+    // failed to come up on the first attempt (the warn! in start_node
+    // doesn't propagate to the UI; user-visible failure surfaces via the
+    // health-panel row). After the restart, a probe pass rebuilds the
+    // health row so the user sees the new state.
+    let core = app_core.clone();
+    let rt_h = rt.handle().clone();
+    let ui_w_ipfs = ui.as_weak();
+    ui.on_settings_start_ipfs(move || {
+        tracing::info!("Settings: start IPFS (via node restart)");
+        let core = core.clone();
+        let ui_w = ui_w_ipfs.clone();
+        spawn_async(&rt_h, async move {
+            // Best-effort restart; ignore errors (they surface via tracing).
+            let _ = core.node.stop_node().await;
+            let chain_id = core.config.read().await.chain_id;
+            let data_dir = core.config.read().await.data_dir.clone();
+            let _ = core.node.start_node(chain_id, &data_dir).await;
+            run_health_probes(&core, ui_w).await;
+        });
+    });
+
     // --- Settings: Set Theme ---
     let core = app_core.clone();
     let rt_h = rt.handle().clone();
@@ -6137,83 +6223,60 @@ fn main() {
     let rt_h = rt.handle().clone();
     ui.on_settings_download_model(move || {
         let ui_w = ui_w.clone();
-        tracing::info!("Settings: starting Qwen 2.5 1.5B download");
+        tracing::info!("Settings: ensuring bundled Gemma 4 model is seeded into ~/.citrate/models/");
         spawn_async(&rt_h, async move {
+            // The installer ships gemma-4-E4B-it-Q4_K_M.gguf inside
+            // <app>/Contents/Resources/branding/models/ (and the equivalent
+            // path on Linux/Windows). Re-running the seed copies it into
+            // ~/.citrate/models/ if it isn't already there. This replaces
+            // the previous HuggingFace download that silently failed when
+            // the user had no network OR hit HF rate limits — both were
+            // common partner reports.
+            //
+            // The original Qwen 2.5 1.5B download URL is dead from the
+            // wallet's point of view: the user already gets Gemma 4 E4B
+            // (5 GB, multimodal, function-calling) bundled in the installer.
+            // Pressing "Download Model" now means "make sure the bundled
+            // one is available." Reaching for other models happens via the
+            // ModelRegistry contract — see Settings → Scan or the registry
+            // browser once the team's IPFS pinning is live.
+            let result = tokio::task::spawn_blocking(citrate_desktop_app::AppCore::seed_bundled_model_public)
+                .await
+                .unwrap_or_else(|e| Err(std::io::Error::other(format!("seed task panicked: {}", e))));
+
             let model_dir = dirs::home_dir()
                 .map(|d| d.join(".citrate/models"))
                 .unwrap_or_else(|| std::path::PathBuf::from(".citrate/models"));
-            if let Err(e) = std::fs::create_dir_all(&model_dir) {
-                tracing::error!("Failed to create model dir: {}", e);
-                return;
-            }
 
-            let model_path = model_dir.join("qwen2.5-1.5b-instruct-q4_0.gguf");
-            if model_path.exists() {
-                tracing::info!("Model already downloaded: {:?}", model_path);
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_w.upgrade() {
-                        ui.set_chat_model_loaded(true);
-                        ui.set_chat_model_name("qwen2.5-1.5b-instruct-q4_0.gguf".into());
-                    }
-                });
-                return;
-            }
-
-            let url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_0.gguf";
-            tracing::info!("Downloading {} to {:?} (~1GB)", url, model_path);
-
-            let client = reqwest::Client::new();
-            match client.get(url).send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        tracing::error!("Download failed: HTTP {}", response.status());
-                        return;
-                    }
-                    let total = response.content_length().unwrap_or(0);
-                    tracing::info!("Download started: {} MB", total / 1024 / 1024);
-
-                    // Stream to file to avoid holding 1GB in memory
-                    use tokio::io::AsyncWriteExt;
-                    let file = tokio::fs::File::create(&model_path).await;
-                    match file {
-                        Ok(mut file) => {
-                            let mut stream = response.bytes_stream();
-                            use futures_util::StreamExt;
-                            let mut downloaded: u64 = 0;
-                            while let Some(chunk) = stream.next().await {
-                                match chunk {
-                                    Ok(bytes) => {
-                                        if let Err(e) = file.write_all(&bytes).await {
-                                            tracing::error!("Write failed: {}", e);
-                                            return;
-                                        }
-                                        downloaded += bytes.len() as u64;
-                                        if downloaded % (50 * 1024 * 1024) < bytes.len() as u64 {
-                                            tracing::info!("Downloaded {} / {} MB",
-                                                downloaded / 1024 / 1024,
-                                                total / 1024 / 1024);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Download stream error: {}", e);
-                                        return;
-                                    }
-                                }
-                            }
-                            tracing::info!("Model download complete: {:?} ({} MB)",
-                                model_path, downloaded / 1024 / 1024);
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_chat_model_loaded(true);
-                                    ui.set_chat_model_name("qwen2.5-1.5b-instruct-q4_0.gguf".into());
-                                }
-                            });
+            let mut bundled_name: Option<String> = None;
+            if let Ok(entries) = std::fs::read_dir(&model_dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
+                        if name.ends_with(".gguf") {
+                            bundled_name = Some(name.to_string());
+                            break;
                         }
-                        Err(e) => tracing::error!("Failed to create file: {}", e),
                     }
                 }
-                Err(e) => tracing::error!("Download request failed: {}", e),
             }
+
+            let model_name = bundled_name.unwrap_or_else(|| "(no model found)".to_string());
+            let status_msg = match result {
+                Ok(()) => format!("Ready: {}", model_name),
+                Err(e) => {
+                    tracing::error!("Bundled-model seed failed: {}", e);
+                    format!("Seed failed: {} — see logs", e)
+                }
+            };
+            tracing::info!("Settings: download/seed result → {}", status_msg);
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    let loaded = !model_name.starts_with("(no");
+                    ui.set_chat_model_loaded(loaded);
+                    ui.set_chat_model_name(model_name.into());
+                }
+            });
         });
     });
 
