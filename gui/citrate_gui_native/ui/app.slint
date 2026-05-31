@@ -264,12 +264,15 @@ export component App inherits Window {
     callback settings-stop-node;
     callback settings-restart-node;
     callback settings-add-bootnode(string);
+    callback settings-remove-bootnode(string);
     callback settings-set-theme(string);
     callback settings-factory-reset;
     callback settings-connect-github;
     callback settings-connect-huggingface;
     callback settings-save-integration-token(string, string);
     callback settings-set-environment(string);
+    callback settings-open-graph-window;
+    callback settings-save-graph-path(string);
 
     // P960-K T1-4: System health preflight state
     in property <string> health-bootnode-status: "checking";
@@ -682,6 +685,7 @@ export component App inherits Window {
                     stop-node => { root.settings-stop-node(); }
                     restart-node => { root.settings-restart-node(); }
                     add-bootnode(addr) => { root.settings-add-bootnode(addr); }
+                    remove-bootnode(addr) => { root.settings-remove-bootnode(addr); }
                     set-theme(mode) => { root.settings-set-theme(mode); }
                     factory-reset => { root.settings-factory-reset(); }
                     connect-github => { root.settings-connect-github(); }
@@ -691,6 +695,8 @@ export component App inherits Window {
                     save-ai-key(provider, key) => { root.settings-save-ai-key(provider, key); }
                     scan-models => { root.settings-scan-models(); }
                     download-model => { root.settings-download-model(); }
+                    open-graph-window => { root.settings-open-graph-window(); }
+                    save-graph-path(p) => { root.settings-save-graph-path(p); }
                     // P960-K T1-4: dependency health
                     health-bootnode-status: root.health-bootnode-status;
                     health-bootnode-detail: root.health-bootnode-detail;

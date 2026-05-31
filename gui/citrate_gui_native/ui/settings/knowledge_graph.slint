@@ -57,6 +57,7 @@ export component KnowledgeGraphSection inherits VerticalLayout {
                 }
             }
             ActionButton { width: 40px; label: "Save"; clicked => { root.save-graph-path(root.graph-path); } }
+            ActionButton { width: 48px; label: "Open"; clicked => { root.open-graph-window(); } }
         }
     }
 }

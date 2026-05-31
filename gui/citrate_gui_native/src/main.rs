@@ -4331,72 +4331,64 @@ fn main() {
         });
     });
 
-    // --- Settings: Retry Bootnode connectivity ---
-    // Re-runs the full health pipeline (bootnode TCP + IPFS HTTP + RPC).
-    // Mapped from system_health.slint's "Retry" button next to the
-    // bootnode row. Cheap (~6s worst case); also serves retry-node-rpc
-    // and refresh-health since they all rebuild the same view.
+    // NOTE (WP-1.3): the System Health "Retry bootnode / Retry RPC / Refresh /
+    // Start IPFS" buttons are wired via the `on_health_*` callbacks further
+    // below. app.slint forwards SettingsView's retry-bootnode/retry-node-rpc/
+    // refresh-health/start-ipfs to `root.health-*`, so the live handlers are
+    // `on_health_retry_bootnode`, `on_health_retry_node_rpc`,
+    // `on_health_refresh_all`, and `on_health_start_ipfs`. An earlier set of
+    // `on_settings_*` duplicates here referenced callbacks that were never
+    // declared on the window (`settings-retry-bootnode`, …) — those methods
+    // don't exist in the generated bindings and broke the build. Removed.
+
+    // --- Settings: Knowledge Graph — open graph folder ---
+    // The Logseq graph is a directory on disk (config.logseq_graph_path);
+    // trail journals are written under {path}/journals/ (see trail.rs). The
+    // "Open Graph Window" button reveals that folder in the OS file manager,
+    // creating it first so the action always lands on a real directory even
+    // before the first journal write.
     let core = app_core.clone();
     let rt_h = rt.handle().clone();
-    let ui_w_retry = ui.as_weak();
-    ui.on_settings_retry_bootnode(move || {
-        tracing::info!("Settings: retry bootnode probe");
+    ui.on_settings_open_graph_window(move || {
+        tracing::info!("Settings: open knowledge-graph folder");
         let core = core.clone();
-        let ui_w = ui_w_retry.clone();
         spawn_async(&rt_h, async move {
-            run_health_probes(&core, ui_w).await;
+            let raw = core.config.read().await.logseq_graph_path.clone();
+            let path = match raw.strip_prefix("~/") {
+                Some(rest) => dirs::home_dir()
+                    .map(|h| h.join(rest))
+                    .unwrap_or_else(|| std::path::PathBuf::from(&raw)),
+                None => std::path::PathBuf::from(&raw),
+            };
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                tracing::warn!("Could not create knowledge-graph dir {:?}: {}", path, e);
+            }
+            #[cfg(target_os = "macos")]
+            let opener = "open";
+            #[cfg(target_os = "linux")]
+            let opener = "xdg-open";
+            #[cfg(target_os = "windows")]
+            let opener = "explorer";
+            if let Err(e) = std::process::Command::new(opener).arg(&path).spawn() {
+                tracing::warn!("Could not open knowledge-graph folder {:?}: {}", path, e);
+            }
         });
     });
 
-    // --- Settings: Retry Node RPC ---
+    // --- Settings: Knowledge Graph — save graph path ---
+    // Persists the edited path into config.logseq_graph_path (mirror of the
+    // remove_bootnode handler above). The trail recorder reads this on its
+    // next journal write.
     let core = app_core.clone();
     let rt_h = rt.handle().clone();
-    let ui_w_retry_rpc = ui.as_weak();
-    ui.on_settings_retry_node_rpc(move || {
-        tracing::info!("Settings: retry node RPC probe");
+    ui.on_settings_save_graph_path(move |path| {
+        let path_str = path.to_string();
+        tracing::info!("Settings: saving knowledge-graph path {}", path_str);
         let core = core.clone();
-        let ui_w = ui_w_retry_rpc.clone();
         spawn_async(&rt_h, async move {
-            run_health_probes(&core, ui_w).await;
-        });
-    });
-
-    // --- Settings: Refresh Health (all probes) ---
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    let ui_w_refresh = ui.as_weak();
-    ui.on_settings_refresh_health(move || {
-        tracing::info!("Settings: refresh all health probes");
-        let core = core.clone();
-        let ui_w = ui_w_refresh.clone();
-        spawn_async(&rt_h, async move {
-            run_health_probes(&core, ui_w).await;
-        });
-    });
-
-    // --- Settings: Start IPFS ---
-    // The IPFS daemon currently boots inside NodeService::start_node()
-    // alongside the embedded chain node, so the canonical way to start
-    // IPFS is "start the node." The dedicated button restarts the node to
-    // re-run that init, which is the simplest way to recover when IPFS
-    // failed to come up on the first attempt (the warn! in start_node
-    // doesn't propagate to the UI; user-visible failure surfaces via the
-    // health-panel row). After the restart, a probe pass rebuilds the
-    // health row so the user sees the new state.
-    let core = app_core.clone();
-    let rt_h = rt.handle().clone();
-    let ui_w_ipfs = ui.as_weak();
-    ui.on_settings_start_ipfs(move || {
-        tracing::info!("Settings: start IPFS (via node restart)");
-        let core = core.clone();
-        let ui_w = ui_w_ipfs.clone();
-        spawn_async(&rt_h, async move {
-            // Best-effort restart; ignore errors (they surface via tracing).
-            let _ = core.node.stop_node().await;
-            let chain_id = core.config.read().await.chain_id;
-            let data_dir = core.config.read().await.data_dir.clone();
-            let _ = core.node.start_node(chain_id, &data_dir).await;
-            run_health_probes(&core, ui_w).await;
+            let mut config = core.config.write().await;
+            config.logseq_graph_path = path_str;
+            let _ = config.save();
         });
     });
 

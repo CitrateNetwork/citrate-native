@@ -49,6 +49,10 @@ export component SettingsView inherits Rectangle {
     callback scan-models;
     callback download-model;
 
+    // Knowledge-graph callbacks (section 8)
+    callback open-graph-window;
+    callback save-graph-path(string);
+
     // Integration callbacks
     callback connect-github;
     callback connect-huggingface;
@@ -156,7 +160,10 @@ export component SettingsView inherits Rectangle {
             SectionDivider {}
 
             // 8. Knowledge Graph
-            KnowledgeGraphSection {}
+            KnowledgeGraphSection {
+                open-graph-window => { root.open-graph-window(); }
+                save-graph-path(p) => { root.save-graph-path(p); }
+            }
 
             SectionDivider {}
 
