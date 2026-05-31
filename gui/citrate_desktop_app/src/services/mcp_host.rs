@@ -678,8 +678,11 @@ mod tests {
         });
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         let body = resp.0;
-        assert!(body.error.is_some(), "unknown auth_token must error");
-        assert_eq!(body.error.as_ref().unwrap().code, -32001);
+        let err = body
+            .error
+            .as_ref()
+            .expect("unknown auth_token must error");
+        assert_eq!(err.code, -32001);
         let grants = host.list_active_grants().await;
         assert_eq!(grants.len(), 0, "no grant on rejection");
     }
