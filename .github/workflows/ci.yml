@@ -106,8 +106,22 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
         continue-on-error: true
 
-      - name: cargo test
+      # Linux: wrap in xvfb so any display-probing dep has a virtual X server.
+      # (The Slint tests themselves install a headless software-renderer
+      # platform — see tests/e2e_visual.rs set_platform — so this is
+      # belt-and-suspenders, not a hard requirement.)
+      - name: cargo test (Linux)
+        if: runner.os == 'Linux'
         env:
           CARGO_INCREMENTAL: 0
           CARGO_BUILD_JOBS: 2
         run: xvfb-run -a cargo test --workspace --locked --jobs 2 -- --test-threads=2
+
+      # macOS has no xvfb (it's a Linux tool) and doesn't need one: the test
+      # suite is display-independent and the runner provides Quartz. Run bare.
+      - name: cargo test (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CARGO_INCREMENTAL: 0
+          CARGO_BUILD_JOBS: 2
+        run: cargo test --workspace --locked --jobs 2 -- --test-threads=2
