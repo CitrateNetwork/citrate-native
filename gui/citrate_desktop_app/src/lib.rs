@@ -845,6 +845,31 @@ mod tests {
         );
     }
 
+    /// PIL-01 WP-1.3: the Settings → Knowledge Graph "Save" button drives
+    /// `on_settings_save_graph_path`, whose side effect is
+    /// `config.logseq_graph_path = <path>; config.save()`. This asserts that
+    /// side effect round-trips through the on-disk config (set field → save →
+    /// load → same value), which is the user-visible contract of the handler.
+    #[test]
+    fn test_pil01_wp13_logseq_graph_path_persists() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("config.json");
+        let store = TestSecretStore::default();
+
+        let mut config = AppConfig::default();
+        config.logseq_graph_path = "/tmp/citrate-test/logseq/graphs/team".to_string();
+        config
+            .save_to_path_with_secret_store(&path, &store)
+            .expect("save config");
+
+        let loaded = AppConfig::load_from_path_with_secret_store(&path, &store);
+        assert_eq!(
+            loaded.logseq_graph_path,
+            "/tmp/citrate-test/logseq/graphs/team",
+            "save-graph-path side effect must persist logseq_graph_path"
+        );
+    }
+
     #[test]
     fn test_t0_03_load_migrates_legacy_plaintext_secret_config() {
         let temp = tempfile::tempdir().expect("temp dir");
