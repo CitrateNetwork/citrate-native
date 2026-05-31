@@ -1146,7 +1146,13 @@ mod tests {
         let svc = test_service();
         let config = svc.config.read().await;
         assert!(!config.bootnodes.is_empty(), "Default config must include testnet bootnode");
-        assert!(config.bootnodes[0].contains("159.65.227.42"), "Bootnode must point to live VPS");
+        // Default bootnodes are DNS hostnames (boot{1,2,3}.citrate.ai,
+        // rpc.citrate.ai), resolved via citrate_network::resolve_bootnode —
+        // the literal VPS IP was retired in the bootnode-DNS migration.
+        assert!(
+            config.bootnodes[0].contains("citrate.ai"),
+            "Bootnode must point to citrate.ai infra"
+        );
     }
 
     #[tokio::test]
@@ -1410,7 +1416,12 @@ mod tests {
         let svc = test_service();
         let config = svc.config.read().await;
         let bootnode = &config.bootnodes[0];
-        assert!(bootnode.contains("159.65.227.42"), "Bootnode should point to live VPS");
+        // Format: noise_<hex-pubkey>@<host>:<port> — see lib.rs default bootnodes.
+        assert!(
+            bootnode.starts_with("noise_"),
+            "Bootnode should carry a noise identity prefix"
+        );
+        assert!(bootnode.contains("citrate.ai"), "Bootnode should point to citrate.ai infra");
         assert!(bootnode.contains(":30303"), "Bootnode should specify port");
     }
 
