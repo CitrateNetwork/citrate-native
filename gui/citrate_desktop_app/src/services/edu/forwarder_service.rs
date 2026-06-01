@@ -1,14 +1,24 @@
 //! Meta-transaction forwarder service.
 //!
-//! Data source: Forwarder (0x948B...4F8F) via eth_call on chain 40204.
+//! Data source: Forwarder (0xcb5fcad3…056583e) via eth_call on chain 40204.
 //! Constructs ForwardRequest structs for student sponsored transactions.
 //! Manages nonce tracking and device binding validation.
 
 use crate::error::AppError;
 use super::abi;
 
-/// Contract address on chain 40204 (deployed 2026-04-05).
-const FORWARDER_ADDRESS: &str = "0xc63d2a04762529edB649d7a4cC3E57A0085e8544";
+/// Forwarder (EIP-2771) contract address on chain 40204.
+///
+/// RM-E.4 / GUI_NATIVE-2026-05-31-007: the single canonical Forwarder
+/// address. Three divergent values had drifted across the tree (this
+/// const, `citrate_gui_native::marketplace_client`'s registry, and a
+/// stale doc comment). Per federation-lead direction the most-current
+/// value (`marketplace_client`, committed 2026-04-22) is canonical; the
+/// others were aligned to it. `forwarder_address_matches_canonical` pins
+/// it so future divergence fails CI. NOTE: not verified against an
+/// on-chain deployment record (none in-tree) — deploy-time confirmation
+/// is the close-gate.
+const FORWARDER_ADDRESS: &str = "0xcb5fcad35f892e7e1da4bb4d17a48dd9e056583e";
 
 /// A meta-transaction forward request matching the Solidity struct.
 #[derive(Debug, Clone)]
@@ -199,5 +209,29 @@ impl ForwarderBackend for RpcForwarderBackend {
 
         hex::decode(&encoded)
             .map_err(|e| AppError::ChainQuery(format!("ABI encoding failed: {}", e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RM-E.4 / GUI_NATIVE-007 tripwire: pin the canonical Forwarder
+    /// address so it cannot silently drift again. The value is the
+    /// most-current of the three that had diverged (the
+    /// `marketplace_client` registry value, committed 2026-04-22). If a
+    /// future edit changes this const, CI fails and the change must be
+    /// re-justified against the canonical deployment.
+    #[test]
+    fn forwarder_address_matches_canonical() {
+        assert_eq!(
+            FORWARDER_ADDRESS, "0xcb5fcad35f892e7e1da4bb4d17a48dd9e056583e",
+            "Forwarder address drifted — re-confirm the canonical chain-40204 \
+             deployment before changing it (GUI_NATIVE-007)"
+        );
+        // Sanity: 0x + 40 lowercase hex.
+        assert!(FORWARDER_ADDRESS.starts_with("0x"));
+        assert_eq!(FORWARDER_ADDRESS.len(), 42);
+        assert!(FORWARDER_ADDRESS[2..].chars().all(|c| c.is_ascii_hexdigit()));
     }
 }
