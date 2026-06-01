@@ -632,6 +632,35 @@ impl WalletService {
     }
 
     /// Send SALT between accounts
+    /// RM-B1 / WP-E2.5 (audit WAL-07): re-auth above the
+    /// `RE_AUTH_THRESHOLD_WEI` (10 SALT). A long-lived session is fine for
+    /// low-value sends, but high-value transfers must require the user to
+    /// have proved password possession recently.
+    ///
+    /// RM-B / GUI_NATIVE-001: hoisted into a single helper so EVERY signing
+    /// entry point (plain + calldata-bearing) enforces the threshold. A new
+    /// signing method that forgets to call this is the exact regression the
+    /// `test_wal07_*` tripwires guard against — keep the call at the top of
+    /// each signing path.
+    async fn enforce_value_reauth(&self, value_wei: &str) -> Result<(), AppError> {
+        if let Ok(value) = value_wei.parse::<u128>() {
+            if value >= RE_AUTH_THRESHOLD_WEI {
+                let last_unlock = *self.last_unlock_at.read().await;
+                let stale = match last_unlock {
+                    Some(when) => when.elapsed().as_secs() >= RE_AUTH_FRESHNESS_SECS,
+                    None => true,
+                };
+                if stale {
+                    return Err(AppError::Wallet(format!(
+                        "Re-authentication required: transfers above {} wei require password entry within the last {} seconds",
+                        RE_AUTH_THRESHOLD_WEI, RE_AUTH_FRESHNESS_SECS
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn send_transaction(
         &self,
         from: &str,
@@ -648,25 +677,8 @@ impl WalletService {
             return Err(AppError::SessionExpired);
         }
 
-        // RM-B1 / WP-E2.5 (audit WAL-07): re-auth above the
-        // RE_AUTH_THRESHOLD_WEI (10 SALT). A long-lived session is
-        // fine for low-value sends, but high-value transfers must
-        // require the user to have proved password possession recently.
-        if let Ok(value) = value_wei.parse::<u128>() {
-            if value >= RE_AUTH_THRESHOLD_WEI {
-                let last_unlock = *self.last_unlock_at.read().await;
-                let stale = match last_unlock {
-                    Some(when) => when.elapsed().as_secs() >= RE_AUTH_FRESHNESS_SECS,
-                    None => true,
-                };
-                if stale {
-                    return Err(AppError::Wallet(format!(
-                        "Re-authentication required: transfers above {} wei require password entry within the last {} seconds",
-                        RE_AUTH_THRESHOLD_WEI, RE_AUTH_FRESHNESS_SECS
-                    )));
-                }
-            }
-        }
+        // RM-B1 / WP-E2.5 (audit WAL-07): high-value re-auth threshold.
+        self.enforce_value_reauth(value_wei).await?;
 
         // Touch the session so this signing op resets the inactivity
         // timer.
@@ -705,6 +717,14 @@ impl WalletService {
         if !status.is_active {
             return Err(AppError::SessionExpired);
         }
+
+        // RM-B / GUI_NATIVE-001 (audit WAL-07 bypass fix): the calldata
+        // path honors `value_wei` (staking joinPool/registerProvider send
+        // 1000 SALT), so it must enforce the SAME high-value re-auth
+        // threshold as `send_transaction`. Previously absent — a stale
+        // session could authorize a 100x-threshold value-bearing call.
+        self.enforce_value_reauth(value_wei).await?;
+
         if let Some(addr) = self.active_address.read().await.clone() {
             self.session_mgr.write().await.touch_session(&addr);
         }
@@ -1050,6 +1070,52 @@ mod tests {
             .send_transaction("0xabc", "0xto", &big_value, "password123")
             .await;
         assert!(r.is_ok(), "high-value send works after fresh unlock");
+    }
+
+    /// RM-B / GUI_NATIVE-001 (audit WAL-07 bypass): the calldata-bearing
+    /// signing path MUST enforce the same high-value re-auth threshold as
+    /// the plain `send_transaction`. Pre-fix this returned Ok for a
+    /// 100x-threshold staking call on a stale session (the bypass).
+    #[tokio::test]
+    async fn test_wal07_with_data_enforces_reauth() {
+        let svc = test_service();
+        svc.unlock("0xabc", "password123").await.expect("unlock");
+
+        // Sub-threshold calldata send works.
+        let small_value = (RE_AUTH_THRESHOLD_WEI / 2).to_string();
+        let r = svc
+            .send_transaction_with_data("0xabc", "0xpool", &small_value, vec![0u8; 36], "password123")
+            .await;
+        assert!(r.is_ok(), "sub-threshold calldata send must work");
+
+        // Age the unlock beyond the freshness window.
+        {
+            let mut last = svc.last_unlock_at.write().await;
+            *last = Some(
+                Instant::now()
+                    - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5),
+            );
+        }
+
+        // 1000-SALT (100x threshold) staking call via the calldata path
+        // must now require re-auth (this is the bug being closed).
+        let big_value = (RE_AUTH_THRESHOLD_WEI * 100).to_string();
+        let r = svc
+            .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "password123")
+            .await;
+        match r {
+            Err(AppError::Wallet(msg)) => {
+                assert!(msg.contains("Re-authentication"), "msg = {}", msg);
+            }
+            other => panic!("expected re-auth error on calldata path, got {:?}", other),
+        }
+
+        // Fresh unlock re-enables the high-value calldata send.
+        svc.unlock("0xabc", "password123").await.expect("re-unlock");
+        let r = svc
+            .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "password123")
+            .await;
+        assert!(r.is_ok(), "high-value calldata send works after fresh unlock");
     }
 
     /// RM-B1 / WP-E2.6 (audit WAL-08): per-account session view.
