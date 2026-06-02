@@ -4007,10 +4007,14 @@ fn main() {
                                     .ok_or_else(|| "Missing 'to' address".to_string())?;
                                 let amount = params.get("amount").and_then(|v| v.as_str())
                                     .ok_or_else(|| "Missing 'amount'".to_string())?;
-                                let amount_f64: f64 = amount.parse()
-                                    .map_err(|_| format!("Invalid amount: {}", amount))?;
-                                let wei = (amount_f64 * 1e18) as u128;
-                                let value_wei = wei.to_string();
+                                // RM-G.7: exact decimal SALT→wei conversion. The
+                                // prior `(amount.parse::<f64>() * 1e18) as u128`
+                                // lost precision for large amounts and diverged
+                                // from the popup send path; route both through the
+                                // canonical `salt_to_wei` (BigInt-exact) converter.
+                                let value_wei = citrate_wallet_core::format::salt_to_wei(amount)
+                                    .map_err(|e| format!("Invalid amount '{}': {}", amount, e))?
+                                    .to_string();
                                 let accounts = wallet.list_accounts().await;
                                 let from = accounts.first()
                                     .map(|a| a.address.clone())
