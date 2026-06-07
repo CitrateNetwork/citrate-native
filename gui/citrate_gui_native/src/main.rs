@@ -2567,7 +2567,7 @@ fn main() {
     // closes the gui-native half of TD-17/27). Opt-in + unlock-gated: signs only
     // while the relay is enabled AND a wallet session is active. Enable today via
     // `CITRATE_RELAY_ENABLED=1`; the Settings toggle (S1.3b) flips the same flag.
-    {
+    let relay_for_toggle = {
         use citrate_desktop_app::services::relay_service::{
             NodeAgentClient, RelayConfig, RelayService, WalletTxSigner,
         };
@@ -2597,10 +2597,11 @@ fn main() {
                 let rt_handle = rt.handle().clone();
                 let agent = std::sync::Arc::new(NodeAgentClient::new(agent_url));
                 let signer = std::sync::Arc::new(WalletTxSigner::new(core.wallet.clone()));
+                let relay_loop = relay.clone();
                 std::thread::spawn(move || loop {
-                    std::thread::sleep(relay.poll_interval());
+                    std::thread::sleep(relay_loop.poll_interval());
                     // Custody gate: only sign while enabled AND a GUI session is unlocked.
-                    if !relay.is_enabled() || SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed) <= 0 {
+                    if !relay_loop.is_enabled() || SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed) <= 0 {
                         continue;
                     }
                     let from = match rt_handle.block_on(core.wallet.get_primary_address()) {
@@ -2608,7 +2609,7 @@ fn main() {
                         _ => continue,
                     };
                     let report =
-                        rt_handle.block_on(relay.tick(signer.as_ref(), &from, agent.as_ref(), true));
+                        rt_handle.block_on(relay_loop.tick(signer.as_ref(), &from, agent.as_ref(), true));
                     if let Some(r) = report {
                         for s in &r.signed {
                             let short = &s.tx_hash[..s.tx_hash.len().min(12)];
@@ -2638,14 +2639,16 @@ fn main() {
                         }
                     }
                 });
+                Some(relay)
             }
             _ => {
                 tracing::warn!(
                     "signing relay: no canonical contract addresses for chain {chain_id}; relay disabled"
                 );
+                None
             }
         }
-    }
+    };
 
     // --- Background data push (non-blocking) ---
     // Runs on a separate OS thread but uses the MAIN runtime handle.
@@ -5745,6 +5748,35 @@ fn main() {
             settings.enabled, settings.allocation_percent, settings.schedule,
         );
     });
+
+    // --- GUI-RELAY-S1b: "Auto-sign won jobs" toggle ---
+    // Reflect the relay's initial (env) state, then flip the shared RelayService
+    // flag when the user toggles it. The background loop reads the same flag.
+    ui.set_relay_enabled(relay_for_toggle.as_ref().is_some_and(|r| r.is_enabled()));
+    {
+        let relay = relay_for_toggle.clone();
+        let ui_w = ui.as_weak();
+        ui.on_relay_toggled(move || {
+            let Some(ui) = ui_w.upgrade() else { return; };
+            let on = ui.get_relay_enabled();
+            match &relay {
+                Some(r) => {
+                    r.set_enabled(on);
+                    tracing::info!(
+                        "signing relay: {} via toggle",
+                        if on { "enabled" } else { "disabled" }
+                    );
+                }
+                None if on => {
+                    // No relay configured (no marketplace address for this chain) —
+                    // bounce the toggle back off and tell the user honestly.
+                    ui.set_relay_enabled(false);
+                    ui.set_clipboard_toast("Auto-sign unavailable on this chain".into());
+                }
+                None => {}
+            }
+        });
+    }
 
     // --- Compute: Claim Earnings (P960-D WP-D.4) ---
     // Data source: ContributionAccounting.claimRewards() — sends tx,

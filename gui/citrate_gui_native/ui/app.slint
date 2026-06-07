@@ -210,6 +210,7 @@ export component App inherits Window {
 
     // P960-D WP-D.2: opt-in user prefs
     in-out property <bool>   compute-enabled: false;
+    in-out property <bool>   relay-enabled: false;   // GUI-RELAY-S1 auto-sign toggle
     in-out property <int>    compute-allocation: 50;
     in-out property <string> compute-schedule: "always";
     in property <string> compute-schedule-description: "Share compute 24/7";
@@ -310,6 +311,7 @@ export component App inherits Window {
     callback compute-claim-earnings;        // P960-D WP-D.4
     callback compute-refresh;
     callback compute-settings-changed;      // P960-D WP-D.2
+    callback relay-toggled;                  // GUI-RELAY-S1 auto-sign toggle flipped
 
     // Chat tool approval
     callback chat-approve-tool;
@@ -837,11 +839,13 @@ export component App inherits Window {
                     hw-gpu-driver: root.compute-hw-gpu-driver;
 
                     enabled <=> root.compute-enabled;
+                    relay-enabled <=> root.relay-enabled;
                     allocation-percent <=> root.compute-allocation;
                     schedule <=> root.compute-schedule;
                     schedule-description: root.compute-schedule-description;
 
                     settings-changed => { root.compute-settings-changed(); }
+                    relay-toggled => { root.relay-toggled(); }
                     register-provider => { root.compute-register-provider(); }
                     claim-earnings => { root.compute-claim-earnings(); }
                     refresh => { root.compute-refresh(); }
