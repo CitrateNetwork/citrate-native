@@ -16,6 +16,7 @@ pub mod learning_service;
 pub mod compute_service;
 pub mod mcp_host;
 pub mod edu;
+pub mod relay_service;
 
 pub use node_service::NodeService;
 pub use wallet_service::WalletService;

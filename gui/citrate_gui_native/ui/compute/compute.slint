@@ -41,6 +41,9 @@ export component ComputeView inherits Rectangle {
     in-out property <string> schedule: "always";
     in property <string> schedule-description: "Share compute 24/7";
 
+    // GUI-RELAY-S1: auto-sign the node-agent's won-job writes while unlocked.
+    in-out property <bool>   relay-enabled: false;
+
     // Marketplace status (existing contract scaffolding)
     in property <int>    active-jobs: 0;
     in property <int>    available-providers: 0;
@@ -73,6 +76,7 @@ export component ComputeView inherits Rectangle {
 
     // Callbacks
     callback settings-changed;   // emitted after enabled / allocation / schedule change
+    callback relay-toggled;      // emitted after the auto-sign relay toggle flips (GUI-RELAY-S1)
     callback register-provider;  // fires ComputeMarketplace.registerProvider (P960-D WP-D.3)
     callback claim-earnings;     // fires ContributionAccounting.claimRewards (P960-D WP-D.4)
     callback refresh;
@@ -214,6 +218,48 @@ export component ComputeView inherits Rectangle {
                                 clicked => {
                                     root.enabled = !root.enabled;
                                     root.settings-changed();
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Auto-sign relay toggle (GUI-RELAY-S1) ──────────
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text { text: "Auto-sign won jobs"; color: Theme.text; font-size: 14px; font-weight: 600; }
+                            Text {
+                                text: "Settle the node-agent's won jobs on-chain automatically: this wallet signs each validated job write while it is unlocked. Off by default.";
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        // iOS-style switch
+                        Rectangle {
+                            width: 44px; height: 24px;
+                            border-radius: 12px;
+                            background: root.relay-enabled ? Theme.accent : Theme.bg-tertiary;
+                            animate background { duration: Theme.duration-fast; }
+                            y: 8px;
+
+                            Rectangle {
+                                width: 20px; height: 20px;
+                                border-radius: 10px;
+                                background: #ffffff;
+                                y: 2px;
+                                x: root.relay-enabled ? 22px : 2px;
+                                animate x { duration: Theme.duration-fast; easing: ease-in-out; }
+                            }
+
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.relay-enabled = !root.relay-enabled;
+                                    root.relay-toggled();
                                 }
                             }
                         }
