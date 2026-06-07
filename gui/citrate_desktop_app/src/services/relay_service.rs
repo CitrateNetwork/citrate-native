@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use crate::services::wallet_service::WalletBackend;
+use crate::services::wallet_service::WalletService;
 
 // ── the node-agent contract ────────────────────────────────────────────────
 // Mirrors `citrate-node-agent` `supervision::PendingSignatureRequest`.
@@ -147,16 +147,18 @@ impl RequestQueue for NodeAgentClient {
     }
 }
 
-/// Adapts the production [`WalletBackend`] to [`TxSigner`] (reuses the existing
-/// nonce-fetch → `TransactionBuilder` sign → `eth_sendRawTransaction` path; no
-/// new keystore code). The empty password relies on an already-unlocked session.
+/// Adapts the production [`WalletService`] to [`TxSigner`] (reuses its existing
+/// `send_transaction_with_data` — session check + value-reauth + nonce-fetch →
+/// `TransactionBuilder` sign → `eth_sendRawTransaction`; **no new keystore code**).
+/// The empty password relies on an already-unlocked session; the service refuses
+/// (`SessionExpired`) if it isn't — a hard backstop under the relay's unlock gate.
 pub struct WalletTxSigner {
-    backend: Arc<dyn WalletBackend>,
+    wallet: Arc<WalletService>,
 }
 
 impl WalletTxSigner {
-    pub fn new(backend: Arc<dyn WalletBackend>) -> Self {
-        Self { backend }
+    pub fn new(wallet: Arc<WalletService>) -> Self {
+        Self { wallet }
     }
 }
 
@@ -169,7 +171,7 @@ impl TxSigner for WalletTxSigner {
         value_wei: &str,
         data: Vec<u8>,
     ) -> Result<String, String> {
-        self.backend
+        self.wallet
             .send_transaction_with_data(from, to, value_wei, data, "")
             .await
             .map_err(|e| e.to_string())
@@ -355,6 +357,76 @@ pub async fn run_once(
     }
 
     report
+}
+
+// ── service (owns the opt-in toggle + config; the UI loop drives ticks) ───────
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// Static config for a relay deployment.
+#[derive(Debug, Clone)]
+pub struct RelayConfig {
+    /// node-agent supervision base URL (loopback), e.g. `http://127.0.0.1:19600`.
+    pub agent_url: String,
+    /// Chain the wallet signs for (40204).
+    pub chain_id: u64,
+    /// `ComputeMarketplace` address.
+    pub marketplace: String,
+    /// `ContributionAccounting` address.
+    pub accounting: String,
+    /// How often the UI loop should call [`RelayService::tick`].
+    pub poll_interval: Duration,
+}
+
+/// Owns the relay's opt-in toggle + config. The UI spawns a loop that calls
+/// [`RelayService::tick`] every `poll_interval`; `tick` is a **no-op unless the
+/// relay is enabled AND the wallet is unlocked** (the custody gate — the relay
+/// never auto-unlocks). All the real work is the unit-tested [`run_once`].
+pub struct RelayService {
+    config: RelayConfig,
+    enabled: AtomicBool,
+}
+
+impl RelayService {
+    /// Create disabled by default (opt-in — the user flips the toggle).
+    pub fn new(config: RelayConfig) -> Self {
+        Self {
+            config,
+            enabled: AtomicBool::new(false),
+        }
+    }
+
+    pub fn set_enabled(&self, on: bool) {
+        self.enabled.store(on, Ordering::Relaxed);
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn poll_interval(&self) -> Duration {
+        self.config.poll_interval
+    }
+
+    fn validator(&self) -> RelayValidator {
+        RelayValidator::new(self.config.chain_id, &self.config.marketplace, &self.config.accounting)
+    }
+
+    /// Run one gated cycle. Returns `None` when the relay is disabled or the
+    /// wallet is locked (nothing signed); otherwise the [`RelayTickReport`].
+    pub async fn tick(
+        &self,
+        signer: &dyn TxSigner,
+        from: &str,
+        queue: &dyn RequestQueue,
+        unlocked: bool,
+    ) -> Option<RelayTickReport> {
+        if !self.is_enabled() || !unlocked {
+            return None;
+        }
+        Some(run_once(signer, from, queue, &self.validator()).await)
+    }
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -622,6 +694,49 @@ mod tests {
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("observe"));
+    }
+
+    fn relay_service() -> RelayService {
+        RelayService::new(RelayConfig {
+            agent_url: "http://127.0.0.1:19600".into(),
+            chain_id: 40204,
+            marketplace: MARKETPLACE.into(),
+            accounting: ACCOUNTING.into(),
+            poll_interval: std::time::Duration::from_secs(5),
+        })
+    }
+
+    #[tokio::test]
+    async fn service_tick_is_noop_when_disabled() {
+        let svc = relay_service(); // disabled by default (opt-in)
+        assert!(!svc.is_enabled());
+        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let s = MockSigner::new(true);
+        // Even unlocked, a disabled relay signs nothing.
+        assert!(svc.tick(&s, FROM, &q, true).await.is_none());
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn service_tick_is_noop_when_locked() {
+        let svc = relay_service();
+        svc.set_enabled(true);
+        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let s = MockSigner::new(true);
+        // Enabled but locked → nothing signed (never auto-unlocks).
+        assert!(svc.tick(&s, FROM, &q, false).await.is_none());
+        assert!(s.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn service_tick_runs_when_enabled_and_unlocked() {
+        let svc = relay_service();
+        svc.set_enabled(true);
+        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let s = MockSigner::new(true);
+        let report = svc.tick(&s, FROM, &q, true).await.expect("should run");
+        assert_eq!(report.signed.len(), 1);
+        assert_eq!(report.signed[0].id, 7);
     }
 
     #[tokio::test]
