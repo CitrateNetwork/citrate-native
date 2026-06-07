@@ -161,6 +161,14 @@ won jobs walk `startExecution → submitCommitment → submitResult → complete
 refusing anything outside the validated allow-list. Closes the gui-native half of TD-17 /
 TD-27; pairs with `citrate-labs handoffs/GUI_NATIVE_SIGNING_RELAY_HANDOFF.md`.
 
+## Execution status (2026-06-06)
+- **S1.1 ✅** `PendingRequest` + `RelayValidator` (allow-list) + `NodeAgentClient` — 16 tests.
+- **S1.2 ✅** `run_once` (poll→validate→sign-one/tick→observe-after-hash) over `TxSigner`/`RequestQueue` mocks.
+- **S1.3 ✅** `RelayService` opt-in/unlock gate (`tick`) + `WalletTxSigner` over `WalletService` (no new keystore code) + the gui_native background loop + toast (19 relay tests total).
+- **S1.3b ✅** "Auto-sign won jobs" toggle in the Compute panel (compute.slint + app.slint + main.rs), bound to the shared `RelayService` flag.
+- **S1.4 ✅** env-gated (`CITRATE_RELAY_E2E`) read-only e2e against a live node-agent.
+- **Remaining = operator DoD (not code):** the full sign→broadcast→observe→payout on a devnet with a won job + funded unlocked wallet (planset §9). Also a future hardening item for citrate-security review: the relay's `send` touches the backend session (auto keep-alive) — bounded by the GUI session clock + opt-in + value-0 allow-list (R1).
+
 ## 10. Cross-refs
 node-agent: `relay.rs` (RelaySigner), `supervision/src/{state,server}.rs` (queue + endpoints).
 Handoff: `citrate-labs/handoffs/GUI_NATIVE_SIGNING_RELAY_HANDOFF.md`.
