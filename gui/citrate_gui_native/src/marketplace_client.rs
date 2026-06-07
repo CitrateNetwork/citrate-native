@@ -21,116 +21,114 @@
 
 use sha3::{Digest, Keccak256};
 
-/// Known marketplace deployments by chain ID. Source of truth:
-/// `contracts/DEPLOYED_ADDRESSES.md` (post-reroll 2026-04-22).
-///
-/// Add new entries here as rerolls happen. Unknown chain IDs return
-/// `None` — the UI surfaces that as "Marketplace not deployed on
-/// this network" rather than silently pointing at a zero address.
+// ── Canonical address-table loader ───────────────────────────────────
+//
+// Source of truth: the federation-canonical contract-address table
+// vendored at `src/generated/addresses.json`
+// (which mirrors `citrate-chain/contracts/addresses/40204.json`).
+// After a chain re-roll + post-redeploy ceremony, run
+// `bash scripts/sync-addresses.sh` from the gui-native repo root to
+// re-vendor the table — no inline edit, no chance of drift versus the
+// gateway / node-agent / explorer.
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+/// Vendored copy of the federation-canonical contract-address table.
+const ADDRESS_TABLE_JSON: &str = include_str!("generated/addresses.json");
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CanonicalTable {
+    chain_id: u64,
+    contracts: HashMap<String, String>,
+    aa_stack: HashMap<String, String>,
+}
+
+static CANONICAL: LazyLock<CanonicalTable> = LazyLock::new(|| {
+    serde_json::from_str::<CanonicalTable>(ADDRESS_TABLE_JSON)
+        .expect("src/generated/addresses.json is malformed at build time")
+});
+
+/// Flat name → 'static-leaked address map combining `contracts` +
+/// `aaStack`. Box::leak-ed so the public API can return `&'static str`.
+static NAME_TO_ADDRESS: LazyLock<HashMap<&'static str, &'static str>> =
+    LazyLock::new(|| {
+        let mut book =
+            HashMap::with_capacity(CANONICAL.contracts.len() + CANONICAL.aa_stack.len());
+        for (name, addr) in CANONICAL.contracts.iter().chain(CANONICAL.aa_stack.iter()) {
+            let n: &'static str = Box::leak(name.clone().into_boxed_str());
+            let a: &'static str = Box::leak(addr.clone().into_boxed_str());
+            book.insert(n, a);
+        }
+        book
+    });
+
+/// Sorted list of every contract name in the canonical table, leaked
+/// to 'static so the public API stays zero-allocation per call.
+static NAMES_SORTED: LazyLock<Box<[&'static str]>> = LazyLock::new(|| {
+    let mut names: Vec<&'static str> = NAME_TO_ADDRESS.keys().copied().collect();
+    names.sort_unstable();
+    names.into_boxed_slice()
+});
+
+fn canonical_lookup(name: &str) -> Option<&'static str> {
+    NAME_TO_ADDRESS.get(name).copied()
+}
+
+/// Known marketplace deployment by chain ID. Reads from the vendored
+/// canonical table. Unknown chain IDs return `None` — the UI surfaces
+/// that as "Marketplace not deployed on this network" rather than
+/// silently pointing at a zero address.
 pub fn compute_marketplace_address(chain_id: u64) -> Option<&'static str> {
-    match chain_id {
-        // testnet-beta (2026-04-22 reroll)
-        40204 => Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
-        _ => None,
+    if chain_id != CANONICAL.chain_id {
+        return None;
     }
+    canonical_lookup("ComputeMarketplace")
 }
 
 pub fn contribution_accounting_address(chain_id: u64) -> Option<&'static str> {
-    match chain_id {
-        40204 => Some("0x1afe987622ab5add275d2fd21248f77f5e00667f"),
-        _ => None,
+    if chain_id != CANONICAL.chain_id {
+        return None;
     }
+    canonical_lookup("ContributionAccounting")
 }
 
 pub fn learning_pool_address(chain_id: u64) -> Option<&'static str> {
-    match chain_id {
-        40204 => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
-        _ => None,
+    if chain_id != CANONICAL.chain_id {
+        return None;
     }
+    canonical_lookup("LearningPool")
 }
 
 pub fn model_registry_address(chain_id: u64) -> Option<&'static str> {
-    match chain_id {
-        40204 => Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
-        _ => None,
-    }
-}
-
-/// Full address book for testnet-beta (chain 40204). T2-7 — keeps
-/// the GUI from being a stranger to the rest of the 36 deployed
-/// contracts. Future panels and chat tools resolve names via this
-/// map instead of hardcoding addresses one-by-one.
-///
-/// Source of truth: `contracts/DEPLOYED_ADDRESSES.md` (post-reroll
-/// 2026-04-22). When the address list changes, regenerate this
-/// table from the markdown.
-#[allow(dead_code)]  // Used by future panels + chat tools (T2-7 forward infra)
-pub fn known_contract(chain_id: u64, name: &str) -> Option<&'static str> {
-    if chain_id != 40204 {
+    if chain_id != CANONICAL.chain_id {
         return None;
     }
-    match name {
-        "ModelRegistry"            => Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
-        "WrappedSALT"              => Some("0x1f73bb479f397a34b5e3145e51d25bc5007273bf"),
-        "AgentDecisionRegistry"    => Some("0x0aaa6e00fcab1da5599f6dce86e361a5e03a5759"),
-        "SpecRegistry"             => Some("0x1b6aeed728f53b48e1ed831b04a1f4812f48e928"),
-        "IPFSIncentives"           => Some("0xa6a4122126a75611ea06241e404327addfe8eb5e"),
-        "X402Facilitator"          => Some("0xc0fde3a8a42f6479cf12b4a5489e7a988c918e23"),
-        "X402Paywall"              => Some("0x11399989175783cdca8ecb095835c8cd4720c6fc"),
-        "LiquidStakingPool"        => Some("0xd71b7e33e447e062f4e796def686156805820b29"),
-        "ContributionAccounting"   => Some("0x1afe987622ab5add275d2fd21248f77f5e00667f"),
-        "NematocystSlashing"       => Some("0x425064443c3c3392c47dcbe10d455831545efd9b"),
-        "MarketMakerAllocation"    => Some("0xf61e79af3bc2a905695e45b0fa7a43f9141a554a"),
-        "ModelMarketplace"         => Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
-        "InferenceRouter"          => Some("0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
-        "LoRAFactory"              => Some("0xac6bfb1709bcba5a005fe2823b4d8bc55db2b7d9"),
-        "LearningPool"             => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
-        "LearningCycleManager"     => Some("0x20a0b74c766e84b20558abd76a7a0fd6434a4c4c"),
-        "ClassroomRegistry"        => Some("0x7e7a3db3be6fe4bea06acdbb772786432e1293e3"),
-        "ComputeVerifier"          => Some("0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
-        "ComputeMarketplace"       => Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
-        "ComputePool"              => Some("0x8b36c15552394ce44173a29d054dc5ca482e65d3"),
-        "HeartbeatMonitor"         => Some("0x46773aeca885be65cd313b7d9bce9625767d40b5"),
-        "DisputeResolution"        => Some("0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
-        "ComputePricingOracle"     => Some("0xa1eed6ae021504e2a1e310e6c0f7c1a0c5bf4647"),
-        "StablecoinTreasury"       => Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"),
-        "BulkComputeGateway"       => Some("0x7efc1eb17beff413e1af7fb3bb541e895c307300"),
-        "TestnetFarmingAccounting" => Some("0x516380b0acef9a9541641c85dbe0bf89b3e56977"),
-        "TreasuryGovernor"         => Some("0x26333384a517c50d8b116979490b4ad1506f1f9a"),
-        "AIModelRegistryPortable"  => Some("0xbaa2505d0446043be3540c0b9150c6df42d33180"),
-        "AIInferenceRouterPortable"=> Some("0xbf62ee8ee209321bbddf5dd15afd77ac327367cd"),
-        "AILearningCycleCorePortable" => Some("0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
-        "InstitutionalVault"       => Some("0x1f17fc3525e540cfd14ed0270a87c159c56aadee"),
-        "ClassroomClusterV1"       => Some("0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
-        "Forwarder"                => Some("0x2a3a7fe1619e10f9dda80ced394ebdffb90d9cbe"),
-        "BudgetAllocation"         => Some("0xd85e83cab6c5947e2cc5e77244edfce110309724"),
-        "CashoutRequest"           => Some("0x6b3c47d2807ec9bc7d2aee030845b4225dd693ab"),
-        "ModelAccessControl"       => Some("0xf7c3180dda79fb046173d96d172bf43b70174031"),
-        _ => None,
+    canonical_lookup("ModelRegistry")
+}
+
+/// Full address book for the canonical chain (40204). T2-7 — keeps the
+/// GUI from being a stranger to the rest of the deployed contracts.
+/// Future panels and chat tools resolve names via this map instead of
+/// hardcoding addresses one-by-one.
+#[allow(dead_code)] // Used by future panels + chat tools (T2-7 forward infra)
+pub fn known_contract(chain_id: u64, name: &str) -> Option<&'static str> {
+    if chain_id != CANONICAL.chain_id {
+        return None;
     }
+    canonical_lookup(name)
 }
 
 /// All deployed contract names known on this chain. Used by the
 /// chat agent and any panel that wants to enumerate the address
 /// book ("what contracts are out there?").
-#[allow(dead_code)]  // Used by future panels + chat tools (T2-7 forward infra)
+#[allow(dead_code)] // Used by future panels + chat tools (T2-7 forward infra)
 pub fn known_contract_names(chain_id: u64) -> &'static [&'static str] {
-    if chain_id != 40204 {
+    if chain_id != CANONICAL.chain_id {
         return &[];
     }
-    &[
-        "ModelRegistry", "WrappedSALT", "AgentDecisionRegistry", "SpecRegistry",
-        "IPFSIncentives", "X402Facilitator", "X402Paywall", "LiquidStakingPool",
-        "ContributionAccounting", "NematocystSlashing", "MarketMakerAllocation",
-        "ModelMarketplace", "InferenceRouter", "LoRAFactory", "LearningPool",
-        "LearningCycleManager", "ClassroomRegistry", "ComputeVerifier",
-        "ComputeMarketplace", "ComputePool", "HeartbeatMonitor", "DisputeResolution",
-        "ComputePricingOracle", "StablecoinTreasury", "BulkComputeGateway",
-        "TestnetFarmingAccounting", "TreasuryGovernor", "AIModelRegistryPortable",
-        "AIInferenceRouterPortable", "AILearningCycleCorePortable",
-        "InstitutionalVault", "ClassroomClusterV1", "Forwarder", "BudgetAllocation",
-        "CashoutRequest", "ModelAccessControl",
-    ]
+    &NAMES_SORTED
 }
 
 // ── ModelRegistry ABI helpers (T2-6) ─────────────────────────────
@@ -1020,13 +1018,38 @@ mod tests {
     }
 
     #[test]
-    fn known_contract_names_count_matches_address_book() {
-        // 36 contracts deployed; the names list should match.
-        assert_eq!(known_contract_names(40204).len(), 36);
-        // Every name should resolve to an address
-        for name in known_contract_names(40204) {
-            assert!(known_contract(40204, name).is_some(),
-                "Name '{}' in known_contract_names but not in known_contract", name);
+    fn known_contract_names_match_canonical() {
+        // Every name surfaced by `known_contract_names` resolves to an
+        // address via `known_contract` — the two views of the canonical
+        // table must agree. The exact count comes from the vendored
+        // canonical (contracts + aaStack), so this test asserts only
+        // the round-trip invariant; the canonical's own tests pin the
+        // address values.
+        let names = known_contract_names(40204);
+        assert!(
+            !names.is_empty(),
+            "vendored src/generated/addresses.json is empty — run `bash scripts/sync-addresses.sh`"
+        );
+        for name in names {
+            assert!(
+                known_contract(40204, name).is_some(),
+                "name {name:?} in known_contract_names but not in known_contract"
+            );
+        }
+        // Compute-critical names the gui drives daily must be present
+        // regardless of how the canonical evolves — pin them explicitly.
+        for required in [
+            "ModelRegistry",
+            "InferenceRouter",
+            "ComputeMarketplace",
+            "ComputePool",
+            "ContributionAccounting",
+            "LearningPool",
+        ] {
+            assert!(
+                names.contains(&required),
+                "compute-critical name {required:?} missing from canonical (vendored addresses.json may be stale)"
+            );
         }
     }
 
