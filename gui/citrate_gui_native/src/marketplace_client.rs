@@ -1006,11 +1006,11 @@ mod tests {
     fn known_contract_returns_listed_addresses() {
         // Spot-check a few well-known names
         assert_eq!(known_contract(40204, "ModelRegistry"),
-            Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"));
+            Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"));
         assert_eq!(known_contract(40204, "ComputeMarketplace"),
-            Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"));
+            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c"));
         assert_eq!(known_contract(40204, "LearningPool"),
-            Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"));
+            Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"));
         // Unknown name returns None
         assert!(known_contract(40204, "NotARealContract").is_none());
         // Wrong chain returns None
@@ -1199,16 +1199,16 @@ mod tests {
     fn canonical_address_book_compute_critical() {
         // Each pair is (name, canonical address from DEPLOYED_ADDRESSES.md).
         let canonical: &[(&str, &str)] = &[
-            ("ComputeMarketplace",     "0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
-            ("ComputePool",            "0x8b36c15552394ce44173a29d054dc5ca482e65d3"),
-            ("ComputeVerifier",        "0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
-            ("HeartbeatMonitor",       "0x46773aeca885be65cd313b7d9bce9625767d40b5"),
-            ("ComputePricingOracle",   "0xa1eed6ae021504e2a1e310e6c0f7c1a0c5bf4647"),
-            ("ContributionAccounting", "0x1afe987622ab5add275d2fd21248f77f5e00667f"),
-            ("BulkComputeGateway",     "0x7efc1eb17beff413e1af7fb3bb541e895c307300"),
-            ("ModelRegistry",          "0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
-            ("WrappedSALT",            "0x1f73bb479f397a34b5e3145e51d25bc5007273bf"),
-            ("InferenceRouter",        "0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
+            ("ComputeMarketplace",     "0xc12dbcdb80ef2ae675315f455210f39a736a373c"),
+            ("ComputePool",            "0xf1eae5dd4a1639922ea610142f7ce51330065b57"),
+            ("ComputeVerifier",        "0xf7c3180dda79fb046173d96d172bf43b70174031"),
+            ("HeartbeatMonitor",       "0xbaa2505d0446043be3540c0b9150c6df42d33180"),
+            ("ComputePricingOracle",   "0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
+            ("ContributionAccounting", "0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
+            ("BulkComputeGateway",     "0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
+            ("ModelRegistry",          "0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
+            ("WrappedSALT",            "0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
+            ("InferenceRouter",        "0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
         ];
         for (name, addr) in canonical {
             assert_eq!(
@@ -1227,7 +1227,7 @@ mod tests {
         // ComputeMarketplace address — and the per-name map entry.
         assert_eq!(
             compute_marketplace_address(40204),
-            Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6")
+            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c")
         );
         assert_eq!(
             compute_marketplace_address(40204),
