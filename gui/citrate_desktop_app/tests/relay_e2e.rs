@@ -27,8 +27,8 @@ use citrate_desktop_app::services::relay_service::{
 // Canonical chain-40204 contracts (mirror the gui_native address book +
 // citrate-chain DEPLOYED_ADDRESSES.md).
 const CHAIN_ID: u64 = 40204;
-const MARKETPLACE: &str = "0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6";
-const ACCOUNTING: &str = "0x1afe987622ab5add275d2fd21248f77f5e00667f";
+const MARKETPLACE: &str = "0xc12dbcdb80ef2ae675315f455210f39a736a373c";
+const ACCOUNTING: &str = "0x86d918808b48ad543c9c816b5303b7dbcb0e321f";
 
 /// Returns the node-agent URL if the e2e is enabled, else `None` (skip).
 fn agent_url() -> Option<String> {
