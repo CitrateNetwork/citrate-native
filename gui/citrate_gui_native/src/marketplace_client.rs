@@ -30,28 +30,28 @@ use sha3::{Digest, Keccak256};
 pub fn compute_marketplace_address(chain_id: u64) -> Option<&'static str> {
     match chain_id {
         // testnet-beta (2026-04-22 reroll)
-        40204 => Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
+        40204 => Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c"),
         _ => None,
     }
 }
 
 pub fn contribution_accounting_address(chain_id: u64) -> Option<&'static str> {
     match chain_id {
-        40204 => Some("0x1afe987622ab5add275d2fd21248f77f5e00667f"),
+        40204 => Some("0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
         _ => None,
     }
 }
 
 pub fn learning_pool_address(chain_id: u64) -> Option<&'static str> {
     match chain_id {
-        40204 => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
+        40204 => Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"),
         _ => None,
     }
 }
 
 pub fn model_registry_address(chain_id: u64) -> Option<&'static str> {
     match chain_id {
-        40204 => Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
+        40204 => Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
         _ => None,
     }
 }
@@ -70,42 +70,42 @@ pub fn known_contract(chain_id: u64, name: &str) -> Option<&'static str> {
         return None;
     }
     match name {
-        "ModelRegistry"            => Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
-        "WrappedSALT"              => Some("0x1f73bb479f397a34b5e3145e51d25bc5007273bf"),
-        "AgentDecisionRegistry"    => Some("0x0aaa6e00fcab1da5599f6dce86e361a5e03a5759"),
-        "SpecRegistry"             => Some("0x1b6aeed728f53b48e1ed831b04a1f4812f48e928"),
-        "IPFSIncentives"           => Some("0xa6a4122126a75611ea06241e404327addfe8eb5e"),
-        "X402Facilitator"          => Some("0xc0fde3a8a42f6479cf12b4a5489e7a988c918e23"),
-        "X402Paywall"              => Some("0x11399989175783cdca8ecb095835c8cd4720c6fc"),
-        "LiquidStakingPool"        => Some("0xd71b7e33e447e062f4e796def686156805820b29"),
-        "ContributionAccounting"   => Some("0x1afe987622ab5add275d2fd21248f77f5e00667f"),
-        "NematocystSlashing"       => Some("0x425064443c3c3392c47dcbe10d455831545efd9b"),
-        "MarketMakerAllocation"    => Some("0xf61e79af3bc2a905695e45b0fa7a43f9141a554a"),
-        "ModelMarketplace"         => Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
-        "InferenceRouter"          => Some("0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
-        "LoRAFactory"              => Some("0xac6bfb1709bcba5a005fe2823b4d8bc55db2b7d9"),
-        "LearningPool"             => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
-        "LearningCycleManager"     => Some("0x20a0b74c766e84b20558abd76a7a0fd6434a4c4c"),
-        "ClassroomRegistry"        => Some("0x7e7a3db3be6fe4bea06acdbb772786432e1293e3"),
-        "ComputeVerifier"          => Some("0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
-        "ComputeMarketplace"       => Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
-        "ComputePool"              => Some("0x8b36c15552394ce44173a29d054dc5ca482e65d3"),
-        "HeartbeatMonitor"         => Some("0x46773aeca885be65cd313b7d9bce9625767d40b5"),
-        "DisputeResolution"        => Some("0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
-        "ComputePricingOracle"     => Some("0xa1eed6ae021504e2a1e310e6c0f7c1a0c5bf4647"),
-        "StablecoinTreasury"       => Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"),
-        "BulkComputeGateway"       => Some("0x7efc1eb17beff413e1af7fb3bb541e895c307300"),
-        "TestnetFarmingAccounting" => Some("0x516380b0acef9a9541641c85dbe0bf89b3e56977"),
-        "TreasuryGovernor"         => Some("0x26333384a517c50d8b116979490b4ad1506f1f9a"),
-        "AIModelRegistryPortable"  => Some("0xbaa2505d0446043be3540c0b9150c6df42d33180"),
-        "AIInferenceRouterPortable"=> Some("0xbf62ee8ee209321bbddf5dd15afd77ac327367cd"),
-        "AILearningCycleCorePortable" => Some("0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
-        "InstitutionalVault"       => Some("0x1f17fc3525e540cfd14ed0270a87c159c56aadee"),
-        "ClassroomClusterV1"       => Some("0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
-        "Forwarder"                => Some("0x2a3a7fe1619e10f9dda80ced394ebdffb90d9cbe"),
-        "BudgetAllocation"         => Some("0xd85e83cab6c5947e2cc5e77244edfce110309724"),
-        "CashoutRequest"           => Some("0x6b3c47d2807ec9bc7d2aee030845b4225dd693ab"),
-        "ModelAccessControl"       => Some("0xf7c3180dda79fb046173d96d172bf43b70174031"),
+        "ModelRegistry"            => Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
+        "WrappedSALT"              => Some("0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
+        "AgentDecisionRegistry"    => Some("0xac6bfb1709bcba5a005fe2823b4d8bc55db2b7d9"),
+        "SpecRegistry"             => Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"),
+        "IPFSIncentives"           => Some("0x20a0b74c766e84b20558abd76a7a0fd6434a4c4c"),
+        "X402Facilitator"          => Some("0x7e7a3db3be6fe4bea06acdbb772786432e1293e3"),
+        "X402Paywall"              => Some("0xd29d4d059808adc43b761f41c675f1eb546e1a19"),
+        "LiquidStakingPool"        => Some("0x8951ae72e5479cae28ef7bb3caa4207d5719e24b"),
+        "ContributionAccounting"   => Some("0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
+        "NematocystSlashing"       => Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
+        "MarketMakerAllocation"    => Some("0x8b36c15552394ce44173a29d054dc5ca482e65d3"),
+        "ModelMarketplace"         => Some("0x46773aeca885be65cd313b7d9bce9625767d40b5"),
+        "InferenceRouter"          => Some("0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
+        "LoRAFactory"              => Some("0xa1eed6ae021504e2a1e310e6c0f7c1a0c5bf4647"),
+        "LearningPool"             => Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"),
+        "LearningCycleManager"     => Some("0x7efc1eb17beff413e1af7fb3bb541e895c307300"),
+        "ClassroomRegistry"        => Some("0x541923570df41b307ca037fdd0fb508502885455"),
+        "ComputeVerifier"          => Some("0xf7c3180dda79fb046173d96d172bf43b70174031"),
+        "ComputeMarketplace"       => Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c"),
+        "ComputePool"              => Some("0xf1eae5dd4a1639922ea610142f7ce51330065b57"),
+        "HeartbeatMonitor"         => Some("0xbaa2505d0446043be3540c0b9150c6df42d33180"),
+        "DisputeResolution"        => Some("0xbf62ee8ee209321bbddf5dd15afd77ac327367cd"),
+        "ComputePricingOracle"     => Some("0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
+        "StablecoinTreasury"       => Some("0x1f17fc3525e540cfd14ed0270a87c159c56aadee"),
+        "BulkComputeGateway"       => Some("0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
+        "TestnetFarmingAccounting" => Some("0xd85e83cab6c5947e2cc5e77244edfce110309724"),
+        "TreasuryGovernor"         => Some("0x6b3c47d2807ec9bc7d2aee030845b4225dd693ab"),
+        "AIModelRegistryPortable"  => Some("0x3ff095445b382075971fd5d3e05fd8bb3ff8006c"),
+        "AIInferenceRouterPortable"=> Some("0x933e6f4d28e3ebed462227522d839a77c85b4c06"),
+        "AILearningCycleCorePortable" => Some("0x3130b9494dc9c9253078176917cf4cddcef48337"),
+        "InstitutionalVault"       => Some("0xf0dca50f418acfb8917d71d8bb65393308629381"),
+        "ClassroomClusterV1"       => Some("0xde991179021a208cf7e6caebf3a07c229aed3d0f"),
+        "Forwarder"                => Some("0x575d0d85e272eca8784a4d11f4713c698082c807"),
+        "BudgetAllocation"         => Some("0x26bad758eac1bac02457f8e4544269b8b52bc5d7"),
+        "CashoutRequest"           => Some("0xf3c58459e723d7eabe2a61c6a97776bc2f5e28ed"),
+        "ModelAccessControl"       => Some("0x05825775315f3d074db9f948713d05059e12a8fd"),
         _ => None,
     }
 }
@@ -1008,11 +1008,11 @@ mod tests {
     fn known_contract_returns_listed_addresses() {
         // Spot-check a few well-known names
         assert_eq!(known_contract(40204, "ModelRegistry"),
-            Some("0x077fbc3338a9e6bad90a3a041e6b7425689754ef"));
+            Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"));
         assert_eq!(known_contract(40204, "ComputeMarketplace"),
-            Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"));
+            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c"));
         assert_eq!(known_contract(40204, "LearningPool"),
-            Some("0x9a58e44f8dd6fd6a75637a32e6e51c16440996f8"));
+            Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"));
         // Unknown name returns None
         assert!(known_contract(40204, "NotARealContract").is_none());
         // Wrong chain returns None
@@ -1176,16 +1176,16 @@ mod tests {
     fn canonical_address_book_compute_critical() {
         // Each pair is (name, canonical address from DEPLOYED_ADDRESSES.md).
         let canonical: &[(&str, &str)] = &[
-            ("ComputeMarketplace",     "0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6"),
-            ("ComputePool",            "0x8b36c15552394ce44173a29d054dc5ca482e65d3"),
-            ("ComputeVerifier",        "0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
-            ("HeartbeatMonitor",       "0x46773aeca885be65cd313b7d9bce9625767d40b5"),
-            ("ComputePricingOracle",   "0xa1eed6ae021504e2a1e310e6c0f7c1a0c5bf4647"),
-            ("ContributionAccounting", "0x1afe987622ab5add275d2fd21248f77f5e00667f"),
-            ("BulkComputeGateway",     "0x7efc1eb17beff413e1af7fb3bb541e895c307300"),
-            ("ModelRegistry",          "0x077fbc3338a9e6bad90a3a041e6b7425689754ef"),
-            ("WrappedSALT",            "0x1f73bb479f397a34b5e3145e51d25bc5007273bf"),
-            ("InferenceRouter",        "0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
+            ("ComputeMarketplace",     "0xc12dbcdb80ef2ae675315f455210f39a736a373c"),
+            ("ComputePool",            "0xf1eae5dd4a1639922ea610142f7ce51330065b57"),
+            ("ComputeVerifier",        "0xf7c3180dda79fb046173d96d172bf43b70174031"),
+            ("HeartbeatMonitor",       "0xbaa2505d0446043be3540c0b9150c6df42d33180"),
+            ("ComputePricingOracle",   "0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
+            ("ContributionAccounting", "0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
+            ("BulkComputeGateway",     "0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
+            ("ModelRegistry",          "0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
+            ("WrappedSALT",            "0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
+            ("InferenceRouter",        "0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
         ];
         for (name, addr) in canonical {
             assert_eq!(
@@ -1204,7 +1204,7 @@ mod tests {
         // ComputeMarketplace address — and the per-name map entry.
         assert_eq!(
             compute_marketplace_address(40204),
-            Some("0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6")
+            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c")
         );
         assert_eq!(
             compute_marketplace_address(40204),
