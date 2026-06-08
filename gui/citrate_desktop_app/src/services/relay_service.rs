@@ -454,8 +454,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    const MARKETPLACE: &str = "0xf3f9f72ea2bb3f763b07390b7257da643b8ee9b6";
-    const ACCOUNTING: &str = "0x1afe987622ab5add275d2fd21248f77f5e00667f";
+    const MARKETPLACE: &str = "0xc12dbcdb80ef2ae675315f455210f39a736a373c";
+    const ACCOUNTING: &str = "0x86d918808b48ad543c9c816b5303b7dbcb0e321f";
     const FROM: &str = "0xabababababababababababababababababababab";
 
     fn validator() -> RelayValidator {
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn deserializes_node_agent_queue_json() {
         let json = r#"[
-          {"id":0,"intent":"submitResult","to":"0xF3F9F72EA2BB3F763B07390B7257DA643B8EE9B6",
+          {"id":0,"intent":"submitResult","to":"0xc12DBCDB80Ef2aE675315F455210f39a736a373c",
            "calldata":"0xbaa2c078dead","value_wei":"0","chain_id":40204,
            "context":"submitResult job 7","expires_block":"1000","status":"pending"}
         ]"#;
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn validator_accepts_mixed_case_address() {
         let v = validator();
-        let r = req(1, "submitResult", "0xF3F9F72EA2BB3F763B07390B7257DA643B8EE9B6", "0", SEL_SUBMIT_RESULT);
+        let r = req(1, "submitResult", "0xc12DBCDB80Ef2aE675315F455210f39a736a373c", "0", SEL_SUBMIT_RESULT);
         assert!(v.validate(&r).is_ok());
     }
 

@@ -68,9 +68,9 @@ impl RpcLearningBackend {
 
 /// LearningPool contract address — deployed on testnet (chain 40204).
 /// Re-genesis 2026-04-01.
-const LEARNING_CONTRACT: Option<&str> = Some("0x1f73BB479f397A34B5E3145e51d25bC5007273Bf");
+const LEARNING_CONTRACT: Option<&str> = Some("0xAD7c3135c1B9B3189208FD617B6B058C1c0469f3");
 /// ContributionAccounting contract address — re-genesis 2026-04-01.
-const CONTRIBUTION_CONTRACT: Option<&str> = Some("0x1B6AEED728F53b48e1eD831b04A1F4812F48e928");
+const CONTRIBUTION_CONTRACT: Option<&str> = Some("0x9a58E44f8DD6fd6a75637A32e6E51c16440996F8");
 
 #[async_trait::async_trait]
 impl LearningBackend for RpcLearningBackend {
