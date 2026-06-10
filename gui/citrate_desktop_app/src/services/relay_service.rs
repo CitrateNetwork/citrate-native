@@ -93,18 +93,95 @@ pub trait TxSigner: Send + Sync {
 
 // ── real implementations (wired by the UI loop in S1.3) ───────────────────────
 
+/// Env var pointing at the node-agent supervision token file (shared contract
+/// with the node-agent, FUA-NODE-AGENT-01/02).
+pub const NODE_AGENT_TOKEN_PATH_ENV: &str = "CITRATE_NODE_AGENT_TOKEN_FILE";
+
+/// Resolve the supervision token path the same way the node-agent does.
+fn supervision_token_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var(NODE_AGENT_TOKEN_PATH_ENV) {
+        if !p.trim().is_empty() {
+            return std::path::PathBuf::from(p);
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join(".citrate")
+        .join("node-agent")
+        .join("supervision.token")
+}
+
+/// Read the per-instance supervision bearer token, if present.
+fn load_supervision_token() -> Option<String> {
+    std::fs::read_to_string(supervision_token_path())
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// FUA-GUI-02: the relay must only ever talk to a node-agent on **loopback**.
+/// Reject a remote host (confused-deputy / a relay pointed at someone else's
+/// node) and a non-`http` scheme (the loopback queue is plaintext-local; an
+/// `https://evil.example` override must not be honored). Returns the reason on
+/// rejection.
+pub fn validate_node_agent_url(base_url: &str) -> Result<(), RelayError> {
+    let url = base_url.trim();
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| RelayError::Http(format!("node-agent url must be http://loopback: {url:?}")))?;
+    // Host is everything up to the first `/` or `:` (strip an optional port).
+    let host_port = rest.split('/').next().unwrap_or(rest);
+    let host = host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port);
+    let is_loopback = host == "127.0.0.1"
+        || host == "localhost"
+        || host == "::1"
+        || host == "[::1]"
+        || host.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+    if !is_loopback {
+        return Err(RelayError::Http(format!(
+            "refusing to poll a non-loopback node-agent: {url:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// `reqwest` client for the node-agent supervision surface (loopback).
 pub struct NodeAgentClient {
     base_url: String,
     http: reqwest::Client,
+    /// Per-instance bearer token presented on every request (FUA-NODE-AGENT-01).
+    token: Option<String>,
 }
 
 impl NodeAgentClient {
     /// `base_url` e.g. `http://127.0.0.1:19600` (`CITRATE_NODE_AGENT_ADDR`).
+    /// Loads the shared supervision token (if present) so the gated node-agent
+    /// surface accepts our requests. Does NOT enforce loopback — use
+    /// [`NodeAgentClient::try_new`] on the production path for that.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             http: reqwest::Client::new(),
+            token: load_supervision_token(),
+        }
+    }
+
+    /// Production constructor: enforce loopback (FUA-GUI-02) before building.
+    pub fn try_new(base_url: impl Into<String>) -> Result<Self, RelayError> {
+        let base_url = base_url.into();
+        validate_node_agent_url(&base_url)?;
+        Ok(Self {
+            base_url,
+            http: reqwest::Client::new(),
+            token: load_supervision_token(),
+        })
+    }
+
+    /// Attach the bearer token to a request builder when we have one.
+    fn authed(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.token {
+            Some(t) => rb.bearer_auth(t),
+            None => rb,
         }
     }
 }
@@ -114,8 +191,7 @@ impl RequestQueue for NodeAgentClient {
     async fn list_requests(&self) -> Result<Vec<PendingRequest>, RelayError> {
         let url = format!("{}/signature-requests", self.base_url.trim_end_matches('/'));
         let resp = self
-            .http
-            .get(&url)
+            .authed(self.http.get(&url))
             .send()
             .await
             .map_err(|e| RelayError::Http(e.to_string()))?;
@@ -134,8 +210,7 @@ impl RequestQueue for NodeAgentClient {
             id
         );
         let resp = self
-            .http
-            .post(&url)
+            .authed(self.http.post(&url))
             .json(&serde_json::json!({ "tx_hash": tx_hash }))
             .send()
             .await
@@ -481,6 +556,26 @@ mod tests {
     }
 
     // ---- S1.1: deserialization + validator ----
+
+    // FUA-GUI-02: the relay must only talk to a loopback node-agent.
+    #[test]
+    fn validate_node_agent_url_accepts_loopback() {
+        assert!(validate_node_agent_url("http://127.0.0.1:19600").is_ok());
+        assert!(validate_node_agent_url("http://localhost:19600").is_ok());
+        assert!(validate_node_agent_url("http://[::1]:19600").is_ok());
+        assert!(validate_node_agent_url("http://127.0.0.1:25000/").is_ok());
+    }
+
+    #[test]
+    fn validate_node_agent_url_rejects_remote_and_non_http() {
+        // A routable host — confused-deputy / relay pointed at someone else's node.
+        assert!(validate_node_agent_url("http://10.0.0.5:19600").is_err());
+        assert!(validate_node_agent_url("http://evil.example:19600").is_err());
+        assert!(validate_node_agent_url("http://0.0.0.0:19600").is_err());
+        // Non-http scheme (the loopback queue is plaintext-local).
+        assert!(validate_node_agent_url("https://evil.example").is_err());
+        assert!(validate_node_agent_url("ftp://127.0.0.1").is_err());
+    }
 
     #[test]
     fn deserializes_node_agent_queue_json() {

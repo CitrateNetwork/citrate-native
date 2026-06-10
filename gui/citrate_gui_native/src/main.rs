@@ -2595,7 +2595,15 @@ fn main() {
                 let ui_handle = ui.as_weak();
                 let core = app_core.clone();
                 let rt_handle = rt.handle().clone();
-                let agent = std::sync::Arc::new(NodeAgentClient::new(agent_url));
+                // FUA-GUI-02: refuse to start the relay against a non-loopback
+                // node-agent (try_new enforces loopback + loads the bearer token).
+                match NodeAgentClient::try_new(agent_url.clone()) {
+                  Err(e) => {
+                    tracing::error!("signing relay NOT started: {e}");
+                    None
+                  }
+                  Ok(agent) => {
+                let agent = std::sync::Arc::new(agent);
                 let signer = std::sync::Arc::new(WalletTxSigner::new(core.wallet.clone()));
                 let relay_loop = relay.clone();
                 std::thread::spawn(move || loop {
@@ -2640,6 +2648,8 @@ fn main() {
                     }
                 });
                 Some(relay)
+                  }
+                }
             }
             _ => {
                 tracing::warn!(
