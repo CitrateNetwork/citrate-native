@@ -4,7 +4,7 @@
 //! software renderer, navigate between tabs, verify UI state via properties,
 //! and capture PNG screenshots as proof artifacts for auditors.
 //!
-//! Run with: cargo test -p citrate-gui-native --test e2e_visual -- --nocapture
+//! Run with: cargo test -p citrate-native --test e2e_visual -- --nocapture
 //!
 //! Screenshots are saved to tests/screenshots/ relative to the crate root.
 //!

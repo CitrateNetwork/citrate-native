@@ -4,11 +4,11 @@ branch: audit/secrem02-signing-seam
 author: Fable 5 (Claude Code)
 sprint: SECREM-02-followup-remediation
 status: active
-repo: citrate-gui-native
+repo: citrate-native
 baseline_test_count: 520
 ---
 
-# citrate-gui-native — SECREM-02 Remediation Log
+# citrate-native — SECREM-02 Remediation Log
 
 > Coverage matrix: `citrate-security/planset/2026-06-10-followup-remediation.md`.
 > The other half of the **Phase-2 signing seam** (with citrate-node-agent).
@@ -18,7 +18,7 @@ baseline_test_count: 520
 
 | Finding | Sev | WP | Red test(s) | Fix | Suite | Disposition |
 |---|---|---|---|---|---|---|
-| FUA-GUI-02 | Med | 2.1 | `relay_service.rs::validate_node_agent_url_accepts_loopback` / `…_rejects_remote_and_non_http` | `validate_node_agent_url` rejects non-loopback host + non-`http` scheme; `NodeAgentClient::try_new` enforces it; `main.rs` uses `try_new` and **does not start the relay** against a bad node-agent address — `gui/citrate_desktop_app/src/services/relay_service.rs`, `gui/citrate_gui_native/src/main.rs` | relay tests 21 ✓ | **FIXED** |
+| FUA-GUI-02 | Med | 2.1 | `relay_service.rs::validate_node_agent_url_accepts_loopback` / `…_rejects_remote_and_non_http` | `validate_node_agent_url` rejects non-loopback host + non-`http` scheme; `NodeAgentClient::try_new` enforces it; `main.rs` uses `try_new` and **does not start the relay** against a bad node-agent address — `gui/citrate_desktop_app/src/services/relay_service.rs`, `gui/citrate_native/src/main.rs` | relay tests 21 ✓ | **FIXED** |
 | FUA-GUI-01 (auth half) | High | 2.1 | covered by node-agent gate tests + the relay continuing to function with the token | `NodeAgentClient` now loads the shared supervision token and presents `Authorization: Bearer` on every request (`authed()`), so the seam keeps working now that the node-agent surface is gated. The queue is no longer reachable by an unauthenticated process — the precondition that made FUA-GUI-01 reachable is closed. | 21 ✓ | **PARTIAL — auth closed; calldata-arg + per-write confirm = follow-up** |
 
 ## FUA-GUI-01 residual (tracked, not yet done)
