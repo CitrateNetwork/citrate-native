@@ -5,7 +5,7 @@ author: Saul Loveman + Claude Opus 4.8
 status: planset (Stage-2, red-teamed)
 planset: gtm-spine
 code: GUI-RELAY (SELL-S2 signer half / closes TD-17 + TD-27)
-repo: citrate-gui-native
+repo: citrate-native
 red_teamed: 2026-06-06
 ---
 

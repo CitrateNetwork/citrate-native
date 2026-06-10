@@ -52,7 +52,7 @@ Selection criteria, in priority order:
    image upload, no model swap needed.
 5. **Native function-calling.** The wallet's chat already uses
    `send_message_with_tools_streaming` (see
-   `citrate-gui-native/gui/citrate_desktop_app/src/services/chat_service.rs`).
+   `citrate-native/gui/citrate_desktop_app/src/services/chat_service.rs`).
    E4B's native function-calling slots directly into that path.
 6. **128K context.** Enough to feed a long blockchain transcript, a code file,
    or a multi-block ledger window without truncation.

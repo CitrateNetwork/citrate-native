@@ -1,4 +1,4 @@
-# citrate-gui-native
+# citrate-native
 
 The production Citrate desktop application -- Rust-native, built with Slint.
 
@@ -41,16 +41,16 @@ The `ui/` directory contains Slint markup organized by feature:
 
 ```bash
 # Run in development
-cargo run -p citrate-gui-native
+cargo run -p citrate-native
 
 # Build release
-cargo build -p citrate-gui-native --release
+cargo build -p citrate-native --release
 ```
 
 ## Tests
 
 ```bash
-cargo test -p citrate-gui-native
+cargo test -p citrate-native
 ```
 
 Test count: 83 tests (31 integration + 25 wallet E2E + 27 node lifecycle) covering Slint bindings and UI model construction.

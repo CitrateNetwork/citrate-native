@@ -5,7 +5,7 @@ author: monorepo-split / PSL-13
 status: active
 ---
 
-# Audit Tier — `citrate-gui-native`
+# Audit Tier — `citrate-native`
 
 **Classification**: **Tier 1 — full audit** before first stable (`v1.0.0`) release tag.
 

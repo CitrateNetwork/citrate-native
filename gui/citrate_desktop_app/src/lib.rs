@@ -645,7 +645,7 @@ impl AppCore {
             exe_dir.join("branding").join("models"),
             exe_dir.to_path_buf(),
             // Linux .deb absolute install layout
-            std::path::PathBuf::from("/usr/share/citrate-gui-native/branding/models"),
+            std::path::PathBuf::from("/usr/share/citrate-native/branding/models"),
             std::path::PathBuf::from("/usr/share/citrate-wallet/branding/models"),
             // Repo-relative — useful during `cargo run` from a workspace checkout
             exe_dir.join("..").join("..").join("..").join("branding").join("models"),

@@ -18,7 +18,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CANONICAL="$(cd "${REPO_ROOT}/.." && pwd)/citrate-chain/contracts/addresses/40204.json"
-VENDORED="${REPO_ROOT}/gui/citrate_gui_native/src/generated/addresses.json"
+VENDORED="${REPO_ROOT}/gui/citrate_native/src/generated/addresses.json"
 
 CHECK_MODE=0
 [[ "${1:-}" == "--check" ]] && CHECK_MODE=1

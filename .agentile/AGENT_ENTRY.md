@@ -3,15 +3,15 @@ created: 2026-05-19T00:00:00Z
 branch: main
 author: Saul Loveman + Claude Opus 4.7 (1M context)
 status: active
-repo: citrate-gui-native
+repo: citrate-native
 tier: T1
 ---
 
-# Agent Entry — citrate-gui-native
+# Agent Entry — citrate-native
 
 > **Lightweight subset.** This file points back to the canonical
 > agentile framework lineage. Start here whenever you (human or AI)
-> are working in **citrate-gui-native**.
+> are working in **citrate-native**.
 
 ## What this repo is
 
@@ -37,7 +37,7 @@ This repo participates in the federation-wide audit cadence captured in
 
 The **current federation audit** is:
 - [`audits/2026-05/2026-05-19-federation-split-audit/`](https://github.com/CitrateNetwork/citrate-agentile-archive/tree/main/audits/2026-05/2026-05-19-federation-split-audit)
-- This repo's slice: [`per-repo/citrate-gui-native/`](https://github.com/CitrateNetwork/citrate-agentile-archive/tree/main/audits/2026-05/2026-05-19-federation-split-audit/per-repo/citrate-gui-native)
+- This repo's slice: [`per-repo/citrate-native/`](https://github.com/CitrateNetwork/citrate-agentile-archive/tree/main/audits/2026-05/2026-05-19-federation-split-audit/per-repo/citrate-native)
 
 When a TOB plugin sweep or compliance crosswalk produces findings here,
 they are filed under that per-repo folder in the archive, **not** in

@@ -6,7 +6,7 @@ status: active
 audit_id: 2026-05-31-federation-deep-audit
 ---
 
-# Active audit reference — `citrate-gui-native`
+# Active audit reference — `citrate-native`
 
 > This repo's two-way link into the centralized federation audit trail
 > (Hybrid topology). It is what an outsider cloning *this* repo follows to the
@@ -16,7 +16,7 @@ This repo participates in the **Inaugural Federation Deep Audit** opened
 2026-05-31 as a **Tier 1 — full audit** surface.
 
 - Audit root: `citrate-security/audits/2026-05-31-federation-deep-audit/`
-- This repo's folder: `.../per-repo/citrate-gui-native/` — `MAP.md` (architecture + data-flow +
+- This repo's folder: `.../per-repo/citrate-native/` — `MAP.md` (architecture + data-flow +
   two Mermaid diagrams) and `INVENTORY.md` (feature/app/function table)
 - Findings roll-up: `.../06_FINDINGS.md`
 - Audit index: `citrate-security/audits/AUDIT_INDEX.md`
@@ -31,5 +31,5 @@ central finding.
 
 ## Scope for this repo
 
-- Phase-1 mapping complete; see `per-repo/citrate-gui-native/MAP.md` for the mapped surface and
+- Phase-1 mapping complete; see `per-repo/citrate-native/MAP.md` for the mapped surface and
   the high-risk areas queued for Phase-2 vuln-hunting.
