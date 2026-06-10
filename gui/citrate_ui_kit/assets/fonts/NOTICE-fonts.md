@@ -55,7 +55,7 @@ the brand is actually the brand, not an approximation.
 ## How to update
 
 1. Replace the TTF file in this directory
-2. `cargo check -p citrate-gui-native` — Slint re-embeds on build
+2. `cargo check -p citrate-native` — Slint re-embeds on build
 3. Update the file size line in this NOTICE
 4. If the `OFL.txt` changed, sync that too
 5. Commit all three together (TTF + NOTICE + OFL) with a

@@ -626,7 +626,7 @@ impl ChatService {
     ///
     /// **Unit contract:** `balance` MUST be a human-readable SALT value
     /// (e.g. `"1000000"` or `"1.5"`), NOT raw grains/wei. Callers in
-    /// `gui/citrate_gui_native/src/main.rs` run `grains_str_to_salt`
+    /// `gui/citrate_native/src/main.rs` run `grains_str_to_salt`
     /// against the `eth_getBalance` result before passing it here.
     /// Feeding raw grains caused the "18 trailing zeros" chat bug — the
     /// LLM echoed the 25-digit integer back as the user's balance.

@@ -9,7 +9,7 @@ archived-monorepo: https://github.com/CitrateNetwork/citrate-monorepo-archive
 agentile-archive: https://github.com/CitrateNetwork/citrate-agentile-archive
 ---
 
-# citrate-gui-native
+# citrate-native
 
 Slint-native desktop wallet, DAG explorer, and developer studio for the Citrate Network.
 
@@ -17,7 +17,7 @@ Slint-native desktop wallet, DAG explorer, and developer studio for the Citrate 
 
 | Path | Crate | Role |
 |---|---|---|
-| `gui/citrate_gui_native` | `citrate-gui-native` | Main Slint desktop application |
+| `gui/citrate_native` | `citrate-native` | Main Slint desktop application |
 | `gui/citrate_desktop_app` | `citrate-desktop-app` | Backend service layer (chain client, mempool, RPC) |
 
 ## Cross-repo dependencies
@@ -47,7 +47,7 @@ Each alias maps to a separate read-only deploy key on the source repo. Local dev
 # have read access to the three sibling repos (org membership covers this).
 
 cargo build --release
-cargo run --release -p citrate-gui-native
+cargo run --release -p citrate-native
 ```
 
 ## Repository context

@@ -11,7 +11,7 @@ use super::abi;
 ///
 /// RM-E.4 / GUI_NATIVE-2026-05-31-007: the single canonical Forwarder
 /// address. Three divergent values had drifted across the tree (this
-/// const, `citrate_gui_native::marketplace_client`'s registry, and a
+/// const, `citrate_native::marketplace_client`'s registry, and a
 /// stale doc comment). Per federation-lead direction the most-current
 /// value (`marketplace_client`, committed 2026-04-22) is canonical; the
 /// others were aligned to it. `forwarder_address_matches_canonical` pins

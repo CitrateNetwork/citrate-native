@@ -5,10 +5,10 @@
 # from citrate-agent-runtime.
 members = [
     "gui/citrate_ui_kit",
-    "gui/citrate_gui_native",
+    "gui/citrate_native",
     "gui/citrate_desktop_app",
 ]
-default-members = ["gui/citrate_gui_native"]
+default-members = ["gui/citrate_native"]
 resolver = "2"
 
 [workspace.package]
@@ -16,7 +16,7 @@ version = "0.4.0"
 edition = "2021"
 authors = ["Citrate Network"]
 license = "MIT"
-repository = "https://github.com/CitrateNetwork/citrate-gui-native"
+repository = "https://github.com/CitrateNetwork/citrate-native"
 
 [workspace.dependencies]
 # Async runtime

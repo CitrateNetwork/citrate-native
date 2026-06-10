@@ -1,4 +1,4 @@
-//! Integration tests for citrate-gui-native.
+//! Integration tests for citrate-native.
 //!
 //! These tests verify the data transformation functions used by GUI callbacks.
 //! We cannot drive the Slint event loop in CI (no display server), so we test
