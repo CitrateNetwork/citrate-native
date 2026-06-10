@@ -98,7 +98,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          STAGE="citrate-gui-native-${{ matrix.target }}"
+          STAGE="citrate-native-${{ matrix.target }}"
           mkdir -p "dist/$STAGE"
           TARGET_DIR="target/${{ matrix.target }}/release"
 
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          for f in citrate-gui-native-${{ matrix.target }}.*; do
+          for f in citrate-native-${{ matrix.target }}.*; do
             if [[ -f "$f" ]]; then
               if [[ "${{ runner.os }}" == "macOS" ]]; then
                 shasum -a 256 "$f" > "$f.sha256"
@@ -145,8 +145,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: citrate-gui-native-${{ matrix.target }}
-          path: dist/citrate-gui-native-${{ matrix.target }}.*
+          name: citrate-native-${{ matrix.target }}
+          path: dist/citrate-native-${{ matrix.target }}.*
           retention-days: 30
 
   sbom:
@@ -161,11 +161,11 @@ jobs:
       - name: Install Linux deps for SBOM
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libwayland-dev libssl-dev pkg-config cmake
       - run: cargo install --locked cargo-cyclonedx
-      - run: cargo cyclonedx --format json --override-filename citrate-gui-native-sbom
+      - run: cargo cyclonedx --format json --override-filename citrate-native-sbom
       - uses: actions/upload-artifact@v4
         with:
-          name: citrate-gui-native-sbom
-          path: 'citrate-gui-native-sbom*.json'
+          name: citrate-native-sbom
+          path: 'citrate-native-sbom*.json'
           retention-days: 90
 
   release:
@@ -194,12 +194,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: citrate-gui-native ${{ steps.tag.outputs.tag }}
+          name: citrate-native ${{ steps.tag.outputs.tag }}
           draft: ${{ !github.event.inputs.publish_release }}
           prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
           files: release-files/*
           body: |
-            ## citrate-gui-native ${{ steps.tag.outputs.tag }}
+            ## citrate-native ${{ steps.tag.outputs.tag }}
 
             Native Slint desktop application — operator + partner UI
             for the Citrate Network.

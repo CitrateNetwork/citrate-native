@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Shared Slint UI primitives used by citrate-gui-native and citrate-boeing-shell (theme, chat, shared feedback widgets, fonts, images). Carries its own .slint files; consumer crates pull them in via slint_build's library_paths and import with `@citrate-ui-kit/...` syntax."
+description = "Shared Slint UI primitives used by citrate-native and citrate-boeing-shell (theme, chat, shared feedback widgets, fonts, images). Carries its own .slint files; consumer crates pull them in via slint_build's library_paths and import with `@citrate-ui-kit/...` syntax."
 
 # Required so cargo propagates the `cargo:UI_PATH=...` line from build.rs
 # to dependents as `DEP_CITRATE_UI_KIT_UI_PATH`. Without `links`, cargo
@@ -16,7 +16,7 @@ links = "citrate_ui_kit"
 include = ["src/**", "ui/**", "assets/**", "build.rs", "Cargo.toml", "README.md"]
 
 [dependencies]
-# Match the slint version in citrate_gui_native to avoid resolver conflicts.
+# Match the slint version in citrate_native to avoid resolver conflicts.
 slint = { version = "1.9", default-features = false, features = ["renderer-software", "backend-winit", "compat-1-2"] }
 
 [build-dependencies]

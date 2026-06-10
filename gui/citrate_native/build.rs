@@ -7,7 +7,7 @@ fn main() {
     // turns into the `DEP_CITRATE_UI_KIT_UI_KIT` env var here.
     let ui_kit_lib = env::var("DEP_CITRATE_UI_KIT_UI_KIT")
         .expect("DEP_CITRATE_UI_KIT_UI_KIT not set — is citrate-ui-kit a direct dependency with a links field?");
-    eprintln!("citrate-gui-native build.rs: ui-kit lib at {}", ui_kit_lib);
+    eprintln!("citrate-native build.rs: ui-kit lib at {}", ui_kit_lib);
 
     let config = slint_build::CompilerConfiguration::new()
         .with_library_paths(
