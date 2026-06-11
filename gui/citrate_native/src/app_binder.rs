@@ -100,24 +100,7 @@ pub fn bind_model_publish(
             }
 
             // 6. Build registerModel calldata
-            let selector: [u8; 4] = {
-                use sha3::{Digest, Keccak256};
-                let hash = Keccak256::digest(b"registerModel(bytes32,string)");
-                [hash[0], hash[1], hash[2], hash[3]]
-            };
-            let cid_bytes = cid.as_bytes();
-            let padded_len = cid_bytes.len().div_ceil(32) * 32;
-            let mut calldata = Vec::with_capacity(4 + 32 + 32 + 32 + padded_len);
-            calldata.extend_from_slice(&selector);
-            calldata.extend_from_slice(&model_hash);
-            let mut offset = [0u8; 32];
-            offset[31] = 0x40;
-            calldata.extend_from_slice(&offset);
-            let mut len_bytes = [0u8; 32];
-            len_bytes[31] = cid_bytes.len() as u8;
-            calldata.extend_from_slice(&len_bytes);
-            calldata.extend_from_slice(cid_bytes);
-            calldata.resize(calldata.len() + padded_len - cid_bytes.len(), 0);
+            let calldata = encode_register_model_calldata(&model_hash, &cid);
 
             // 7. Send tx to model precompile
             let precompile = "0x0000000000000000000000000000000000001000";
@@ -187,4 +170,68 @@ pub fn bind_model_publish(
             }
         });
     });
+}
+
+/// ABI-encode `registerModel(bytes32,string)` calldata for the model
+/// registry precompile.
+///
+/// GUI_NATIVE-2026-05-31-004 (WP 6.4b): extracted from the deploy closure so
+/// the encoding is unit-testable. The string length word previously did
+/// `len() as u8` — any CID/URI longer than 255 bytes silently truncated the
+/// declared length to `len % 256`, producing corrupt calldata.
+pub(crate) fn encode_register_model_calldata(model_hash: &[u8; 32], cid: &str) -> Vec<u8> {
+    let selector: [u8; 4] = {
+        use sha3::{Digest, Keccak256};
+        let hash = Keccak256::digest(b"registerModel(bytes32,string)");
+        [hash[0], hash[1], hash[2], hash[3]]
+    };
+    let cid_bytes = cid.as_bytes();
+    let padded_len = cid_bytes.len().div_ceil(32) * 32;
+    let mut calldata = Vec::with_capacity(4 + 32 + 32 + 32 + padded_len);
+    calldata.extend_from_slice(&selector);
+    calldata.extend_from_slice(model_hash);
+    let mut offset = [0u8; 32];
+    offset[31] = 0x40;
+    calldata.extend_from_slice(&offset);
+    let mut len_bytes = [0u8; 32];
+    // Full big-endian length — `len() as u8` truncated CIDs/URIs > 255 bytes.
+    len_bytes[24..32].copy_from_slice(&(cid_bytes.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&len_bytes);
+    calldata.extend_from_slice(cid_bytes);
+    calldata.resize(calldata.len() + padded_len - cid_bytes.len(), 0);
+    calldata
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_register_model_calldata;
+
+    /// The string length word must carry the FULL big-endian length — a CID
+    /// longer than 255 bytes must not wrap modulo 256 (the `as u8` bug).
+    #[test]
+    fn register_model_length_word_is_not_truncated() {
+        let model_hash = [0x11u8; 32];
+        let long_cid = "Q".repeat(300); // 300 > 255 → wrapped to 44 pre-fix
+        let calldata = encode_register_model_calldata(&model_hash, &long_cid);
+
+        let len_word = &calldata[4 + 64..4 + 96];
+        let declared = u64::from_be_bytes(len_word[24..32].try_into().unwrap());
+        assert!(len_word[..24].iter().all(|b| *b == 0));
+        assert_eq!(declared, 300, "declared string length must be the real length");
+        // Payload + zero padding to a word boundary.
+        assert_eq!(calldata.len(), 4 + 32 + 32 + 32 + 320);
+    }
+
+    /// Short-CID layout stays canonical: selector, bytes32, offset 0x40,
+    /// length, padded payload.
+    #[test]
+    fn register_model_layout_is_canonical() {
+        let model_hash = [0xabu8; 32];
+        let calldata = encode_register_model_calldata(&model_hash, "QmShortCid");
+        assert_eq!(&calldata[4..36], &model_hash);
+        assert_eq!(calldata[4 + 63], 0x40, "offset word");
+        assert_eq!(calldata[4 + 95], 10, "length word");
+        assert_eq!(&calldata[4 + 96..4 + 106], b"QmShortCid");
+        assert_eq!(calldata.len(), 4 + 96 + 32, "payload padded to one word");
+    }
 }

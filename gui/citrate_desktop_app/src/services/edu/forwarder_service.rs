@@ -117,16 +117,18 @@ impl ForwarderBackend for RpcForwarderBackend {
     /// Data source: Forwarder.getNonce(bytes32) via eth_call
     async fn get_nonce(&self, org_principal_id: &str) -> Result<u64, AppError> {
         let sel = hex::encode(abi::selector("getNonce(bytes32)"));
-        let id_clean = org_principal_id.trim_start_matches("0x");
-        let data = format!("0x{}{:0>64}", sel, id_clean);
+        // GUI_NATIVE-2026-05-31-002/003: validated bytes32, not string-padded.
+        let id_clean = abi::require_hex(org_principal_id, 64, "org_principal_id")
+            .map_err(AppError::ChainQuery)?;
+        let data = format!("0x{}{}", sel, id_clean);
         let result = self.eth_call(&data).await?;
-        abi::decode_uint256(&result)
+        abi::decode_uint64(&result)
             .ok_or_else(|| AppError::ChainQuery("Failed to decode nonce".to_string()))
     }
 
     /// Data source: Forwarder.isRelayer(address) via eth_call
     async fn is_relayer(&self, address: &str) -> Result<bool, AppError> {
-        let data = abi::encode_call_address("isRelayer(address)", address);
+        let data = abi::encode_call_address("isRelayer(address)", address).map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;
         Ok(abi::decode_bool(&result))
     }
@@ -155,56 +157,53 @@ impl ForwarderBackend for RpcForwarderBackend {
     }
 
     /// ABI-encode a ForwardRequest into the `execute(ForwardRequest,bytes)` calldata.
+    ///
+    /// GUI_NATIVE-2026-05-31-002 (WP 6.4b): canonical ABI encoding. The
+    /// previous version string-padded unvalidated fields and computed an
+    /// "approximate" signature offset one word too large, so a relayer (or
+    /// the Forwarder contract) decoding the calldata would read garbage.
+    /// Layout, with all offsets exact:
+    ///   head: [tuple offset = 0x40][sig offset = 0x40 + tuple_size]
+    ///   tuple: 7 static words (data offset = 0xe0) + data length + padded data
+    ///   sig:   length word (0 — the relayer attaches the signature)
     fn encode_execute_call(&self, req: &ForwardRequest) -> Result<Vec<u8>, AppError> {
-        // execute((bytes32,uint256,uint256,uint256,bytes32,address,bytes),bytes)
-        // This is a complex ABI encoding. For now we encode the tuple fields.
         let sel = abi::selector("execute((bytes32,uint256,uint256,uint256,bytes32,address,bytes),bytes)");
 
-        let org_id = req.org_principal_id.trim_start_matches("0x");
-        let device = req.device_cert_hash.trim_start_matches("0x");
-        let target = req.target.trim_start_matches("0x").to_lowercase();
+        // Validated fixed-width hex — malformed fields err, never pad.
+        let org_id = abi::require_hex(&req.org_principal_id, 64, "org_principal_id")
+            .map_err(AppError::ChainQuery)?;
+        let device = abi::require_hex(&req.device_cert_hash, 64, "device_cert_hash")
+            .map_err(AppError::ChainQuery)?;
+        let target = abi::require_hex(&req.target, 40, "target address")
+            .map_err(AppError::ChainQuery)?;
 
-        // Struct fields as 32-byte words:
-        // orgPrincipalId (bytes32)
-        // classroomId (uint256)
-        // nonce (uint256)
-        // sessionExpiry (uint256)
-        // deviceCertHash (bytes32)
-        // target (address)
-        // data offset (uint256) — points to dynamic data
-        // Then: signature offset, signature length=0, signature bytes=empty
-
-        // The dynamic data (bytes) requires offset computation.
-        // offset to data = 7 words * 32 = 224 = 0xe0
         let data_hex = hex::encode(&req.data);
         let data_len = req.data.len();
+        let data_padded = data_len.div_ceil(32) * 32;
+
+        // tuple = 7 static words + data length word + padded data bytes.
+        let tuple_size = 7 * 32 + 32 + data_padded;
+        let sig_offset = 0x40 + tuple_size;
 
         let mut encoded = hex::encode(sel);
-        // Offset to tuple (first arg) = 0x40 (after two offset words: tuple offset + sig offset)
         encoded.push_str(&format!("{:0>64x}", 0x40u64)); // tuple offset
-        // Calculate signature offset (after tuple data + data bytes)
-        let tuple_static_words = 7; // 7 static fields in struct
-        let data_words = (data_len + 31) / 32;
-        let sig_offset = 0x40 + (tuple_static_words + 1 + 1 + data_words) * 32; // approximate
-        encoded.push_str(&format!("{:0>64x}", sig_offset)); // sig offset
+        encoded.push_str(&format!("{:0>64x}", sig_offset)); // sig offset (exact)
 
         // Tuple fields
-        encoded.push_str(&format!("{:0>64}", org_id)); // orgPrincipalId
+        encoded.push_str(&format!("{:0>64}", org_id)); // orgPrincipalId (bytes32)
         encoded.push_str(&format!("{:0>64x}", req.classroom_id)); // classroomId
         encoded.push_str(&format!("{:0>64x}", req.nonce)); // nonce
         encoded.push_str(&format!("{:0>64x}", req.session_expiry)); // sessionExpiry
-        encoded.push_str(&format!("{:0>64}", device)); // deviceCertHash
-        encoded.push_str(&format!("{:0>64}", target)); // target
-        // data offset within tuple = 7 * 32 = 224 = 0xe0
-        encoded.push_str(&format!("{:0>64x}", 0xe0u64)); // data offset
-        // data length
+        encoded.push_str(&format!("{:0>64}", device)); // deviceCertHash (bytes32)
+        encoded.push_str(&format!("{:0>64}", target)); // target (address, left-padded)
+        // data offset within the tuple = 7 * 32 = 0xe0
+        encoded.push_str(&format!("{:0>64x}", 0xe0u64));
+        // data length + right-padded content
         encoded.push_str(&format!("{:0>64x}", data_len));
-        // data content (padded to 32 bytes)
         encoded.push_str(&data_hex);
-        let padding = (32 - (data_len % 32)) % 32;
-        encoded.push_str(&"0".repeat(padding * 2));
+        encoded.push_str(&"0".repeat((data_padded - data_len) * 2));
 
-        // Signature (empty bytes for now — relayer signs separately)
+        // Signature (empty bytes — the relayer signs separately)
         encoded.push_str(&format!("{:0>64x}", 0u64)); // sig length = 0
 
         hex::decode(&encoded)
@@ -222,6 +221,75 @@ mod tests {
     /// `marketplace_client` registry value, committed 2026-04-22). If a
     /// future edit changes this const, CI fails and the change must be
     /// re-justified against the canonical deployment.
+    // ── GUI_NATIVE-2026-05-31-002 (WP 6.4b) ─────────────────────────────
+
+    fn sample_request(data: Vec<u8>) -> ForwardRequest {
+        ForwardRequest {
+            org_principal_id: format!("0x{}", "11".repeat(32)),
+            classroom_id: 7,
+            nonce: 3,
+            session_expiry: 99,
+            device_cert_hash: format!("0x{}", "22".repeat(32)),
+            target: format!("0x{}", "33".repeat(20)),
+            data,
+        }
+    }
+
+    fn word_u64(enc: &[u8], word_idx: usize) -> u64 {
+        let w = &enc[4 + word_idx * 32..4 + (word_idx + 1) * 32];
+        assert!(w[..24].iter().all(|b| *b == 0), "word {word_idx} overflows u64");
+        u64::from_be_bytes(w[24..32].try_into().unwrap())
+    }
+
+    /// The `execute((bytes32,uint256,uint256,uint256,bytes32,address,bytes),bytes)`
+    /// encoding must be canonical ABI: head = [tuple offset, sig offset], the
+    /// tuple's dynamic `data` at 0xe0 within the tuple, and the signature
+    /// offset pointing exactly past the tuple (NOT "approximate").
+    #[test]
+    fn execute_encoding_is_canonical_abi() {
+        let backend = RpcForwarderBackend::new("http://127.0.0.1:1");
+        let data = vec![0xde, 0xad, 0xbe, 0xef, 0x01]; // 5 bytes → pads to 32
+        let enc = backend.encode_execute_call(&sample_request(data)).expect("encodes");
+
+        // Head: tuple offset, then signature offset.
+        assert_eq!(word_u64(&enc, 0), 0x40, "tuple offset");
+        // tuple = 7 head words + data length word + 1 padded data word
+        //       = 7*32 + 32 + 32 = 288; sig offset = 0x40 + 288 = 0x160.
+        assert_eq!(word_u64(&enc, 1), 0x160, "signature offset must point just past the tuple");
+
+        // Tuple fields (words 2..=8).
+        assert_eq!(word_u64(&enc, 3), 7, "classroomId");
+        assert_eq!(word_u64(&enc, 4), 3, "nonce");
+        assert_eq!(word_u64(&enc, 5), 99, "sessionExpiry");
+        assert_eq!(word_u64(&enc, 8), 0xe0, "data offset within the tuple");
+        assert_eq!(word_u64(&enc, 9), 5, "data length");
+
+        // Signature: empty bytes (length word 0) at the declared offset.
+        let sig_len_pos = 4 + 0x160;
+        assert!(enc[sig_len_pos..sig_len_pos + 32].iter().all(|b| *b == 0));
+        // Nothing after — total length is exact.
+        assert_eq!(enc.len(), 4 + 0x160 + 32, "no trailing or missing bytes");
+    }
+
+    /// Struct fields must be validated hex of the exact width — short or
+    /// non-hex `bytes32`/`address` inputs are refused, not string-padded.
+    #[test]
+    fn execute_encoding_rejects_malformed_fields() {
+        let backend = RpcForwarderBackend::new("http://127.0.0.1:1");
+
+        let mut short_org = sample_request(vec![]);
+        short_org.org_principal_id = "0xabcd".into();
+        assert!(backend.encode_execute_call(&short_org).is_err(), "short org_principal_id");
+
+        let mut bad_device = sample_request(vec![]);
+        bad_device.device_cert_hash = format!("0x{}", "zz".repeat(32));
+        assert!(backend.encode_execute_call(&bad_device).is_err(), "non-hex device_cert_hash");
+
+        let mut short_target = sample_request(vec![]);
+        short_target.target = "0x1234".into();
+        assert!(backend.encode_execute_call(&short_target).is_err(), "short target address");
+    }
+
     #[test]
     fn forwarder_address_matches_canonical() {
         assert_eq!(

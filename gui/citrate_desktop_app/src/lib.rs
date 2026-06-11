@@ -235,13 +235,14 @@ pub fn data_dir_for_network(network: &str) -> String {
 
 /// Get the correct chain_id for a network name.
 ///
-/// Testnet beta (40204) is the only live Citrate network. Any non-mainnet
-/// alias resolves to 40204.
+/// 40204 is the permanent Citrate chain id — testnet beta AND production.
+/// GUI_NATIVE-2026-05-31-006 (WP 6.4b): `"mainnet"` previously resolved to
+/// chain id 1, which is Ethereum mainnet — a transaction signed under that
+/// "reserved" alias would be replayable against real ETH infrastructure.
+/// Every alias now resolves to 40204; there is no other Citrate network.
 pub fn chain_id_for_network(network: &str) -> u64 {
-    match network.to_lowercase().as_str() {
-        "mainnet" => 1, // Reserved
-        _ => 40204,
-    }
+    let _ = network;
+    40204
 }
 
 impl AppConfig {
@@ -718,6 +719,19 @@ impl AppCore {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    /// GUI_NATIVE-2026-05-31-006 (WP 6.4b): `"mainnet"` must never resolve to
+    /// chain id 1 — that is Ethereum mainnet, and a tx signed for chain 1 is
+    /// replayable against real ETH infrastructure. 40204 is the permanent
+    /// Citrate chain id; every alias resolves to it.
+    #[test]
+    fn test_chain_id_mainnet_alias_is_not_ethereum() {
+        assert_eq!(chain_id_for_network("mainnet"), 40204);
+        assert_eq!(chain_id_for_network("Mainnet"), 40204);
+        assert_eq!(chain_id_for_network("testnet"), 40204);
+        assert_eq!(chain_id_for_network("devnet"), 40204);
+        assert_eq!(chain_id_for_network("anything-else"), 40204);
+    }
 
     #[derive(Default)]
     struct TestSecretStore {

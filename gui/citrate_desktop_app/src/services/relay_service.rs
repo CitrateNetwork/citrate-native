@@ -280,6 +280,124 @@ pub enum RejectReason {
     BadCalldata(String),
     /// Calldata's 4-byte selector doesn't match the intent.
     SelectorMismatch { intent: String },
+    /// Calldata arguments don't match the intent's ABI shape
+    /// (FUA-GUI-01 residual, WP 6.4b).
+    MalformedArgs { intent: String, reason: String },
+    /// A privileged/value-bearing write the user did not confirm
+    /// (FUA-GUI-01 residual, WP 6.4b).
+    NotConfirmed { intent: String },
+}
+
+/// Decoded, shape-validated calldata arguments for one allow-listed write
+/// (FUA-GUI-01 residual). What the relay knows it is signing — and what a
+/// confirmation surface displays — instead of opaque selector-prefixed bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedArgs {
+    /// `startExecution(uint256)` / `completeJob(uint256)`.
+    JobId { job_id: u128 },
+    /// `submitCommitment(uint256,bytes32)`.
+    Commitment { job_id: u128, commitment: [u8; 32] },
+    /// `submitResult(uint256,bytes,bytes)` — payload sizes, not contents.
+    Result { job_id: u128, result_len: usize, proof_len: usize },
+    /// `claimRewards()`.
+    NoArgs,
+}
+
+/// Sanity bound on relay-signed calldata. The largest legitimate write is
+/// `submitResult` carrying a result + proof payload; anything beyond this is
+/// not a plausible SELL-S2 job write.
+const MAX_CALLDATA_BYTES: usize = 128 * 1024;
+
+/// Job counters on `ComputeMarketplace` are small sequential integers. A
+/// 256-bit word with non-zero high bytes is not a plausible job id — refuse
+/// it instead of signing an arbitrary attacker-chosen value.
+fn decode_job_id(word: &[u8]) -> Result<u128, String> {
+    if word.len() != 32 {
+        return Err("job id word is not 32 bytes".to_string());
+    }
+    if word[..16].iter().any(|b| *b != 0) {
+        return Err("job id exceeds u128 — not a plausible job counter".to_string());
+    }
+    Ok(u128::from_be_bytes(word[16..32].try_into().expect("16 bytes")))
+}
+
+/// Round up to the next 32-byte ABI word boundary.
+fn pad32(n: usize) -> usize {
+    n.div_ceil(32) * 32
+}
+
+/// ABI-decode + shape-validate the arguments of an allow-listed write
+/// (FUA-GUI-01 residual). Strict: exact static lengths, canonical dynamic
+/// offsets, no trailing bytes. Anything else errs — the relay never signs
+/// calldata it cannot fully account for.
+pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String> {
+    let args = &calldata[4..]; // caller has already pinned the selector
+    let word = |i: usize| &args[i * 32..(i + 1) * 32];
+    match intent {
+        "startExecution" | "completeJob" => {
+            if args.len() != 32 {
+                return Err(format!("{intent}(uint256) takes exactly one word, got {} bytes", args.len()));
+            }
+            Ok(DecodedArgs::JobId { job_id: decode_job_id(word(0))? })
+        }
+        "submitCommitment" => {
+            if args.len() != 64 {
+                return Err(format!(
+                    "submitCommitment(uint256,bytes32) takes exactly two words, got {} bytes",
+                    args.len()
+                ));
+            }
+            let commitment: [u8; 32] = word(1).try_into().expect("32 bytes");
+            Ok(DecodedArgs::Commitment { job_id: decode_job_id(word(0))?, commitment })
+        }
+        "submitResult" => {
+            // submitResult(uint256,bytes,bytes) — canonical head + two
+            // in-bounds, back-to-back dynamic tails.
+            if args.len() < 96 {
+                return Err("submitResult head requires three words".to_string());
+            }
+            let job_id = decode_job_id(word(0))?;
+            let off_result = decode_job_id(word(1)).map_err(|_| "result offset overflows".to_string())? as usize;
+            let off_proof = decode_job_id(word(2)).map_err(|_| "proof offset overflows".to_string())? as usize;
+            if off_result != 0x60 {
+                return Err(format!("non-canonical result offset {off_result:#x} (expected 0x60)"));
+            }
+            let read_len = |off: usize| -> Result<usize, String> {
+                if off + 32 > args.len() {
+                    return Err(format!("dynamic length word at {off:#x} is out of bounds"));
+                }
+                let len = decode_job_id(&args[off..off + 32])
+                    .map_err(|_| "dynamic length overflows".to_string())? as usize;
+                if off + 32 + len > args.len() {
+                    return Err(format!("dynamic payload at {off:#x} overruns the calldata"));
+                }
+                Ok(len)
+            };
+            let result_len = read_len(off_result)?;
+            let expected_proof_off = 0x60 + 32 + pad32(result_len);
+            if off_proof != expected_proof_off {
+                return Err(format!(
+                    "non-canonical proof offset {off_proof:#x} (expected {expected_proof_off:#x})"
+                ));
+            }
+            let proof_len = read_len(off_proof)?;
+            let expected_total = off_proof + 32 + pad32(proof_len);
+            if args.len() != expected_total {
+                return Err(format!(
+                    "submitResult calldata is {} bytes, canonical encoding is {expected_total}",
+                    args.len()
+                ));
+            }
+            Ok(DecodedArgs::Result { job_id, result_len, proof_len })
+        }
+        "claimRewards" => {
+            if !args.is_empty() {
+                return Err(format!("claimRewards() takes no arguments, got {} bytes", args.len()));
+            }
+            Ok(DecodedArgs::NoArgs)
+        }
+        other => Err(format!("no argument shape known for intent {other:?}")),
+    }
 }
 
 /// A request that passed every check — safe to sign.
@@ -290,6 +408,56 @@ pub struct ValidatedWrite {
     pub to: String,
     pub value_wei: String,
     pub calldata: Vec<u8>,
+    /// Decoded arguments (FUA-GUI-01 residual) — what a confirmation
+    /// surface shows the user.
+    pub args: DecodedArgs,
+}
+
+impl ValidatedWrite {
+    /// One-line human-readable description for confirmation surfaces/logs.
+    pub fn describe(&self) -> String {
+        let args = match &self.args {
+            DecodedArgs::JobId { job_id } => format!("job {job_id}"),
+            DecodedArgs::Commitment { job_id, commitment } => {
+                format!("job {job_id}, commitment 0x{}…", hex::encode(&commitment[..8]))
+            }
+            DecodedArgs::Result { job_id, result_len, proof_len } => {
+                format!("job {job_id}, result {result_len}B, proof {proof_len}B")
+            }
+            DecodedArgs::NoArgs => "no arguments".to_string(),
+        };
+        format!("{}({}) → {} [value {}]", self.intent, args, self.to, self.value_wei)
+    }
+}
+
+/// FUA-GUI-01 residual: which writes need an explicit per-write human
+/// confirmation. Pure decision function (unit-tested; the GUI wires the
+/// answer into its approval surface):
+///   - any value-bearing write (defense-in-depth — the validator refuses
+///     non-zero values outright today), and
+///   - `claimRewards` — it moves the provider's accrued rewards, unlike the
+///     value-0 job-lifecycle writes covered by the relay's opt-in consent.
+pub fn requires_confirmation(intent: &str, value_wei: &str) -> bool {
+    value_wei != "0" || intent == "claimRewards"
+}
+
+/// Per-write human confirmation surface (FUA-GUI-01 residual). Implementors
+/// must resolve `true` ONLY on an explicit user approval of this exact
+/// write; timeout, rejection, or the absence of any surface is `false`.
+#[async_trait::async_trait]
+pub trait ConfirmationGate: Send + Sync {
+    async fn confirm_write(&self, write: &ValidatedWrite) -> bool;
+}
+
+/// Fail-closed default gate: refuses every confirmation-requiring write.
+/// Headless contexts that cannot ask a human use this.
+pub struct DenyAllConfirmations;
+
+#[async_trait::async_trait]
+impl ConfirmationGate for DenyAllConfirmations {
+    async fn confirm_write(&self, _write: &ValidatedWrite) -> bool {
+        false
+    }
 }
 
 /// Validates queued requests against the SELL-S2 allow-list before signing.
@@ -346,12 +514,27 @@ impl RelayValidator {
                 intent: req.intent.clone(),
             });
         }
+        // FUA-GUI-01 residual (WP 6.4b): a matching selector is not enough —
+        // the ARGUMENTS must decode to the intent's exact ABI shape too.
+        if calldata.len() > MAX_CALLDATA_BYTES {
+            return Err(RejectReason::MalformedArgs {
+                intent: req.intent.clone(),
+                reason: format!("calldata exceeds {MAX_CALLDATA_BYTES} bytes"),
+            });
+        }
+        let args = decode_args(&req.intent, &calldata).map_err(|reason| {
+            RejectReason::MalformedArgs {
+                intent: req.intent.clone(),
+                reason,
+            }
+        })?;
         Ok(ValidatedWrite {
             id: req.id,
             intent: req.intent.clone(),
             to: req.to.clone(),
             value_wei: req.value_wei.clone(),
             calldata,
+            args,
         })
     }
 }
@@ -383,11 +566,14 @@ pub struct RelayTickReport {
 /// write (one per tick keeps account-nonce handling simple; the node-agent dedups
 /// re-emits so it still converges). Rejected/already-submitted requests are
 /// recorded, never signed. `observed` is POSTed only after a real broadcast hash.
+/// Privileged/value-bearing writes additionally require `gate` to confirm them
+/// (FUA-GUI-01 residual) — an unconfirmed write is recorded, never signed.
 pub async fn run_once(
     signer: &dyn TxSigner,
     from: &str,
     queue: &dyn RequestQueue,
     validator: &RelayValidator,
+    gate: &dyn ConfirmationGate,
 ) -> RelayTickReport {
     let mut report = RelayTickReport::default();
 
@@ -404,6 +590,16 @@ pub async fn run_once(
             Err(RejectReason::NotPending) => report.skipped_non_pending += 1,
             Err(reason) => report.rejected.push((req.id, reason)),
             Ok(vw) => {
+                // FUA-GUI-01 residual: privileged writes need an explicit
+                // per-write human confirmation; declined → refused, fail closed.
+                if requires_confirmation(&vw.intent, &vw.value_wei)
+                    && !gate.confirm_write(&vw).await
+                {
+                    report
+                        .rejected
+                        .push((req.id, RejectReason::NotConfirmed { intent: vw.intent }));
+                    continue;
+                }
                 match signer
                     .sign_and_send(from, &vw.to, &vw.value_wei, vw.calldata.clone())
                     .await
@@ -490,17 +686,19 @@ impl RelayService {
 
     /// Run one gated cycle. Returns `None` when the relay is disabled or the
     /// wallet is locked (nothing signed); otherwise the [`RelayTickReport`].
+    /// `gate` confirms privileged writes (FUA-GUI-01 residual).
     pub async fn tick(
         &self,
         signer: &dyn TxSigner,
         from: &str,
         queue: &dyn RequestQueue,
         unlocked: bool,
+        gate: &dyn ConfirmationGate,
     ) -> Option<RelayTickReport> {
         if !self.is_enabled() || !unlocked {
             return None;
         }
-        Some(run_once(signer, from, queue, &self.validator()).await)
+        Some(run_once(signer, from, queue, &self.validator(), gate).await)
     }
 }
 
@@ -537,10 +735,35 @@ mod tests {
         RelayValidator::new(40204, MARKETPLACE, ACCOUNTING)
     }
 
+    /// Canonical ABI arguments for the function a selector belongs to, so the
+    /// shape-validating relay accepts the fixture (FUA-GUI-01 residual).
+    fn canonical_args_for(selector: [u8; 4], job_id: u64) -> String {
+        let word = |v: u64| format!("{:0>64x}", v);
+        match selector {
+            s if s == SEL_START_EXECUTION || s == SEL_COMPLETE_JOB => word(job_id),
+            s if s == SEL_SUBMIT_COMMITMENT => format!("{}{}", word(job_id), "11".repeat(32)),
+            s if s == SEL_SUBMIT_RESULT => {
+                // submitResult(jobId, bytes result, bytes proof) — 3-byte
+                // result, 2-byte proof, canonical offsets.
+                let mut a = String::new();
+                a.push_str(&word(job_id));
+                a.push_str(&word(0x60)); // result offset
+                a.push_str(&word(0x60 + 32 + 32)); // proof offset (past padded result)
+                a.push_str(&word(3)); // result length
+                a.push_str(&format!("{:0<64}", "aabbcc")); // 3 bytes, right-padded
+                a.push_str(&word(2)); // proof length
+                a.push_str(&format!("{:0<64}", "ddee")); // 2 bytes, right-padded
+                a
+            }
+            s if s == SEL_CLAIM_REWARDS => String::new(),
+            _ => word(job_id), // unknown selectors: one plausible word
+        }
+    }
+
     /// A pending request with a given intent, contract, value, and selector.
     fn req(id: u64, intent: &str, to: &str, value_wei: &str, selector: [u8; 4]) -> PendingRequest {
         let mut calldata = format!("0x{:02x}{:02x}{:02x}{:02x}", selector[0], selector[1], selector[2], selector[3]);
-        calldata.push_str(&"00".repeat(32)); // a 32-byte arg, plausible calldata
+        calldata.push_str(&canonical_args_for(selector, id));
         PendingRequest {
             id,
             intent: intent.to_string(),
@@ -719,11 +942,29 @@ mod tests {
         }
     }
 
+    /// Records which writes it was asked to confirm; answers `allow`.
+    struct MockGate {
+        allow: bool,
+        asked: Mutex<Vec<u64>>,
+    }
+    impl MockGate {
+        fn new(allow: bool) -> Self {
+            Self { allow, asked: Mutex::new(Vec::new()) }
+        }
+    }
+    #[async_trait::async_trait]
+    impl ConfirmationGate for MockGate {
+        async fn confirm_write(&self, write: &ValidatedWrite) -> bool {
+            self.asked.lock().unwrap().push(write.id);
+            self.allow
+        }
+    }
+
     #[tokio::test]
     async fn run_once_signs_validates_and_observes() {
         let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator()).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
 
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 7);
@@ -740,7 +981,7 @@ mod tests {
     async fn run_once_broadcast_failure_leaves_it_pending() {
         let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         let s = MockSigner::new(false); // broadcast fails
-        let report = run_once(&s, FROM, &q, &validator()).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
 
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
@@ -756,7 +997,7 @@ mod tests {
         let good = req(3, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
         let q = MockQueue::new(vec![submitted, bad_to, good]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator()).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
 
         assert_eq!(report.skipped_non_pending, 1);
         assert_eq!(report.rejected.len(), 1);
@@ -772,7 +1013,7 @@ mod tests {
             req(2, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT),
         ]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator()).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
         // Only the first valid write is signed (nonce safety); #2 waits for next tick.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 1);
@@ -784,7 +1025,7 @@ mod tests {
         let mut q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         q.fail_observe = true;
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator()).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
         // The tx was broadcast (signed recorded) even though observe POST failed.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.errors.len(), 1);
@@ -808,7 +1049,7 @@ mod tests {
         let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         let s = MockSigner::new(true);
         // Even unlocked, a disabled relay signs nothing.
-        assert!(svc.tick(&s, FROM, &q, true).await.is_none());
+        assert!(svc.tick(&s, FROM, &q, true, &MockGate::new(true)).await.is_none());
         assert!(s.calls.lock().unwrap().is_empty());
     }
 
@@ -819,7 +1060,7 @@ mod tests {
         let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         let s = MockSigner::new(true);
         // Enabled but locked → nothing signed (never auto-unlocks).
-        assert!(svc.tick(&s, FROM, &q, false).await.is_none());
+        assert!(svc.tick(&s, FROM, &q, false, &MockGate::new(true)).await.is_none());
         assert!(s.calls.lock().unwrap().is_empty());
     }
 
@@ -829,9 +1070,169 @@ mod tests {
         svc.set_enabled(true);
         let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
         let s = MockSigner::new(true);
-        let report = svc.tick(&s, FROM, &q, true).await.expect("should run");
+        let report = svc.tick(&s, FROM, &q, true, &MockGate::new(true)).await.expect("should run");
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 7);
+    }
+
+    // ── FUA-GUI-01 residual (WP 6.4b): calldata ARGUMENTS must match the
+    // intent's ABI shape, not just its 4-byte selector. Each of these was
+    // accepted by the selector-only validator — RED until decode_args lands.
+
+    /// `claimRewards()` takes NO arguments. Trailing words are refused.
+    #[test]
+    fn validator_refuses_claim_rewards_with_unexpected_args() {
+        let v = validator();
+        let mut r = req(1, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
+        r.calldata = format!("0x{}{}", hex::encode(SEL_CLAIM_REWARDS), "00".repeat(32));
+        assert!(
+            v.validate(&r).is_err(),
+            "claimRewards with argument words must be refused"
+        );
+    }
+
+    /// `startExecution(uint256)` is exactly selector + one 32-byte word.
+    #[test]
+    fn validator_refuses_start_execution_with_trailing_bytes() {
+        let v = validator();
+        let mut r = req(1, "startExecution", MARKETPLACE, "0", SEL_START_EXECUTION);
+        r.calldata = format!(
+            "0x{}{}ff",
+            hex::encode(SEL_START_EXECUTION),
+            "00".repeat(32)
+        );
+        assert!(
+            v.validate(&r).is_err(),
+            "startExecution with a trailing byte must be refused"
+        );
+    }
+
+    /// `submitCommitment(uint256,bytes32)` is exactly selector + two words.
+    #[test]
+    fn validator_refuses_truncated_submit_commitment() {
+        let v = validator();
+        let mut r = req(1, "submitCommitment", MARKETPLACE, "0", SEL_SUBMIT_COMMITMENT);
+        r.calldata = format!("0x{}{}", hex::encode(SEL_SUBMIT_COMMITMENT), "00".repeat(32));
+        assert!(
+            v.validate(&r).is_err(),
+            "submitCommitment with only one argument word must be refused"
+        );
+    }
+
+    /// `submitResult(uint256,bytes,bytes)` head offsets must be canonical and
+    /// in-bounds — an attacker-crafted head pointing past the calldata is refused.
+    #[test]
+    fn validator_refuses_submit_result_with_bogus_offsets() {
+        let v = validator();
+        let mut r = req(1, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
+        // jobId=1, then two offsets pointing far outside the calldata.
+        let mut args = String::new();
+        args.push_str(&format!("{:0>64x}", 1u64)); // jobId
+        args.push_str(&format!("{:0>64x}", 0xffff_u64)); // result offset (way out)
+        args.push_str(&format!("{:0>64x}", 0xffff_u64)); // proof offset (way out)
+        r.calldata = format!("0x{}{}", hex::encode(SEL_SUBMIT_RESULT), args);
+        assert!(
+            v.validate(&r).is_err(),
+            "submitResult with out-of-bounds dynamic offsets must be refused"
+        );
+    }
+
+    /// A jobId with non-zero high bytes (> u128) is not a plausible job
+    /// counter — refuse it rather than sign an arbitrary 256-bit value.
+    #[test]
+    fn validator_refuses_implausible_job_id() {
+        let v = validator();
+        let mut r = req(1, "completeJob", MARKETPLACE, "0", SEL_COMPLETE_JOB);
+        r.calldata = format!("0x{}{}", hex::encode(SEL_COMPLETE_JOB), "ff".repeat(32));
+        assert!(
+            v.validate(&r).is_err(),
+            "completeJob with a 2^255-scale jobId must be refused"
+        );
+    }
+
+    /// Decoded args surface what the relay is signing (display + cross-check).
+    #[test]
+    fn decode_args_extracts_each_shape() {
+        let v = validator();
+        let r = req(9, "submitCommitment", MARKETPLACE, "0", SEL_SUBMIT_COMMITMENT);
+        let vw = v.validate(&r).expect("valid");
+        assert_eq!(
+            vw.args,
+            DecodedArgs::Commitment { job_id: 9, commitment: [0x11; 32] }
+        );
+
+        let r = req(4, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
+        let vw = v.validate(&r).expect("valid");
+        assert_eq!(vw.args, DecodedArgs::Result { job_id: 4, result_len: 3, proof_len: 2 });
+        assert!(vw.describe().contains("job 4"));
+
+        let r = req(2, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
+        assert_eq!(v.validate(&r).expect("valid").args, DecodedArgs::NoArgs);
+    }
+
+    // ── FUA-GUI-01 residual: per-write confirmation gate ──────────────────
+
+    /// The pure decision function: claimRewards and any value-bearing write
+    /// require explicit confirmation; value-0 job lifecycle writes do not.
+    #[test]
+    fn requires_confirmation_policy() {
+        assert!(requires_confirmation("claimRewards", "0"));
+        assert!(requires_confirmation("submitResult", "5"));
+        assert!(requires_confirmation("anythingValueBearing", "1000000000000000000"));
+        assert!(!requires_confirmation("startExecution", "0"));
+        assert!(!requires_confirmation("submitCommitment", "0"));
+        assert!(!requires_confirmation("submitResult", "0"));
+        assert!(!requires_confirmation("completeJob", "0"));
+    }
+
+    /// An unconfirmed claimRewards is refused — and never signed.
+    #[tokio::test]
+    async fn run_once_refuses_unconfirmed_claim_rewards() {
+        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let s = MockSigner::new(true);
+        let gate = MockGate::new(false); // user declines / no surface
+        let report = run_once(&s, FROM, &q, &validator(), &gate).await;
+
+        assert!(report.signed.is_empty(), "declined write must not be signed");
+        assert!(s.calls.lock().unwrap().is_empty(), "signer must never be reached");
+        assert_eq!(gate.asked.lock().unwrap().as_slice(), &[5], "gate was consulted");
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [(5, RejectReason::NotConfirmed { .. })]
+        ));
+        assert!(q.observed.lock().unwrap().is_empty(), "no observed POST either");
+    }
+
+    /// A confirmed claimRewards signs; value-0 lifecycle writes never consult
+    /// the gate (covered by the relay's explicit opt-in consent).
+    #[tokio::test]
+    async fn run_once_confirmed_claim_rewards_signs_and_lifecycle_skips_gate() {
+        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let s = MockSigner::new(true);
+        let gate = MockGate::new(true);
+        let report = run_once(&s, FROM, &q, &validator(), &gate).await;
+        assert_eq!(report.signed.len(), 1);
+        assert_eq!(gate.asked.lock().unwrap().as_slice(), &[5]);
+
+        let q2 = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let s2 = MockSigner::new(true);
+        let gate2 = MockGate::new(false); // even a denying gate is irrelevant here
+        let report2 = run_once(&s2, FROM, &q2, &validator(), &gate2).await;
+        assert_eq!(report2.signed.len(), 1, "value-0 lifecycle write signs without the gate");
+        assert!(gate2.asked.lock().unwrap().is_empty(), "gate not consulted for lifecycle writes");
+    }
+
+    /// The fail-closed default gate refuses everything.
+    #[tokio::test]
+    async fn deny_all_gate_refuses() {
+        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let s = MockSigner::new(true);
+        let report = run_once(&s, FROM, &q, &validator(), &DenyAllConfirmations).await;
+        assert!(report.signed.is_empty());
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [(5, RejectReason::NotConfirmed { .. })]
+        ));
     }
 
     #[tokio::test]
@@ -847,7 +1248,7 @@ mod tests {
             }
         }
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &DeadQueue, &validator()).await;
+        let report = run_once(&s, FROM, &DeadQueue, &validator(), &MockGate::new(true)).await;
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("list requests"));

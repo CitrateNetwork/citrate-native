@@ -153,7 +153,7 @@ impl ClassroomBackend for RpcClassroomBackend {
         // getStudentCount(uint256)
         let count_data = abi::encode_call_uint256("getStudentCount(uint256)", classroom_id);
         let count_hex = self.eth_call(&count_data).await?;
-        let student_count = abi::decode_uint256(&count_hex).unwrap_or(0);
+        let student_count = abi::decode_uint64(&count_hex).unwrap_or(0);
 
         // Note: getClassroomName returns a string which needs ABI string decoding.
         // For now, we return the classroom ID as the name placeholder.
@@ -171,13 +171,13 @@ impl ClassroomBackend for RpcClassroomBackend {
     async fn get_student_count(&self, classroom_id: u64) -> Result<u64, AppError> {
         let data = abi::encode_call_uint256("getStudentCount(uint256)", classroom_id);
         let result = self.eth_call(&data).await?;
-        abi::decode_uint256(&result)
+        abi::decode_uint64(&result)
             .ok_or_else(|| AppError::ChainQuery("Failed to decode student count".to_string()))
     }
 
     /// Data source: ClassroomClusterV1.getOrgRole(address) via eth_call
     async fn get_org_role(&self, address: &str) -> Result<OrgRole, AppError> {
-        let data = abi::encode_call_address("getOrgRole(address)", address);
+        let data = abi::encode_call_address("getOrgRole(address)", address).map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;
         let code = abi::decode_uint8(&result).unwrap_or(0);
         Ok(OrgRole::from(code))
@@ -187,7 +187,8 @@ impl ClassroomBackend for RpcClassroomBackend {
     async fn get_classroom_role(&self, classroom_id: u64, address: &str) -> Result<ClassroomRole, AppError> {
         let data = abi::encode_call_uint256_address(
             "getClassroomRole(uint256,address)", classroom_id, address,
-        );
+        )
+        .map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;
         let code = abi::decode_uint8(&result).unwrap_or(0);
         Ok(ClassroomRole::from(code))
