@@ -69,8 +69,11 @@ serde = { version = "1", features = ["derive"] }
 sysinfo = "0.32"
 nvml-wrapper = "0.10"
 
-[dev-dependencies]
+# WP 6.4b (FUA-GUI-01 residual): the relay confirmation gate in main.rs
+# implements the async `ConfirmationGate` trait — needed at build time.
 async-trait = "0.1"
+
+[dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]

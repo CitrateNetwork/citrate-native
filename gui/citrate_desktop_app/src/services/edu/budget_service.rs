@@ -87,19 +87,19 @@ impl BudgetBackend for RpcBudgetBackend {
     async fn get_budget(&self, classroom_id: u64) -> Result<BudgetInfo, AppError> {
         let allocated_data = abi::encode_call_uint256("getAllocated(uint256)", classroom_id);
         let allocated_hex = self.eth_call(&allocated_data).await?;
-        let allocated = abi::decode_uint256(&allocated_hex).unwrap_or(0);
+        let allocated = abi::decode_uint64(&allocated_hex).unwrap_or(0);
 
         let remaining_data = abi::encode_call_uint256("getRemaining(uint256)", classroom_id);
         let remaining_hex = self.eth_call(&remaining_data).await?;
-        let remaining = abi::decode_uint256(&remaining_hex).unwrap_or(0);
+        let remaining = abi::decode_uint64(&remaining_hex).unwrap_or(0);
 
         let spent_data = abi::encode_call_uint256("getSpent(uint256)", classroom_id);
         let spent_hex = self.eth_call(&spent_data).await?;
-        let spent = abi::decode_uint256(&spent_hex).unwrap_or(0);
+        let spent = abi::decode_uint64(&spent_hex).unwrap_or(0);
 
         let limit_data = abi::encode_call_uint256("getMonthlyLimit(uint256)", classroom_id);
         let limit_hex = self.eth_call(&limit_data).await?;
-        let monthly_limit = abi::decode_uint256(&limit_hex).unwrap_or(0);
+        let monthly_limit = abi::decode_uint64(&limit_hex).unwrap_or(0);
 
         Ok(BudgetInfo {
             classroom_id,
@@ -114,7 +114,7 @@ impl BudgetBackend for RpcBudgetBackend {
     async fn get_remaining(&self, classroom_id: u64) -> Result<u64, AppError> {
         let data = abi::encode_call_uint256("getRemaining(uint256)", classroom_id);
         let result = self.eth_call(&data).await?;
-        abi::decode_uint256(&result)
+        abi::decode_uint64(&result)
             .ok_or_else(|| AppError::ChainQuery("Failed to decode remaining budget".to_string()))
     }
 
@@ -122,7 +122,7 @@ impl BudgetBackend for RpcBudgetBackend {
     async fn get_spent(&self, classroom_id: u64) -> Result<u64, AppError> {
         let data = abi::encode_call_uint256("getSpent(uint256)", classroom_id);
         let result = self.eth_call(&data).await?;
-        abi::decode_uint256(&result)
+        abi::decode_uint64(&result)
             .ok_or_else(|| AppError::ChainQuery("Failed to decode spent amount".to_string()))
     }
 }

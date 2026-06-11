@@ -713,6 +713,70 @@ async fn run_health_probes(
     });
 }
 
+/// FUA-GUI-01 residual (WP 6.4b): the relay's per-write human confirmation
+/// surface. Privileged writes (today: `claimRewards`; any value-bearing write
+/// by policy) are submitted to the SAME `PendingApprovalStore` the chat-tool
+/// and Operations approval flows use — they appear on the Operations panel's
+/// pending-approvals list with Approve/Deny, auto-deny on the store's
+/// timeout, and fail closed on any error. A write the user declines (or that
+/// times out) is remembered and silently refused on subsequent relay ticks so
+/// a stuck queue entry cannot generate an approval-prompt storm.
+struct RelayApprovalGate {
+    approvals: Arc<citrate_agent_core::delegation::PendingApprovalStore>,
+    declined: tokio::sync::Mutex<std::collections::HashSet<u64>>,
+}
+
+impl RelayApprovalGate {
+    fn new(approvals: Arc<citrate_agent_core::delegation::PendingApprovalStore>) -> Self {
+        Self {
+            approvals,
+            declined: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl citrate_desktop_app::services::relay_service::ConfirmationGate for RelayApprovalGate {
+    async fn confirm_write(
+        &self,
+        write: &citrate_desktop_app::services::relay_service::ValidatedWrite,
+    ) -> bool {
+        if self.declined.lock().await.contains(&write.id) {
+            // Already declined/timed out once — stay refused, don't re-prompt.
+            return false;
+        }
+        let request = citrate_agent_core::canonical::ApprovalRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            session_id: "relay".to_string(),
+            tool_name: format!("relay_sign:{}", write.intent),
+            params: serde_json::json!({
+                "queue_id": write.id,
+                "intent": write.intent,
+                "to": write.to,
+                "value_wei": write.value_wei,
+                "write": write.describe(),
+            }),
+            risk_level: "high".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            timeout_seconds: 60,
+            resolved: None,
+            resolved_at: None,
+        };
+        tracing::info!("signing relay: confirmation required — {}", write.describe());
+        let rx = self.approvals.submit(request).await;
+        // Fail closed: dropped sender / timeout / explicit deny are all false.
+        let approved = rx.await.unwrap_or(false);
+        if !approved {
+            self.declined.lock().await.insert(write.id);
+            tracing::warn!(
+                "signing relay: write {} NOT confirmed — refusing (and muting re-prompts)",
+                write.id
+            );
+        }
+        approved
+    }
+}
+
 /// Outcome of polling `eth_getTransactionReceipt` for a submitted tx.
 ///
 /// Ok(Confirmed(block_number_hex)) — status 0x1, tx included in a block.
@@ -2605,6 +2669,10 @@ fn main() {
                   Ok(agent) => {
                 let agent = std::sync::Arc::new(agent);
                 let signer = std::sync::Arc::new(WalletTxSigner::new(core.wallet.clone()));
+                // FUA-GUI-01 residual: privileged writes (claimRewards /
+                // value-bearing) require an explicit per-write approval via
+                // the Operations pending-approvals surface; fail closed.
+                let confirm_gate = std::sync::Arc::new(RelayApprovalGate::new(core.approvals.clone()));
                 let relay_loop = relay.clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(relay_loop.poll_interval());
@@ -2616,8 +2684,13 @@ fn main() {
                         Some(a) if !a.is_empty() => a,
                         _ => continue,
                     };
-                    let report =
-                        rt_handle.block_on(relay_loop.tick(signer.as_ref(), &from, agent.as_ref(), true));
+                    let report = rt_handle.block_on(relay_loop.tick(
+                        signer.as_ref(),
+                        &from,
+                        agent.as_ref(),
+                        true,
+                        confirm_gate.as_ref(),
+                    ));
                     if let Some(r) = report {
                         for s in &r.signed {
                             let short = &s.tx_hash[..s.tx_hash.len().min(12)];
