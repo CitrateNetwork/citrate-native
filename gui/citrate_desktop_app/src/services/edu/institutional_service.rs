@@ -126,12 +126,12 @@ impl InstitutionalBackend for RpcInstitutionalBackend {
         // threshold() — selector: cast sig "threshold()"
         let threshold_data = abi::encode_call("threshold()");
         let threshold_hex = self.eth_call(VAULT_ADDRESS, &threshold_data).await?;
-        let threshold = abi::decode_uint256(&threshold_hex).unwrap_or(0);
+        let threshold = abi::decode_uint64(&threshold_hex).unwrap_or(0);
 
         // signerCount() — selector
         let count_data = abi::encode_call("signerCount()");
         let count_hex = self.eth_call(VAULT_ADDRESS, &count_data).await?;
-        let signer_count = abi::decode_uint256(&count_hex).unwrap_or(0);
+        let signer_count = abi::decode_uint64(&count_hex).unwrap_or(0);
 
         // isPaused()
         let paused_data = abi::encode_call("isPaused()");
@@ -169,7 +169,7 @@ impl InstitutionalBackend for RpcInstitutionalBackend {
 
     /// Data source: InstitutionalVault.isSigner(address) via eth_call
     async fn is_signer(&self, address: &str) -> Result<bool, AppError> {
-        let data = abi::encode_call_address("isSigner(address)", address);
+        let data = abi::encode_call_address("isSigner(address)", address).map_err(AppError::ChainQuery)?;
         let result = self.eth_call(VAULT_ADDRESS, &data).await?;
         Ok(abi::decode_bool(&result))
     }
@@ -211,7 +211,7 @@ impl InstitutionalBackend for RpcInstitutionalBackend {
     async fn get_salt_usd_rate(&self) -> Result<u64, AppError> {
         let data = abi::encode_call("getSaltUsdRate()");
         let result = self.eth_call(CASHOUT_ADDRESS, &data).await?;
-        abi::decode_uint256(&result)
+        abi::decode_uint64(&result)
             .ok_or_else(|| AppError::ChainQuery("Failed to decode SALT/USD rate".to_string()))
     }
 }

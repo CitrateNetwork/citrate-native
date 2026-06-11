@@ -381,7 +381,9 @@ async fn test_send_max_u256_amount() {
     svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
     let max_u256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
     let result = svc.send_transaction("0xfrom", "0xto", max_u256, "pwd").await;
-    assert!(result.is_ok(), "Max U256 should not crash the system");
+    // FUA-GUI-03 (WP 6.4b): values beyond u128 are refused at the re-auth
+    // chokepoint (fail closed) — and they certainly must not crash.
+    assert!(result.is_err(), "beyond-u128 value must be refused, not passed through");
 }
 
 #[tokio::test]
@@ -390,8 +392,9 @@ async fn test_send_negative_amount() {
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
     svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "-1000", "pwd").await;
-    // StubBackend doesn't validate, but the system must not crash
-    assert!(result.is_ok(), "Backend should handle negative gracefully");
+    // FUA-GUI-03 (WP 6.4b): non-parseable (negative) values FAIL CLOSED at
+    // the re-auth chokepoint instead of relying on the backend to catch them.
+    assert!(result.is_err(), "negative value must be refused");
 }
 
 #[tokio::test]
@@ -400,7 +403,8 @@ async fn test_send_non_numeric_amount() {
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
     svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "not_a_number", "pwd").await;
-    assert!(result.is_ok(), "StubBackend passes — real backend should validate");
+    // FUA-GUI-03 (WP 6.4b): the chokepoint validates — no fail-open pass-through.
+    assert!(result.is_err(), "non-numeric value must be refused");
 }
 
 #[tokio::test]
@@ -409,7 +413,8 @@ async fn test_send_empty_amount() {
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
     svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "", "pwd").await;
-    assert!(result.is_ok(), "Empty amount passes through to backend");
+    // FUA-GUI-03 (WP 6.4b): an empty amount is not a wei value — refused.
+    assert!(result.is_err(), "empty amount must be refused");
 }
 
 // =========================================================================

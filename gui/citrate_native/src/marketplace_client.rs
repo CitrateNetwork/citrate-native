@@ -1004,13 +1004,20 @@ mod tests {
 
     #[test]
     fn known_contract_returns_listed_addresses() {
-        // Spot-check a few well-known names
+        // Spot-check a few well-known names.
+        // WP 6.4b 2026-06-11: pins re-verified against the LIVE chain
+        // (eth_getCode via rpc.citrate.ai returns bytecode at these
+        // addresses; the previous pins — e.g. ComputeMarketplace
+        // 0xc12dbc…373c — return 0x, i.e. no contract). The vendored
+        // generated/addresses.json is the source; citrate-chain's
+        // DEPLOYED_ADDRESSES.md still carries the stale pre-reroll set
+        // and needs its own reconcile (flagged to the chain repo).
         assert_eq!(known_contract(40204, "ModelRegistry"),
-            Some("0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"));
+            Some("0xf64636d56ec9e0c406149b34ea9c5c5d80b342c0"));
         assert_eq!(known_contract(40204, "ComputeMarketplace"),
-            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c"));
+            Some("0xf62ab4903f22c149be3d29501cebfe6761ab5283"));
         assert_eq!(known_contract(40204, "LearningPool"),
-            Some("0x828c6b831c4ce08170bc3efc6f6026dc44b20dfa"));
+            Some("0xfc514b826daee16c590f86ad83370f4fb8a1d564"));
         // Unknown name returns None
         assert!(known_contract(40204, "NotARealContract").is_none());
         // Wrong chain returns None
@@ -1198,17 +1205,20 @@ mod tests {
     #[test]
     fn canonical_address_book_compute_critical() {
         // Each pair is (name, canonical address from DEPLOYED_ADDRESSES.md).
+        // WP 6.4b 2026-06-11: re-pinned to generated/addresses.json after
+        // verifying ComputeMarketplace on-chain (eth_getCode: bytecode at
+        // 0xf62ab4…5283, empty at the old 0xc12dbc…373c pin).
         let canonical: &[(&str, &str)] = &[
-            ("ComputeMarketplace",     "0xc12dbcdb80ef2ae675315f455210f39a736a373c"),
-            ("ComputePool",            "0xf1eae5dd4a1639922ea610142f7ce51330065b57"),
-            ("ComputeVerifier",        "0xf7c3180dda79fb046173d96d172bf43b70174031"),
-            ("HeartbeatMonitor",       "0xbaa2505d0446043be3540c0b9150c6df42d33180"),
-            ("ComputePricingOracle",   "0x4ee0bef59a87a9ea3f91b80fd68ebfe69e72075a"),
-            ("ContributionAccounting", "0x86d918808b48ad543c9c816b5303b7dbcb0e321f"),
-            ("BulkComputeGateway",     "0x3bc867e60d13a825a57a5fbc3a53c4f710ac8f76"),
-            ("ModelRegistry",          "0x11a5e6f57751d8fa1c5b58ad2bf13528160985f0"),
-            ("WrappedSALT",            "0xad7c3135c1b9b3189208fd617b6b058c1c0469f3"),
-            ("InferenceRouter",        "0x6884ef1907468a13265a0bbb67da20ef4b52199b"),
+            ("ComputeMarketplace",     "0xf62ab4903f22c149be3d29501cebfe6761ab5283"),
+            ("ComputePool",            "0xeed18c3c32389affec78d5e233e56d5e6a65baf1"),
+            ("ComputeVerifier",        "0xd1b723174d200e6eb06482a12c86fc693bea6c99"),
+            ("HeartbeatMonitor",       "0xe9eaac272844f342266862bbefc6d117a227ad9b"),
+            ("ComputePricingOracle",   "0xdcebd5ec209161810c85f3d97e194f0f0d02b02d"),
+            ("ContributionAccounting", "0xcdd2477387279c7d44a1053f44db5dac0fd8faef"),
+            ("BulkComputeGateway",     "0xf96584f9019619a827d170d5fd233fef391cc8ab"),
+            ("ModelRegistry",          "0xf64636d56ec9e0c406149b34ea9c5c5d80b342c0"),
+            ("WrappedSALT",            "0x61bc737f67b430fe2567630823694032a049253e"),
+            ("InferenceRouter",        "0xcdca7e85598485a562606cf8beec757dd265477f"),
         ];
         for (name, addr) in canonical {
             assert_eq!(
@@ -1227,7 +1237,7 @@ mod tests {
         // ComputeMarketplace address — and the per-name map entry.
         assert_eq!(
             compute_marketplace_address(40204),
-            Some("0xc12dbcdb80ef2ae675315f455210f39a736a373c")
+            Some("0xf62ab4903f22c149be3d29501cebfe6761ab5283")
         );
         assert_eq!(
             compute_marketplace_address(40204),

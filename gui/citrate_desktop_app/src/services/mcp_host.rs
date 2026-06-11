@@ -126,6 +126,12 @@ pub struct McpHostService {
     /// On-disk path for token persistence. `None` means in-memory
     /// only (used in tests).
     tokens_file: Option<PathBuf>,
+    /// GUI_NATIVE-2026-05-31-005 (WP 6.4b): grant ownership — which
+    /// auth_token (if any) minted each grant. `session/end` for a
+    /// token-minted grant requires the SAME token; `None` (tokenless
+    /// ReadOnly discovery grants) keeps the v1 grant-id-as-credential
+    /// behavior.
+    grant_owners: RwLock<HashMap<String, Option<String>>>,
 }
 
 impl McpHostService {
@@ -136,6 +142,7 @@ impl McpHostService {
             listening: RwLock::new(false),
             tokens: RwLock::new(HashMap::new()),
             tokens_file: None,
+            grant_owners: RwLock::new(HashMap::new()),
         }
     }
 
@@ -153,6 +160,7 @@ impl McpHostService {
             listening: RwLock::new(false),
             tokens: RwLock::new(initial),
             tokens_file: Some(tokens_file),
+            grant_owners: RwLock::new(HashMap::new()),
         }
     }
 
@@ -559,6 +567,12 @@ async fn handle_initialize(
         signature: Vec::new(),
     };
     host.mcp.add_grant(grant).await;
+    // GUI_NATIVE-2026-05-31-005: remember which credential minted this grant
+    // so `session/end` can require the same one.
+    host.grant_owners
+        .write()
+        .await
+        .insert(grant_id.clone(), auth_token.clone());
     tracing::info!("MCP host: grant {} registered", &grant_id[..8]);
 
     Json(JsonRpcResponse::ok(id, serde_json::json!({
@@ -601,8 +615,29 @@ async fn handle_session_end(
         Some(g) => g.to_string(),
         None => return Json(JsonRpcResponse::err(id, -32602, "Missing grant_id")),
     };
+    // GUI_NATIVE-2026-05-31-005 (WP 6.4b): caller-ownership binding. A grant
+    // minted under an operator auth_token can only be ended by a caller
+    // presenting that token (params field or transport bearer — dispatch
+    // splices the bearer in). Without this, any local client that learns a
+    // grant_id (e.g. from the Operations panel) could revoke someone else's
+    // session — a grant DoS. Tokenless ReadOnly grants keep the v1
+    // grant-id-as-credential behavior.
+    let presented = params.get("auth_token").and_then(|v| v.as_str());
+    {
+        let owners = host.grant_owners.read().await;
+        if let Some(Some(owner_token)) = owners.get(&grant_id) {
+            if presented != Some(owner_token.as_str()) {
+                return Json(JsonRpcResponse::err(
+                    id,
+                    -32001,
+                    "session/end requires the auth_token that created this grant",
+                ));
+            }
+        }
+    }
     let removed = host.mcp.revoke_grant(&grant_id).await;
     if removed {
+        host.grant_owners.write().await.remove(&grant_id);
         tracing::info!("MCP host: grant {} ended", &grant_id[..8.min(grant_id.len())]);
         Json(JsonRpcResponse::ok(id, serde_json::json!({ "ok": true })))
     } else {
@@ -753,6 +788,89 @@ mod tests {
         });
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         assert!(resp.0.error.is_some(), "expired token must error");
+    }
+
+    // ── GUI_NATIVE-2026-05-31-005 (WP 6.4b): session/end ownership ──────
+
+    /// A grant minted under an operator auth_token must only be endable by a
+    /// caller presenting THAT token — knowing/guessing a grant_id alone must
+    /// not let a co-resident client revoke someone else's session (grant DoS).
+    #[tokio::test]
+    async fn test_005_session_end_without_owner_token_is_refused() {
+        let host = test_host();
+        let token = host.create_token("owner", PolicyProfile::Guided, None).await;
+        let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let grant_id = resp.0.result.as_ref().expect("grant issued")["grant_id"]
+            .as_str()
+            .expect("grant_id string")
+            .to_string();
+
+        // No token presented → refused, grant survives.
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(2),
+            serde_json::json!({ "grant_id": grant_id }),
+        )
+        .await;
+        assert!(
+            end.0.error.is_some(),
+            "session/end without the owning auth_token must be refused"
+        );
+        assert_eq!(
+            host.list_active_grants().await.len(),
+            1,
+            "the grant must survive an unowned session/end"
+        );
+
+        // Wrong token → refused too.
+        let other = host.create_token("other", PolicyProfile::Guided, None).await;
+        let end2 = handle_session_end(
+            &host,
+            serde_json::json!(3),
+            serde_json::json!({ "grant_id": resp.0.result.as_ref().unwrap()["grant_id"], "auth_token": other.token }),
+        )
+        .await;
+        assert!(end2.0.error.is_some(), "a different token must not end the grant");
+        assert_eq!(host.list_active_grants().await.len(), 1);
+    }
+
+    /// Presenting the owning token ends the session.
+    #[tokio::test]
+    async fn test_005_session_end_with_owner_token_succeeds() {
+        let host = test_host();
+        let token = host.create_token("owner", PolicyProfile::Guided, None).await;
+        let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let grant_id = resp.0.result.as_ref().unwrap()["grant_id"].clone();
+
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(2),
+            serde_json::json!({ "grant_id": grant_id, "auth_token": token.token }),
+        )
+        .await;
+        assert!(end.0.error.is_none(), "owner-presented session/end succeeds");
+        assert_eq!(host.list_active_grants().await.len(), 0);
+    }
+
+    /// Tokenless (ReadOnly discovery) grants keep the v1 behavior: the
+    /// unguessable grant_id itself is the credential.
+    #[tokio::test]
+    async fn test_005_tokenless_grant_can_end_with_grant_id_alone() {
+        let host = test_host();
+        let params = serde_json::json!({ "policy": "ReadOnly", "recipient": "hermes" });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let grant_id = resp.0.result.as_ref().unwrap()["grant_id"].clone();
+
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(2),
+            serde_json::json!({ "grant_id": grant_id }),
+        )
+        .await;
+        assert!(end.0.error.is_none(), "tokenless grant ends with grant_id alone");
+        assert_eq!(host.list_active_grants().await.len(), 0);
     }
 
     /// `list_tokens` exposes only the prefix, never the full secret.

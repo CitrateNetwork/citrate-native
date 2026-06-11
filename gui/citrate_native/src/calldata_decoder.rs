@@ -86,6 +86,11 @@ const CANONICAL_SIGNATURES: &[&str] = &[
     "record(bytes32,bytes32)",
     "sign(bytes32,bytes32)",
     "registerModel(bytes32,bytes32)",
+    // ModelRegistry precompile write — the GUI's own model-publish tx
+    // (app_binder::encode_register_model_calldata). GUI_NATIVE-2026-05-31-004:
+    // the encoder used this signature while the decoder only knew the BFR
+    // bytes32,bytes32 variant, so operators couldn't decode their own tx.
+    "registerModel(bytes32,string)",
     // BFR read selectors (top operator queries — full set in
     // citrate_rbac_bindings::live::selectors but these are the
     // ones operators commonly hit by hand)
@@ -212,6 +217,21 @@ mod tests {
                 assert!(canonical.starts_with("anchor("));
             }
             other => panic!("expected Known(anchor), got {:?}", other),
+        }
+    }
+
+    /// GUI_NATIVE-2026-05-31-004 (WP 6.4b): the GUI's own model-publish tx is
+    /// built with `registerModel(bytes32,string)` (app_binder) — the decoder
+    /// modal must recognize it, not just the BFR `registerModel(bytes32,bytes32)`.
+    #[test]
+    fn model_registry_register_model_resolves() {
+        let sel = compute("registerModel(bytes32,string)");
+        let hex_input = format!("0x{}{}", hex::encode(sel), "00".repeat(64));
+        match decode_selector(&hex_input) {
+            SelectorMatch::Known { canonical, .. } => {
+                assert_eq!(canonical, "registerModel(bytes32,string)");
+            }
+            other => panic!("expected Known(registerModel(bytes32,string)), got {:?}", other),
         }
     }
 
