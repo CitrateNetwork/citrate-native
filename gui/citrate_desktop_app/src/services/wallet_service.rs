@@ -642,20 +642,28 @@ impl WalletService {
     /// signing method that forgets to call this is the exact regression the
     /// `test_wal07_*` tripwires guard against — keep the call at the top of
     /// each signing path.
+    ///
+    /// FUA-GUI-03 (WP 6.4b): a `value_wei` that does not parse FAILS CLOSED.
+    /// Pre-fix it silently skipped the threshold check (the signing backend
+    /// would still reject it later, but a security chokepoint must not rely
+    /// on a downstream layer to catch what it let through).
     async fn enforce_value_reauth(&self, value_wei: &str) -> Result<(), AppError> {
-        if let Ok(value) = value_wei.parse::<u128>() {
-            if value >= RE_AUTH_THRESHOLD_WEI {
-                let last_unlock = *self.last_unlock_at.read().await;
-                let stale = match last_unlock {
-                    Some(when) => when.elapsed().as_secs() >= RE_AUTH_FRESHNESS_SECS,
-                    None => true,
-                };
-                if stale {
-                    return Err(AppError::Wallet(format!(
-                        "Re-authentication required: transfers above {} wei require password entry within the last {} seconds",
-                        RE_AUTH_THRESHOLD_WEI, RE_AUTH_FRESHNESS_SECS
-                    )));
-                }
+        let value = value_wei.parse::<u128>().map_err(|_| {
+            AppError::Wallet(format!(
+                "invalid transaction value: {value_wei:?} is not a decimal wei amount"
+            ))
+        })?;
+        if value >= RE_AUTH_THRESHOLD_WEI {
+            let last_unlock = *self.last_unlock_at.read().await;
+            let stale = match last_unlock {
+                Some(when) => when.elapsed().as_secs() >= RE_AUTH_FRESHNESS_SECS,
+                None => true,
+            };
+            if stale {
+                return Err(AppError::Wallet(format!(
+                    "Re-authentication required: transfers above {} wei require password entry within the last {} seconds",
+                    RE_AUTH_THRESHOLD_WEI, RE_AUTH_FRESHNESS_SECS
+                )));
             }
         }
         Ok(())
@@ -854,6 +862,31 @@ mod tests {
         svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
         let hash = svc.send_transaction("0xfrom", "0xto", "1000", "password").await.expect("async operation succeeded");
         assert!(!hash.is_empty());
+    }
+
+    /// FUA-GUI-03 (WP 6.4b): a non-numeric `value_wei` must FAIL CLOSED at the
+    /// re-auth chokepoint, not silently skip the threshold check (WP-001 DoD).
+    #[tokio::test]
+    async fn test_fua_gui_03_non_numeric_value_fails_closed() {
+        let svc = test_service();
+        svc.unlock("0xabc", "password123").await.expect("unlock succeeded");
+        let result = svc
+            .send_transaction("0xfrom", "0xto", "not-a-number", "password")
+            .await;
+        assert!(
+            matches!(result, Err(AppError::Wallet(_))),
+            "non-numeric value must be refused at the re-auth gate, got {:?}",
+            result
+        );
+        // The calldata-bearing path enforces the same gate.
+        let result2 = svc
+            .send_transaction_with_data("0xfrom", "0xto", "0x10", vec![0u8; 4], "password")
+            .await;
+        assert!(
+            matches!(result2, Err(AppError::Wallet(_))),
+            "hex/non-decimal value must be refused on the calldata path, got {:?}",
+            result2
+        );
     }
 
     #[tokio::test]
