@@ -252,7 +252,13 @@ export component App inherits Window {
     callback wallet-export-key(/* password */ string);
     callback wallet-clear-export-state;
     callback wallet-request-faucet;
+    callback wallet-link-citrate-device;
+    callback wallet-send-sponsored(/* to */ string, /* amount */ string);
     in property <string> wallet-faucet-status: "";
+    // EW-S1 WP-8: Citrate identity smart-wallet link state.
+    in property <string> wallet-citrate-smart-wallet: "";
+    in property <string> wallet-citrate-link-status: "";
+    in property <bool> wallet-citrate-linking: false;
 
     // Wallet model data
     in property <[AccountData]> wallet-accounts: [];
@@ -644,6 +650,11 @@ export component App inherits Window {
                     clear-export-state => { root.wallet-clear-export-state(); }
                     faucet-status: root.wallet-faucet-status;
                     request-faucet => { root.wallet-request-faucet(); }
+                    citrate-smart-wallet: root.wallet-citrate-smart-wallet;
+                    citrate-link-status: root.wallet-citrate-link-status;
+                    citrate-linking: root.wallet-citrate-linking;
+                    link-citrate-device => { root.wallet-link-citrate-device(); }
+                    copy-smart-wallet => { root.copy-to-clipboard(root.wallet-citrate-smart-wallet); }
                 }
 
                 // DAG Explorer
@@ -994,7 +1005,10 @@ export component App inherits Window {
         error-message: root.send-error;
         sending: root.send-sending;
         receipt-status: root.send-receipt-status;
+        sponsored-available: root.wallet-citrate-smart-wallet != "";
+        smart-wallet: root.wallet-citrate-smart-wallet;
         send(to, amount, password) => { root.wallet-send(to, amount, password); }
+        send-sponsored(to, amount) => { root.wallet-send-sponsored(to, amount); }
         close => {
             root.show-send-dialog = false;
             root.wallet-send-close();

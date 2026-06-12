@@ -17,6 +17,9 @@ pub mod compute_service;
 pub mod mcp_host;
 pub mod edu;
 pub mod relay_service;
+// EW-S1 WP-8: ERC-4337/Kernel helpers for the Citrate identity link.
+pub mod citrate_aa;
+pub mod citrate_link_service;
 
 pub use node_service::NodeService;
 pub use wallet_service::WalletService;
