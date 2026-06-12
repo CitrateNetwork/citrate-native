@@ -61,6 +61,24 @@ pub trait WalletBackend: Send + Sync {
     fn set_chain_id(&self, _chain_id: u64) {}
     /// Update RPC URL target for environment switching
     fn set_rpc_url(&self, _url: &str) {}
+    /// The key algorithm behind an unlocked account ("ed25519" |
+    /// "secp256k1"). EW-S1 WP-8 gates the Citrate-identity link on
+    /// secp256k1 — an Ed25519 account cannot own the wallet's
+    /// CitrateECDSAValidator. Default errs (test backends override).
+    async fn key_kind(&self, _address: &str) -> Result<String, AppError> {
+        Err(AppError::Wallet("key_kind not supported by this backend".to_string()))
+    }
+    /// Recoverable secp256k1 ECDSA over a PRE-HASHED 32-byte digest,
+    /// returned as `r(32) ++ s(32) ++ v(27|28)` — the shape
+    /// `CitrateECDSAValidator.validateUserOp` recovers (EW-S1 WP-8
+    /// sponsored sends sign the v0.7 userOpHash this way). Default errs.
+    async fn sign_digest_recoverable(
+        &self,
+        _address: &str,
+        _digest: [u8; 32],
+    ) -> Result<[u8; 65], AppError> {
+        Err(AppError::Wallet("sign_digest_recoverable not supported by this backend".to_string()))
+    }
 }
 
 /// Production wallet backend — delegates to citrate-wallet-core for real
@@ -263,6 +281,40 @@ impl WalletBackend for WalletCoreBackend {
         let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
         *self.rpc_client_write() = new_client;
         tracing::info!("WalletCoreBackend: RPC target updated to {}", url);
+    }
+
+    // Data source: citrate_wallet_core::KeyManager::get_signing_key
+    // (the unlocked in-memory key) — no key material leaves this method.
+    async fn key_kind(&self, address: &str) -> Result<String, AppError> {
+        let key = self.key_manager.get_signing_key(address)
+            .map_err(|e| AppError::Wallet(format!("Cannot read key: {}", e)))?;
+        Ok(match key.key_type() {
+            citrate_wallet_core::types::KeyType::Ed25519 => "ed25519".to_string(),
+            citrate_wallet_core::types::KeyType::Secp256k1 => "secp256k1".to_string(),
+        })
+    }
+
+    async fn sign_digest_recoverable(
+        &self,
+        address: &str,
+        digest: [u8; 32],
+    ) -> Result<[u8; 65], AppError> {
+        let key = self.key_manager.get_signing_key(address)
+            .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
+        match &key {
+            citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp) => {
+                let (sig, recid) = secp
+                    .sign_prehash_recoverable(&digest)
+                    .map_err(|e| AppError::Wallet(format!("secp256k1 digest sign failed: {}", e)))?;
+                let mut out = [0u8; 65];
+                out[..64].copy_from_slice(&sig.to_bytes());
+                out[64] = 27 + recid.to_byte();
+                Ok(out)
+            }
+            citrate_wallet_core::keys::UnifiedKey::Ed25519(_) => Err(AppError::Wallet(
+                "This account uses an Ed25519 key; smart-wallet operations need a secp256k1 account".to_string(),
+            )),
+        }
     }
 }
 
@@ -746,6 +798,25 @@ impl WalletService {
         });
 
         Ok(tx_hash)
+    }
+
+    /// The key algorithm behind an account (EW-S1 WP-8 link gate).
+    pub async fn key_kind(&self, address: &str) -> Result<String, AppError> {
+        self.backend.key_kind(address).await
+    }
+
+    /// Recoverable secp256k1 over a pre-hashed digest (EW-S1 WP-8:
+    /// the sponsored-UserOp signature). Session must be active.
+    pub async fn sign_digest_recoverable(
+        &self,
+        address: &str,
+        digest: [u8; 32],
+    ) -> Result<[u8; 65], AppError> {
+        let status = self.current_status().await;
+        if !status.is_active {
+            return Err(AppError::SessionExpired);
+        }
+        self.backend.sign_digest_recoverable(address, digest).await
     }
 
     /// Update the signing chain ID — called on environment switch.
