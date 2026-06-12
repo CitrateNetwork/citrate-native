@@ -12,9 +12,12 @@
 //! - [`NodeAgentClient`] is the real `reqwest` queue client; [`WalletTxSigner`]
 //!   adapts the production [`WalletBackend`] (the UI loop wires those in S1.3).
 //!
-//! Safety (ADR-agent-signing): the relay signs **only** the five known SELL-S2
-//! writes, to the two known contracts, with value 0. Anything else is refused +
-//! recorded, never signed (the trust boundary against a compromised node-agent).
+//! Safety (ADR-agent-signing): the relay signs **only** the seven known SELL
+//! writes — the five SELL-S2 job-lifecycle/claim writes plus the SELL-S1
+//! `bidOnJob` (Commitment-cap-bounded) and recurring `heartbeat()` liveness
+//! write — to the three known contracts, with value 0. Anything else is
+//! refused + recorded, never signed (the trust boundary against a compromised
+//! node-agent).
 
 use std::sync::Arc;
 
@@ -255,13 +258,23 @@ impl TxSigner for WalletTxSigner {
 
 // ── validation (the trust boundary) ───────────────────────────────────────────
 
-/// 4-byte selectors of the five writes the relay will sign (mirror
+/// 4-byte selectors of the seven writes the relay will sign (mirror
 /// `citrate-node-agent` `chainio::selectors`, pinned).
 const SEL_START_EXECUTION: [u8; 4] = [0xc7, 0x8e, 0xc1, 0x8e];
 const SEL_SUBMIT_COMMITMENT: [u8; 4] = [0xe6, 0xa3, 0xd9, 0xdc];
 const SEL_SUBMIT_RESULT: [u8; 4] = [0xba, 0xa2, 0xc0, 0x78];
 const SEL_COMPLETE_JOB: [u8; 4] = [0xa1, 0xc0, 0xd3, 0x2f];
 const SEL_CLAIM_REWARDS: [u8; 4] = [0x37, 0x25, 0x00, 0xab];
+/// `bidOnJob(uint256,uint256,uint256)` — the SELL-S1 bid write.
+const SEL_BID_ON_JOB: [u8; 4] = [0x18, 0x36, 0x0f, 0xc2];
+/// `heartbeat()` — the recurring SELL-S1 liveness write.
+const SEL_HEARTBEAT: [u8; 4] = [0x3d, 0xef, 0xb9, 0x62];
+
+/// The bidder's Commitment-tier cap: jobs priced ≥ 10 SALT auto-upgrade to the
+/// ZK tier on-chain (`ComputeVerifier.VALUE_THRESHOLD`), which the agent cannot
+/// serve. A bid at or above this is never legitimate — refuse to sign it
+/// (defense-in-depth mirroring the node-agent's own `COMMITMENT_CAP_WEI`).
+const COMMITMENT_CAP_WEI: u128 = 10_000_000_000_000_000_000;
 
 /// Why the relay refused to sign a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,8 +312,10 @@ pub enum DecodedArgs {
     Commitment { job_id: u128, commitment: [u8; 32] },
     /// `submitResult(uint256,bytes,bytes)` — payload sizes, not contents.
     Result { job_id: u128, result_len: usize, proof_len: usize },
-    /// `claimRewards()`.
+    /// `claimRewards()` / `heartbeat()`.
     NoArgs,
+    /// `bidOnJob(uint256,uint256,uint256)`.
+    Bid { job_id: u128, price_wei: u128, latency_ms: u128 },
 }
 
 /// Sanity bound on relay-signed calldata. The largest legitimate write is
@@ -317,6 +332,18 @@ fn decode_job_id(word: &[u8]) -> Result<u128, String> {
     }
     if word[..16].iter().any(|b| *b != 0) {
         return Err("job id exceeds u128 — not a plausible job counter".to_string());
+    }
+    Ok(u128::from_be_bytes(word[16..32].try_into().expect("16 bytes")))
+}
+
+/// Decode a 32-byte ABI word as a `u128`, refusing non-zero high bytes
+/// (no legitimate SELL write carries a value beyond u128).
+fn decode_u128_word(word: &[u8], what: &str) -> Result<u128, String> {
+    if word.len() != 32 {
+        return Err(format!("{what} word is not 32 bytes"));
+    }
+    if word[..16].iter().any(|b| *b != 0) {
+        return Err(format!("{what} exceeds u128 — not a plausible value"));
     }
     Ok(u128::from_be_bytes(word[16..32].try_into().expect("16 bytes")))
 }
@@ -390,11 +417,31 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
             }
             Ok(DecodedArgs::Result { job_id, result_len, proof_len })
         }
-        "claimRewards" => {
+        "claimRewards" | "heartbeat" => {
             if !args.is_empty() {
-                return Err(format!("claimRewards() takes no arguments, got {} bytes", args.len()));
+                return Err(format!("{intent}() takes no arguments, got {} bytes", args.len()));
             }
             Ok(DecodedArgs::NoArgs)
+        }
+        "bidOnJob" => {
+            if args.len() != 96 {
+                return Err(format!(
+                    "bidOnJob(uint256,uint256,uint256) takes exactly three words, got {} bytes",
+                    args.len()
+                ));
+            }
+            let job_id = decode_job_id(word(0))?;
+            let price_wei = decode_u128_word(word(1), "bid price")?;
+            let latency_ms = decode_u128_word(word(2), "estimated latency")?;
+            // A bid at/over the Commitment cap can never be served by the
+            // agent (the job auto-upgrades to the ZK tier) — not a plausible
+            // agent bid, refuse it.
+            if price_wei >= COMMITMENT_CAP_WEI {
+                return Err(format!(
+                    "bid price {price_wei} wei is at/over the 10 SALT Commitment cap"
+                ));
+            }
+            Ok(DecodedArgs::Bid { job_id, price_wei, latency_ms })
         }
         other => Err(format!("no argument shape known for intent {other:?}")),
     }
@@ -425,6 +472,9 @@ impl ValidatedWrite {
                 format!("job {job_id}, result {result_len}B, proof {proof_len}B")
             }
             DecodedArgs::NoArgs => "no arguments".to_string(),
+            DecodedArgs::Bid { job_id, price_wei, latency_ms } => {
+                format!("job {job_id}, price {price_wei} wei, latency {latency_ms}ms")
+            }
         };
         format!("{}({}) → {} [value {}]", self.intent, args, self.to, self.value_wei)
     }
@@ -460,22 +510,30 @@ impl ConfirmationGate for DenyAllConfirmations {
     }
 }
 
-/// Validates queued requests against the SELL-S2 allow-list before signing.
+/// Validates queued requests against the SELL allow-list before signing.
 pub struct RelayValidator {
     /// The chain the wallet is signing for (40204).
     pub chain_id: u64,
-    /// `ComputeMarketplace` address (job-lifecycle writes target this).
+    /// `ComputeMarketplace` address (job-lifecycle writes + `bidOnJob` target this).
     pub marketplace: String,
     /// `ContributionAccounting` address (`claimRewards` targets this).
     pub accounting: String,
+    /// `HeartbeatMonitor` address (`heartbeat` targets this).
+    pub heartbeat_monitor: String,
 }
 
 impl RelayValidator {
-    pub fn new(chain_id: u64, marketplace: impl Into<String>, accounting: impl Into<String>) -> Self {
+    pub fn new(
+        chain_id: u64,
+        marketplace: impl Into<String>,
+        accounting: impl Into<String>,
+        heartbeat_monitor: impl Into<String>,
+    ) -> Self {
         Self {
             chain_id,
             marketplace: marketplace.into(),
             accounting: accounting.into(),
+            heartbeat_monitor: heartbeat_monitor.into(),
         }
     }
 
@@ -499,6 +557,8 @@ impl RelayValidator {
             "submitResult" => (&self.marketplace, SEL_SUBMIT_RESULT),
             "completeJob" => (&self.marketplace, SEL_COMPLETE_JOB),
             "claimRewards" => (&self.accounting, SEL_CLAIM_REWARDS),
+            "bidOnJob" => (&self.marketplace, SEL_BID_ON_JOB),
+            "heartbeat" => (&self.heartbeat_monitor, SEL_HEARTBEAT),
             other => return Err(RejectReason::UnknownIntent(other.to_string())),
         };
         if !addr_eq(&req.to, expected_contract) {
@@ -646,6 +706,8 @@ pub struct RelayConfig {
     pub marketplace: String,
     /// `ContributionAccounting` address.
     pub accounting: String,
+    /// `HeartbeatMonitor` address (`heartbeat` liveness writes).
+    pub heartbeat_monitor: String,
     /// How often the UI loop should call [`RelayService::tick`].
     pub poll_interval: Duration,
 }
@@ -681,7 +743,12 @@ impl RelayService {
     }
 
     fn validator(&self) -> RelayValidator {
-        RelayValidator::new(self.config.chain_id, &self.config.marketplace, &self.config.accounting)
+        RelayValidator::new(
+            self.config.chain_id,
+            &self.config.marketplace,
+            &self.config.accounting,
+            &self.config.heartbeat_monitor,
+        )
     }
 
     /// Run one gated cycle. Returns `None` when the relay is disabled or the
@@ -729,10 +796,11 @@ mod tests {
 
     const MARKETPLACE: &str = "0xc12dbcdb80ef2ae675315f455210f39a736a373c";
     const ACCOUNTING: &str = "0x86d918808b48ad543c9c816b5303b7dbcb0e321f";
+    const HEARTBEAT_MONITOR: &str = "0xe9eaac272844f342266862bbefc6d117a227ad9b";
     const FROM: &str = "0xabababababababababababababababababababab";
 
     fn validator() -> RelayValidator {
-        RelayValidator::new(40204, MARKETPLACE, ACCOUNTING)
+        RelayValidator::new(40204, MARKETPLACE, ACCOUNTING, HEARTBEAT_MONITOR)
     }
 
     /// Canonical ABI arguments for the function a selector belongs to, so the
@@ -755,7 +823,11 @@ mod tests {
                 a.push_str(&format!("{:0<64}", "ddee")); // 2 bytes, right-padded
                 a
             }
-            s if s == SEL_CLAIM_REWARDS => String::new(),
+            s if s == SEL_CLAIM_REWARDS || s == SEL_HEARTBEAT => String::new(),
+            s if s == SEL_BID_ON_JOB => {
+                // bidOnJob(jobId, price 1 SALT — under the Commitment cap, latency 600s).
+                format!("{}{}{}", word(job_id), word(1_000_000_000_000_000_000), word(600_000))
+            }
             _ => word(job_id), // unknown selectors: one plausible word
         }
     }
@@ -823,12 +895,60 @@ mod tests {
             ("submitResult", MARKETPLACE, SEL_SUBMIT_RESULT),
             ("completeJob", MARKETPLACE, SEL_COMPLETE_JOB),
             ("claimRewards", ACCOUNTING, SEL_CLAIM_REWARDS),
+            ("bidOnJob", MARKETPLACE, SEL_BID_ON_JOB),
+            ("heartbeat", HEARTBEAT_MONITOR, SEL_HEARTBEAT),
         ] {
             let r = req(1, intent, to, "0", sel);
             let vw = v.validate(&r).unwrap_or_else(|e| panic!("{intent} should pass: {e:?}"));
             assert_eq!(vw.intent, intent);
             assert_eq!(&vw.calldata[0..4], &sel);
         }
+    }
+
+    /// SELL-S1 additions: the bid decodes to its exact shape; the cap holds.
+    #[test]
+    fn validator_decodes_bid_args_and_refuses_cap_breach() {
+        let v = validator();
+        let r = req(7, "bidOnJob", MARKETPLACE, "0", SEL_BID_ON_JOB);
+        let vw = v.validate(&r).expect("canonical bid passes");
+        assert_eq!(
+            vw.args,
+            DecodedArgs::Bid {
+                job_id: 7,
+                price_wei: 1_000_000_000_000_000_000,
+                latency_ms: 600_000
+            }
+        );
+
+        // A bid at the 10 SALT Commitment cap is never a legitimate agent bid
+        // (the job auto-upgrades to the ZK tier) — refuse to sign it.
+        let word = |v: u128| format!("{v:0>64x}");
+        let mut r = req(7, "bidOnJob", MARKETPLACE, "0", SEL_BID_ON_JOB);
+        r.calldata = format!(
+            "0x18360fc2{}{}{}",
+            word(7),
+            word(10_000_000_000_000_000_000), // exactly 10 SALT
+            word(600_000)
+        );
+        assert!(
+            matches!(v.validate(&r), Err(RejectReason::MalformedArgs { .. })),
+            "10 SALT bid must be refused"
+        );
+    }
+
+    #[test]
+    fn validator_refuses_heartbeat_with_args_or_wrong_contract() {
+        let v = validator();
+        // heartbeat() with smuggled argument bytes → refused.
+        let mut r = req(1, "heartbeat", HEARTBEAT_MONITOR, "0", SEL_HEARTBEAT);
+        r.calldata.push_str(&"00".repeat(32));
+        assert!(matches!(v.validate(&r), Err(RejectReason::MalformedArgs { .. })));
+        // heartbeat aimed at the marketplace → refused.
+        let r2 = req(1, "heartbeat", MARKETPLACE, "0", SEL_HEARTBEAT);
+        assert!(matches!(v.validate(&r2), Err(RejectReason::WrongContract { .. })));
+        // bidOnJob aimed at the heartbeat monitor → refused.
+        let r3 = req(1, "bidOnJob", HEARTBEAT_MONITOR, "0", SEL_BID_ON_JOB);
+        assert!(matches!(v.validate(&r3), Err(RejectReason::WrongContract { .. })));
     }
 
     #[test]
@@ -1038,6 +1158,7 @@ mod tests {
             chain_id: 40204,
             marketplace: MARKETPLACE.into(),
             accounting: ACCOUNTING.into(),
+            heartbeat_monitor: HEARTBEAT_MONITOR.into(),
             poll_interval: std::time::Duration::from_secs(5),
         })
     }

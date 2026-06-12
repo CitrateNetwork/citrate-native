@@ -2638,8 +2638,10 @@ fn main() {
         let chain_id = 40204u64;
         let marketplace = marketplace_client::compute_marketplace_address(chain_id).map(str::to_string);
         let accounting = marketplace_client::contribution_accounting_address(chain_id).map(str::to_string);
-        match (marketplace, accounting) {
-            (Some(marketplace), Some(accounting)) => {
+        let heartbeat_monitor =
+            marketplace_client::known_contract(chain_id, "HeartbeatMonitor").map(str::to_string);
+        match (marketplace, accounting, heartbeat_monitor) {
+            (Some(marketplace), Some(accounting), Some(heartbeat_monitor)) => {
                 let agent_url = std::env::var("CITRATE_NODE_AGENT_ADDR")
                     .unwrap_or_else(|_| "http://127.0.0.1:19600".to_string());
                 let relay = std::sync::Arc::new(RelayService::new(RelayConfig {
@@ -2647,6 +2649,7 @@ fn main() {
                     chain_id,
                     marketplace,
                     accounting,
+                    heartbeat_monitor,
                     poll_interval: std::time::Duration::from_secs(5),
                 }));
                 if matches!(
