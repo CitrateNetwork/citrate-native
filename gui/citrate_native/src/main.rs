@@ -1173,6 +1173,19 @@ fn main() {
     };
     let app_core = Arc::new(AppCore::new());
 
+    // EW-S1 WP-8: Citrate identity link service. Link state (no secrets)
+    // persists at <config>/citrate-native/citrate_link.json.
+    let citrate_link_path = dirs::config_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("citrate-native")
+        .join("citrate_link.json");
+    let citrate_link = Arc::new(
+        citrate_desktop_app::services::citrate_link_service::CitrateLinkService::new(
+            app_core.wallet.clone(),
+            citrate_link_path,
+        ),
+    );
+
     // Hydrate the in-memory account list from the on-disk keystore BEFORE
     // we inspect `is_first_run`. Without this, every restart looks like a
     // brand-new install: the service's `self.accounts` starts empty, so
@@ -3792,6 +3805,112 @@ fn main() {
         });
     });
 
+
+    // --- EW-S1 WP-8: Citrate identity link ---
+    // Data sources: auth.citrate.ai OIDC + /aa/enroll-validator;
+    // chain RPC eth_getCode/eth_call; bundler.citrate.ai for UserOps.
+    // Hydrate persisted link state at startup.
+    if let Some(link) = citrate_link.load_link() {
+        ui.set_wallet_citrate_smart_wallet(link.smart_wallet.clone().into());
+        ui.set_wallet_citrate_link_status(
+            if link.pending_root_enroll {
+                "Wallet exists with a passkey signer — finish linking this device from the auth.citrate.ai dashboard."
+            } else {
+                "Same address as auth.citrate.ai — this device signs as the wallet's validator."
+            }
+            .into(),
+        );
+    }
+
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    let link_svc = citrate_link.clone();
+    ui.on_wallet_link_citrate_device(move || {
+        let ui_w = ui_w.clone();
+        let link_svc = link_svc.clone();
+        let eoa = ui_w.upgrade()
+            .map(|ui| ui.get_wallet_selected_address().to_string())
+            .unwrap_or_default();
+        if eoa.is_empty() {
+            return;
+        }
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_wallet_citrate_linking(true);
+            ui.set_wallet_citrate_link_status("".into());
+        }
+        spawn_async(&rt_h, async move {
+            let result = link_svc.link(&eoa).await;
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_wallet_citrate_linking(false);
+                    match result {
+                        Ok(link) => {
+                            tracing::info!("Citrate link complete: {}", link.smart_wallet);
+                            ui.set_wallet_citrate_smart_wallet(link.smart_wallet.clone().into());
+                            ui.set_wallet_citrate_link_status(
+                                if link.pending_root_enroll {
+                                    "Wallet exists with a passkey signer — finish linking this device from the auth.citrate.ai dashboard."
+                                } else {
+                                    "Same address as auth.citrate.ai — this device signs as the wallet's validator."
+                                }
+                                .into(),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("Citrate link failed: {}", e);
+                            ui.set_wallet_citrate_link_status(format!("Link failed: {}", e).into());
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    // --- EW-S1 WP-8: sponsored send from the linked smart wallet ---
+    let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
+    let link_svc = citrate_link.clone();
+    ui.on_wallet_send_sponsored(move |to, amount| {
+        let ui_w = ui_w.clone();
+        let link_svc = link_svc.clone();
+        let to_str = to.to_string();
+        let amt_str = amount.to_string();
+
+        let wei: u128 = match citrate_wallet_core::format::salt_to_wei(&amt_str) {
+            Ok(w) => w,
+            Err(e) => {
+                let err_msg = format!("Invalid amount: {}", e);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_send_error(err_msg.into());
+                    }
+                });
+                return;
+            }
+        };
+
+        tracing::info!("Sponsored send: {} SALT to {} from the smart wallet", amt_str, to_str);
+        spawn_async(&rt_h, async move {
+            let result = link_svc.send_sponsored(&to_str, wei, Vec::new()).await;
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    match result {
+                        Ok(user_op_hash) => {
+                            ui.set_send_tx_hash(user_op_hash.into());
+                            ui.set_send_error("".into());
+                            ui.set_send_receipt_status(
+                                "UserOperation accepted by the bundler — gas sponsored by Citrate.".into(),
+                            );
+                        }
+                        Err(e) => {
+                            ui.set_send_error(e.to_string().into());
+                            ui.set_send_receipt_status("".into());
+                        }
+                    }
+                }
+            });
+        });
+    });
 
     // Terminal and git init deferred — will initialize on first tab switch to Contracts.
     // This prevents blocking the UI at startup.

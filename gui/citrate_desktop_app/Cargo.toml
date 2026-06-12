@@ -33,6 +33,10 @@ async-trait = "0.1"
 # Crypto
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 sha3 = "0.10"
+# EW-S1 WP-8: PKCE S256 (sha2) + recoverable secp256k1 signing over the
+# userOpHash (k256, version-matched to citrate-wallet-core's pin).
+sha2 = "0.10"
+k256 = { version = "0.13", features = ["ecdsa"] }
 rand = { workspace = true }
 
 # IDE — Editor

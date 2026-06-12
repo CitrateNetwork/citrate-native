@@ -196,6 +196,13 @@ export component WalletView inherits Rectangle {
     callback export-private-key(/* password */ string);
     callback clear-export-state;
 
+    // EW-S1 WP-8: Citrate identity smart-wallet link.
+    in property <string> citrate-smart-wallet: "";
+    in property <string> citrate-link-status: "";
+    in property <bool> citrate-linking: false;
+    callback link-citrate-device;
+    callback copy-smart-wallet;
+
     background: Theme.bg;
 
     Flickable {
@@ -439,6 +446,56 @@ export component WalletView inherits Rectangle {
                             Text { text: "ACCOUNTS"; color: Theme.text-muted; font-size: 9px; font-weight: 600; }
                             Text { text: root.account-count; color: Theme.text; font-size: 12px; }
                         }
+                    }
+                }
+            }
+
+            // === CITRATE IDENTITY (EW-S1 WP-8) ===
+            Rectangle {
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-sm;
+
+                    Text { text: "CITRATE IDENTITY"; color: Theme.text-muted; font-size: 11px; font-weight: 500; }
+
+                    if root.citrate-smart-wallet == "" : VerticalLayout {
+                        spacing: Theme.space-sm;
+                        Rectangle {
+                            height: 40px;
+                            border-radius: Theme.radius-lg;
+                            border-width: 1px;
+                            border-color: link-btn.has-hover ? Theme.accent : Theme.border;
+                            background: link-btn.pressed ? Theme.bg-secondary : (link-btn.has-hover ? Theme.bg-tertiary : transparent);
+                            Text {
+                                text: root.citrate-linking ? "Linking — finish sign-in in your browser…" : "Link this device to your Citrate identity";
+                                color: Theme.text; font-size: Theme.font-size-md;
+                                horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+                            }
+                            link-btn := TouchArea { mouse-cursor: pointer; enabled: !root.citrate-linking; clicked => { root.link-citrate-device(); } }
+                        }
+                        Text { text: "One smart-wallet address on every device. Gas sponsored by Citrate."; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        if root.citrate-link-status != "" : Text { text: root.citrate-link-status; color: Theme.error; font-size: 11px; wrap: word-wrap; }
+                    }
+
+                    if root.citrate-smart-wallet != "" : VerticalLayout {
+                        spacing: 2px;
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: "Smart wallet"; color: Theme.text; font-size: 12px; font-weight: 600; horizontal-stretch: 1; }
+                            Rectangle {
+                                width: 24px; height: 20px;
+                                Text { text: "📋"; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                                TouchArea { mouse-cursor: pointer; clicked => { root.copy-smart-wallet(); } }
+                            }
+                        }
+                        Text { text: root.citrate-smart-wallet; color: Theme.text-muted; font-size: 11px; overflow: elide; }
+                        if root.citrate-link-status != "" : Text { text: root.citrate-link-status; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+                        Text { text: "Small-value only — the Citrate wallet contracts are awaiting external audit."; color: Theme.warning; font-size: 11px; wrap: word-wrap; }
                     }
                 }
             }
