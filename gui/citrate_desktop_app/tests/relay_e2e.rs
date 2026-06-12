@@ -29,6 +29,7 @@ use citrate_desktop_app::services::relay_service::{
 const CHAIN_ID: u64 = 40204;
 const MARKETPLACE: &str = "0xc12dbcdb80ef2ae675315f455210f39a736a373c";
 const ACCOUNTING: &str = "0x86d918808b48ad543c9c816b5303b7dbcb0e321f";
+const HEARTBEAT_MONITOR: &str = "0xe9eaac272844f342266862bbefc6d117a227ad9b";
 
 /// Returns the node-agent URL if the e2e is enabled, else `None` (skip).
 fn agent_url() -> Option<String> {
@@ -55,7 +56,7 @@ async fn e2e_lists_and_validates_the_live_queue() {
     // Run every queued request through the real validator — proves the validator
     // accepts the node-agent's actual wire shape (and would refuse anything off
     // the allow-list). Read-only: nothing is signed or observed.
-    let validator = RelayValidator::new(CHAIN_ID, MARKETPLACE, ACCOUNTING);
+    let validator = RelayValidator::new(CHAIN_ID, MARKETPLACE, ACCOUNTING, HEARTBEAT_MONITOR);
     for r in &requests {
         match validator.validate(r) {
             Ok(vw) => eprintln!("  ✓ would sign {} (id {}, {} bytes calldata)", vw.intent, vw.id, vw.calldata.len()),
