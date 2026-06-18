@@ -202,6 +202,11 @@ export component WalletView inherits Rectangle {
     in property <bool> citrate-linking: false;
     callback link-citrate-device;
     callback copy-smart-wallet;
+    // AUTHSPINE S3-WP3: entitlement tier / role / KYC snapshot + Account-Hub link.
+    in property <string> citrate-tier: "public";
+    in property <string> citrate-role: "";
+    in property <string> citrate-kyc: "";
+    callback manage-account;
 
     background: Theme.bg;
 
@@ -495,6 +500,38 @@ export component WalletView inherits Rectangle {
                         }
                         Text { text: root.citrate-smart-wallet; color: Theme.text-muted; font-size: 11px; overflow: elide; }
                         if root.citrate-link-status != "" : Text { text: root.citrate-link-status; color: Theme.text-muted; font-size: 11px; wrap: word-wrap; }
+
+                        // AUTHSPINE S3-WP3: entitlement tier / role / KYC from the id_token.
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: "Access tier"; color: Theme.text; font-size: 12px; font-weight: 600; horizontal-stretch: 1; }
+                            Text { text: root.citrate-tier; color: Theme.text-muted; font-size: 12px; }
+                        }
+                        if root.citrate-role != "" : HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: "Citrate role"; color: Theme.text; font-size: 12px; font-weight: 600; horizontal-stretch: 1; }
+                            Text { text: root.citrate-role; color: Theme.text-muted; font-size: 12px; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-sm;
+                            Text { text: "KYC"; color: Theme.text; font-size: 12px; font-weight: 600; horizontal-stretch: 1; }
+                            Text { text: root.citrate-kyc == "" ? "not started" : root.citrate-kyc; color: Theme.text-muted; font-size: 12px; }
+                        }
+                        // Ecosystem-wide entry point: complete or upgrade KYC at auth.citrate.ai.
+                        Rectangle {
+                            height: 36px;
+                            border-radius: Theme.radius-lg;
+                            border-width: 1px;
+                            border-color: hub-btn.has-hover ? Theme.accent : Theme.border;
+                            background: hub-btn.pressed ? Theme.bg-secondary : (hub-btn.has-hover ? Theme.bg-tertiary : transparent);
+                            Text {
+                                text: "Manage account / Upgrade";
+                                color: Theme.text; font-size: Theme.font-size-md;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                            hub-btn := TouchArea { mouse-cursor: pointer; clicked => { root.manage-account(); } }
+                        }
+
                         Text { text: "Small-value only — the Citrate wallet contracts are awaiting external audit."; color: Theme.warning; font-size: 11px; wrap: word-wrap; }
                     }
                 }

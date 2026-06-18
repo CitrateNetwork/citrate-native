@@ -3812,6 +3812,9 @@ fn main() {
     // Hydrate persisted link state at startup.
     if let Some(link) = citrate_link.load_link() {
         ui.set_wallet_citrate_smart_wallet(link.smart_wallet.clone().into());
+        ui.set_wallet_citrate_tier(link.tier.clone().into());
+        ui.set_wallet_citrate_role(link.citrate_role.clone().unwrap_or_default().into());
+        ui.set_wallet_citrate_kyc(link.kyc_status.clone().into());
         ui.set_wallet_citrate_link_status(
             if link.pending_root_enroll {
                 "Wallet exists with a passkey signer — finish linking this device from the auth.citrate.ai dashboard."
@@ -3847,6 +3850,9 @@ fn main() {
                         Ok(link) => {
                             tracing::info!("Citrate link complete: {}", link.smart_wallet);
                             ui.set_wallet_citrate_smart_wallet(link.smart_wallet.clone().into());
+                            ui.set_wallet_citrate_tier(link.tier.clone().into());
+                            ui.set_wallet_citrate_role(link.citrate_role.clone().unwrap_or_default().into());
+                            ui.set_wallet_citrate_kyc(link.kyc_status.clone().into());
                             ui.set_wallet_citrate_link_status(
                                 if link.pending_root_enroll {
                                     "Wallet exists with a passkey signer — finish linking this device from the auth.citrate.ai dashboard."
@@ -3864,6 +3870,14 @@ fn main() {
                 }
             });
         });
+    });
+
+    // --- AUTHSPINE S3-WP3: open the hosted Account Hub (KYC / tier upgrade) ---
+    let link_svc = citrate_link.clone();
+    ui.on_wallet_manage_account(move || {
+        if let Err(e) = link_svc.open_account_hub() {
+            tracing::warn!("could not open the Account Hub: {}", e);
+        }
     });
 
     // --- EW-S1 WP-8: sponsored send from the linked smart wallet ---
