@@ -52,6 +52,81 @@ pub struct CitrateLink {
     /// EOA still needs root-signer approval from the dashboard.
     pub pending_root_enroll: bool,
     pub linked_at: String,
+    /// AUTHSPINE S3-WP3: a snapshot of the entitlement/KYC claims from the
+    /// id_token at link time — display only. `#[serde(default)]` so link
+    /// files written before this field still deserialize.
+    #[serde(default)]
+    pub kyc_status: String,
+    /// Effective access tier ("public" when no entitlement claim was present).
+    #[serde(default = "default_tier")]
+    pub tier: String,
+    /// Citrate role from the entitlement claim, if any.
+    #[serde(default)]
+    pub citrate_role: Option<String>,
+}
+
+fn default_tier() -> String {
+    "public".to_string()
+}
+
+/// The shared access-entitlement claim every Citrate RP reads — the same
+/// `https://citrate.ai/entitlement` contract as `@citrate/oidc-client` and the
+/// other native apps (studio). Carried on the `openid` scope; absent ⇒ Public.
+const ENTITLEMENT_CLAIM: &str = "https://citrate.ai/entitlement";
+
+/// Centralized RBAC entitlement (tier + optional role) parsed from the claim.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Entitlement {
+    pub tier: String,
+    pub citrate_role: Option<String>,
+    pub expires_at: Option<i64>,
+}
+
+/// Tier ladder rank, matching the TS `TIER_ORDER`. Unknown/absent ⇒ public (0).
+fn tier_rank(tier: &str) -> u8 {
+    match tier {
+        "commercial" => 1,
+        "commercial.kyc" => 2,
+        "academic" => 3,
+        "confidential" => 4,
+        _ => 0,
+    }
+}
+
+/// Parse the entitlement claim object; unknown/absent tier ⇒ None (Public,
+/// fail-safe) — identical to the TS `parseEntitlement` contract.
+fn parse_entitlement(v: &serde_json::Value) -> Option<Entitlement> {
+    let o = v.as_object()?;
+    let tier = o.get("tier").and_then(|x| x.as_str())?;
+    if tier_rank(tier) == 0 && tier != "public" {
+        return None;
+    }
+    Some(Entitlement {
+        tier: tier.to_string(),
+        citrate_role: o.get("citrateRole").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        expires_at: o.get("expiresAt").and_then(|x| x.as_i64()),
+    })
+}
+
+impl Entitlement {
+    /// Effective tier honoring expiry (expired ⇒ public). `now_unix` in seconds.
+    pub fn effective_tier(&self, now_unix: i64) -> &str {
+        match self.expires_at {
+            Some(exp) if now_unix > exp => "public",
+            _ => &self.tier,
+        }
+    }
+}
+
+/// The hosted Account Hub URL on the issuer ("Manage account / Upgrade") — the
+/// ecosystem-wide entry point to complete or upgrade KYC. Mirrors the TS
+/// `accountHubUrl`.
+pub fn account_hub_url(auth_url: &str, return_to: Option<&str>) -> String {
+    let base = format!("{}/account", auth_url.trim_end_matches('/'));
+    match return_to {
+        Some(r) => format!("{}?return_to={}", base, urlencode(r)),
+        None => base,
+    }
 }
 
 pub struct CitrateLinkService {
@@ -105,6 +180,17 @@ impl CitrateLinkService {
 
         let login = self.oidc_login().await?;
         let sub = login.sub.clone();
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let tier = login
+            .entitlement
+            .as_ref()
+            .map(|e| e.effective_tier(now_unix).to_string())
+            .unwrap_or_else(default_tier);
+        let citrate_role = login.entitlement.as_ref().and_then(|e| e.citrate_role.clone());
+        let kyc_status = login.kyc_status.clone().unwrap_or_default();
 
         let user_id = citrate_aa::account_id_to_user_id(&sub)
             .map_err(|e| AppError::Wallet(format!("cannot derive AA userId from subject {}: {}", sub, e)))?;
@@ -145,6 +231,9 @@ impl CitrateLinkService {
             deployed,
             pending_root_enroll,
             linked_at: chrono_like_now(),
+            kyc_status,
+            tier,
+            citrate_role,
         };
         self.save_link(&link)?;
         Ok(link)
@@ -401,8 +490,19 @@ impl CitrateLinkService {
             .get("wallet_address")
             .and_then(|s| s.as_str())
             .map(|s| s.to_string());
+        let kyc_status = claims
+            .get("kyc_status")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string());
+        let entitlement = claims.get(ENTITLEMENT_CLAIM).and_then(parse_entitlement);
 
-        Ok(OidcLogin { access_token, sub, wallet_address })
+        Ok(OidcLogin { access_token, sub, wallet_address, kyc_status, entitlement })
+    }
+
+    /// Open the hosted Account Hub (KYC / tier upgrade) in the system browser —
+    /// the ecosystem-wide entry point to complete or raise the account tier.
+    pub fn open_account_hub(&self) -> Result<(), AppError> {
+        open_in_browser(&account_hub_url(&self.auth_url, Some("https://citrate.ai")))
     }
 
     async fn rpc_call(
@@ -434,6 +534,8 @@ struct OidcLogin {
     access_token: String,
     sub: String,
     wallet_address: Option<String>,
+    kyc_status: Option<String>,
+    entitlement: Option<Entitlement>,
 }
 
 /// Wait for the single authorization-code redirect on the loopback
@@ -698,14 +800,57 @@ mod tests {
             deployed: true,
             pending_root_enroll: false,
             linked_at: chrono_like_now(),
+            kyc_status: "verified".to_string(),
+            tier: "commercial.kyc".to_string(),
+            citrate_role: Some("operator".to_string()),
         };
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::write(&path, serde_json::to_string(&link).expect("serialize")).expect("write");
         let raw = std::fs::read_to_string(&path).expect("read");
         let loaded: CitrateLink = serde_json::from_str(&raw).expect("deserialize");
         assert_eq!(loaded.smart_wallet, link.smart_wallet);
+        assert_eq!(loaded.tier, "commercial.kyc");
+        assert_eq!(loaded.kyc_status, "verified");
         assert!(loaded.linked_at.ends_with('Z'));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_link_json_without_entitlement_fields_still_loads() {
+        // AUTHSPINE S3-WP3: link files written before the entitlement fields must
+        // still deserialize (serde defaults: tier→public, kyc→"", role→None).
+        let raw = r#"{"sub":"s","user_id_hex":"0x00","smart_wallet":"0xabc","eoa":"0xdef","deployed":true,"pending_root_enroll":false,"linked_at":"2026-01-01T00:00:00Z"}"#;
+        let loaded: CitrateLink = serde_json::from_str(raw).expect("legacy link loads");
+        assert_eq!(loaded.tier, "public");
+        assert_eq!(loaded.kyc_status, "");
+        assert_eq!(loaded.citrate_role, None);
+    }
+
+    #[test]
+    fn entitlement_parse_tier_rank_and_expiry() {
+        // unknown tier ⇒ None (public, fail-safe); known tier parses with role.
+        assert!(parse_entitlement(&serde_json::json!({"tier":"superadmin"})).is_none());
+        let e = parse_entitlement(&serde_json::json!({
+            "tier":"confidential","orgId":"citrate","citrateRole":"auditor"
+        }))
+        .expect("parses");
+        assert_eq!(e.tier, "confidential");
+        assert_eq!(e.citrate_role.as_deref(), Some("auditor"));
+        // ladder + expiry collapse.
+        assert!(tier_rank("commercial.kyc") > tier_rank("commercial"));
+        assert_eq!(tier_rank("public"), 0);
+        let expired = Entitlement { tier: "academic".into(), expires_at: Some(50), citrate_role: None };
+        assert_eq!(expired.effective_tier(100), "public");
+        assert_eq!(expired.effective_tier(10), "academic");
+    }
+
+    #[test]
+    fn account_hub_url_builds() {
+        assert_eq!(account_hub_url("https://auth.citrate.ai", None), "https://auth.citrate.ai/account");
+        assert_eq!(
+            account_hub_url("https://auth.citrate.ai/", Some("https://citrate.ai")),
+            "https://auth.citrate.ai/account?return_to=https%3A%2F%2Fcitrate.ai"
+        );
     }
 
     #[tokio::test]

@@ -254,11 +254,16 @@ export component App inherits Window {
     callback wallet-request-faucet;
     callback wallet-link-citrate-device;
     callback wallet-send-sponsored(/* to */ string, /* amount */ string);
+    callback wallet-manage-account;
     in property <string> wallet-faucet-status: "";
     // EW-S1 WP-8: Citrate identity smart-wallet link state.
     in property <string> wallet-citrate-smart-wallet: "";
     in property <string> wallet-citrate-link-status: "";
     in property <bool> wallet-citrate-linking: false;
+    // AUTHSPINE S3-WP3: entitlement tier / role / KYC snapshot.
+    in property <string> wallet-citrate-tier: "public";
+    in property <string> wallet-citrate-role: "";
+    in property <string> wallet-citrate-kyc: "";
 
     // Wallet model data
     in property <[AccountData]> wallet-accounts: [];
@@ -653,8 +658,12 @@ export component App inherits Window {
                     citrate-smart-wallet: root.wallet-citrate-smart-wallet;
                     citrate-link-status: root.wallet-citrate-link-status;
                     citrate-linking: root.wallet-citrate-linking;
+                    citrate-tier: root.wallet-citrate-tier;
+                    citrate-role: root.wallet-citrate-role;
+                    citrate-kyc: root.wallet-citrate-kyc;
                     link-citrate-device => { root.wallet-link-citrate-device(); }
                     copy-smart-wallet => { root.copy-to-clipboard(root.wallet-citrate-smart-wallet); }
+                    manage-account => { root.wallet-manage-account(); }
                 }
 
                 // DAG Explorer
