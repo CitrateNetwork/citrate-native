@@ -218,6 +218,12 @@ export component App inherits Window {
     in-out property <string> compute-schedule: "always";
     in property <string> compute-schedule-description: "Share compute 24/7";
 
+    // NATIVE-R1-S1 WP-5: shared CitrateLoader facet-command model. One
+    // Rust-side driver (citrate_ui_kit::loader::start_loader) feeds both
+    // loader instances — onboarding node-bootstrap and chat thinking —
+    // since the two states can never be active at the same time.
+    in property <[string]> loader-facets: [];
+
     // Chat tool approval state
     in property <bool> chat-tool-pending: false;
     in property <string> chat-tool-name: "";
@@ -499,6 +505,7 @@ export component App inherits Window {
         model-ready: root.onboarding-model-ready;
         model-status: root.onboarding-model-status;
         verify-word-number: root.onboarding-verify-word;
+        loader-facets: root.loader-facets;
         create-wallet(password, label) => { root.create-wallet(password, label); }
         start-node(env) => { root.start-node(env); }
         check-model => { root.check-model(); }
@@ -755,6 +762,7 @@ export component App inherits Window {
                     tool-target: root.chat-tool-target;
                     tool-scope: root.chat-tool-scope;
                     tool-disclosure: root.chat-tool-disclosure;
+                    loader-facets: root.loader-facets;
                     send-message(msg) => { root.chat-send(msg); }
                     approve-tool => { root.chat-approve-tool(); }
                     reject-tool => { root.chat-reject-tool(); }

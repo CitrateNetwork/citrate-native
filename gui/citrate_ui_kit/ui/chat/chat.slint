@@ -2,6 +2,7 @@
 // Messages scroll in a thread as individual bubbles, input stays pinned at bottom
 import { Theme } from "../theme.slint";
 import { PrivacyIndicator } from "../shared/feedback.slint";
+import { CitrateLoader } from "../loader/citrate_loader.slint";
 
 export struct ChatMessageData {
     role: string,       // "user", "assistant", or "tool"
@@ -194,6 +195,11 @@ export component ChatView inherits Rectangle {
     // Tool disclosure: shows what tool executed and the result
     in property <string> tool-disclosure: "";
 
+    // NATIVE-R1-S1 WP-5: per-facet SVG commands driving the CitrateLoader
+    // thinking indicator. Fed from Rust via loader::LoaderHandle::model();
+    // left empty, the loader renders the static assembled triangle.
+    in property <[string]> loader-facets: [];
+
     callback send-message(string);
     callback approve-tool;
     callback reject-tool;
@@ -307,12 +313,24 @@ export component ChatView inherits Rectangle {
                         copy-content(text) => { root.copy-to-clipboard(text); }
                     }
 
-                    // Thinking indicator
+                    // Thinking indicator — NATIVE-R1-S1 WP-5: the liquid-morph
+                    // CitrateLoader replaces the old pulsing dot. The 40px host
+                    // Rectangle gives the ring its ~25% overflow margin so the
+                    // animation never paints over the "Thinking..." label.
                     if root.thinking && root.error == "" : HorizontalLayout {
                         spacing: Theme.space-sm;
                         padding-left: Theme.space-sm;
-                        Text { text: "●"; color: Theme.accent; font-size: 16px; vertical-alignment: center;
-                            animate color { duration: 800ms; easing: ease-in-out; }
+                        Rectangle {
+                            width: 40px;
+                            height: 40px;
+                            CitrateLoader {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                size: 30px;
+                                color: Theme.accent;
+                                running: root.thinking;
+                                facet-commands: root.loader-facets;
+                            }
                         }
                         Text { text: "Thinking..."; color: Theme.accent; font-size: 13px; vertical-alignment: center; }
                     }
