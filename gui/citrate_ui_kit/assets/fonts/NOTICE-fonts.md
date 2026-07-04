@@ -1,14 +1,14 @@
 ---
 created: 2026-04-23T00:45:00Z
-branch: main
-author: Claude Opus 4.7 (1M context)
-sprint: P960-F
+branch: feat/native-r1-s1-brand-reskin
+author: Claude Fable 5
+sprint: NATIVE-R1-S1
 status: active
 ---
 
 # Bundled Fonts — Attribution & License Notice
 
-The Citrate desktop GUI bundles two font families, both licensed under
+The Citrate desktop GUI bundles four font families, all licensed under
 the **SIL Open Font License, Version 1.1** (OFL). OFL explicitly
 permits embedding in applications, modification, and redistribution as
 part of a derivative work without royalty.
@@ -21,31 +21,57 @@ part of a derivative work without royalty.
 - **Copyright:** © 2020 The Space Grotesk Project Authors
 - **License text:** `SpaceGrotesk-OFL.txt` in this directory
 
-Used as the app-wide default body + display typeface (`Theme.font-body`
-in `ui/theme.slint`).
+Display typeface — hero and page headings (`Theme.font-display` in
+`ui/theme.slint`).
 
-## IBM Plex Mono
+## Geist (Variable)
 
-- **Files:**
-  - `IBMPlexMono-Regular.ttf` (~156 KB)
-  - `IBMPlexMono-Medium.ttf` (~157 KB)
-  - `IBMPlexMono-Bold.ttf` (~158 KB)
-- **Author:** IBM / Bold Monday
-- **Upstream:** https://github.com/IBM/plex
-- **Copyright:** © 2017 IBM Corp. with Reserved Font Name "Plex"
-- **License text:** `IBMPlexMono-OFL.txt` in this directory
+- **File:** `Geist-Variable.ttf` (~169 KB, weight axis 100–900)
+- **Author:** Vercel
+- **Upstream:** https://github.com/vercel/geist-font
+- **Copyright:** © 2024 The Geist Project Authors
+- **License text:** `Geist-OFL.txt` in this directory
+
+App-wide default body typeface (`Theme.font-body` in `ui/theme.slint`,
+wired to `default-font-family` in `app.slint`).
+
+## Geist Mono (Variable)
+
+- **File:** `GeistMono-Variable.ttf` (~172 KB, weight axis 100–900)
+- **Author:** Vercel
+- **Upstream:** https://github.com/vercel/geist-font
+- **Copyright:** © 2024 The Geist Project Authors
+- **License text:** `Geist-OFL.txt` in this directory
 
 Used for tabular data, transaction hashes, addresses, and any surface
 where digit alignment matters (`Theme.font-mono` in `ui/theme.slint`).
 
+## Cormorant (Variable)
+
+- **File:** `Cormorant-Variable.ttf` (~552 KB, weight axis 300–700)
+- **Author:** Christian Thalmann (Catharsis Fonts)
+- **Upstream:** https://github.com/CatharsisFonts/Cormorant
+- **Copyright:** © 2015 The Cormorant Project Authors
+- **License text:** `Cormorant-OFL.txt` in this directory
+
+Serif editorial voice — subheadings and long-form copy
+(`Theme.font-serif` in `ui/theme.slint`).
+
+## Retired families
+
+- The previous IBM mono family was replaced by Geist Mono in Sprint
+  NATIVE-R1-S1 (WP-2) to match the canonical federation type system.
+
 ## Total bundled size
 
-~607 KB across 4 font files. Well under the 800 KB budget defined in
-`GUI_CLOSE_PLANSET.md` (P960-F gate).
+~1.03 MB across 4 font files. Exceeds the historical 800 KB P960-F
+budget because the canonical four-family system (NATIVE-R1-S1) adds
+Cormorant (~552 KB); accepted in the sprint brief — the alternative
+(subsetted Cormorant) is a follow-up if binary size becomes a gate.
 
 ## Why bundle rather than rely on system fonts
 
-Prior to this sprint, the GUI used system fallbacks (`"monospace"`,
+Prior to bundling, the GUI used system fallbacks (`"monospace"`,
 `"JetBrains Mono"`) that were not guaranteed to exist on user
 machines. Rendering varied wildly between Linux distros, macOS,
 and Windows. Bundling the exact TTFs means every user sees the

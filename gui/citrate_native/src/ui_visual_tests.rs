@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Mutex, Once, OnceLock};
 
+/// Per-page setup fn run before snapshotting that page.
+type PageConfigurator = fn(&App);
+
 thread_local! {
     static WINDOW: Rc<MinimalSoftwareWindow> =
         MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
@@ -378,6 +381,41 @@ fn configure_cmo_compliance(app: &App) {
     app.set_cmo_compliance_rows(slint::ModelRc::from(Rc::new(VecModel::from(rows))));
 }
 
+// ── NATIVE-R1-S1 WP-5: full-window states + loader configurators ──────────
+
+/// Onboarding step 0 (welcome). Full-window state — flips show-onboarding.
+fn configure_onboarding_welcome(app: &App) {
+    app.set_show_lock_screen(false);
+    app.set_show_onboarding(true);
+    app.set_onboarding_step(0);
+}
+
+/// Onboarding step 6 (node bootstrap) — hosts the CitrateLoader. With no
+/// Rust driver attached (tests never call start_loader), the component
+/// renders the static assembled triangle bound to Theme.accent, so this
+/// doubles as the loader-at-t0 brand snapshot in both modes.
+fn configure_onboarding_bootstrap_loader_t0(app: &App) {
+    app.set_show_lock_screen(false);
+    app.set_show_onboarding(true);
+    app.set_onboarding_step(6);
+    app.set_onboarding_node_status("Initializing storage...".into());
+    app.set_onboarding_node_progress(0.4);
+    app.set_onboarding_node_ready(false);
+}
+
+/// Lock screen (returning-user startup state).
+fn configure_lock_screen(app: &App) {
+    app.set_show_onboarding(false);
+    app.set_show_lock_screen(true);
+}
+
+/// Chat with thinking=true — renders the small CitrateLoader instance in
+/// the thread (static triangle at t0; animation is Rust-driven only).
+fn configure_chat_thinking(app: &App) {
+    configure_chat(app);
+    app.set_chat_thinking(true);
+}
+
 // ============================================================================
 // Snapshot smoke test — all pages × 3 resolutions
 // ============================================================================
@@ -407,9 +445,8 @@ fn ui_visual_proof_suite() {
 
     // ── Part 1: Snapshot smoke — all 12 pages at 3 resolutions (36 screenshots) ──
     {
-        #[allow(clippy::type_complexity)]
-        let pages: Vec<(&str, fn(&App))> = vec![
-            ("dashboard", configure_dashboard as fn(&App)),
+        let pages: Vec<(&str, PageConfigurator)> = vec![
+            ("dashboard", configure_dashboard as PageConfigurator),
             ("wallet", configure_wallet),
             ("chat", configure_chat),
             ("models", configure_models),
@@ -435,6 +472,58 @@ fn ui_visual_proof_suite() {
                 capture_page_inline(&app, name, width, height, configure);
             }
         }
+    }
+
+    // ── Part 1b: NATIVE-R1-S1 WP-5 — dual-mode brand baseline ──
+    // Every main panel plus onboarding (welcome + node-bootstrap/loader-t0),
+    // the lock screen, and the chat thinking-loader state, snapshotted in
+    // BOTH light and dark mode at 1200x800. Snapshot names enumerate
+    // panel × mode (single-process Slint constraint keeps them in this one
+    // test fn). These are the brand-regression gate for the re-skin.
+    {
+        let pages: Vec<(&str, PageConfigurator)> = vec![
+            ("dashboard", configure_dashboard as PageConfigurator),
+            ("wallet", configure_wallet),
+            ("dag", configure_dag),
+            ("chat", configure_chat),
+            ("chat_thinking_loader", configure_chat_thinking),
+            ("models", configure_models),
+            ("compute", configure_compute),
+            ("storage", configure_storage),
+            ("learning", configure_learning),
+            ("operations", configure_operations),
+            ("settings", configure_settings),
+            ("cmo_dashboard", configure_cmo_dashboard),
+            ("cmo_tenancy", configure_cmo_tenancy),
+            ("cmo_compliance", configure_cmo_compliance),
+            ("cmo_compliance_drawer", configure_cmo_compliance_drawer),
+            ("onboarding_welcome", configure_onboarding_welcome),
+            ("onboarding_bootstrap_loader_t0", configure_onboarding_bootstrap_loader_t0),
+            ("lock_screen", configure_lock_screen),
+        ];
+
+        for dark in [false, true] {
+            app.global::<Theme>().set_dark_mode(dark);
+            let mode = if dark { "dark" } else { "light" };
+            for &(name, configure) in &pages {
+                // Reset full-window flags — the onboarding/lock-screen
+                // configurators flip them and panel configurators don't.
+                app.set_show_onboarding(false);
+                app.set_show_lock_screen(false);
+                // Close the top-level envelope drawer: it is an app-level
+                // overlay, so state left by configure_cmo_compliance_drawer
+                // (Part 1 above and the entry in this list) would otherwise
+                // scrim every later snapshot.
+                app.set_cmo_envelope_detail(EnvelopeDetail::default());
+                capture_page_inline(&app, &format!("{name}-{mode}"), 1200, 800, configure);
+            }
+        }
+
+        // Restore light mode + main-app state for the journey tests below.
+        app.global::<Theme>().set_dark_mode(false);
+        app.set_show_onboarding(false);
+        app.set_show_lock_screen(false);
+        app.set_chat_thinking(false);
     }
 
     // ── Part 2: Journey tests — prove state transitions ──

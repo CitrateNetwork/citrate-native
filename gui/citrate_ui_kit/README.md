@@ -6,7 +6,7 @@ Holds:
 - `ui/theme.slint` — color tokens, typography, spacing
 - `ui/chat/chat.slint` — `ChatView` component + `ChatMessageData` struct
 - `ui/shared/feedback.slint` — `PrivacyIndicator` and related shared widgets
-- `assets/fonts/` — SpaceGrotesk + IBMPlexMono variants
+- `assets/fonts/` — SpaceGrotesk, Geist, GeistMono, Cormorant variable TTFs
 - `assets/images/` — shared brand assets
 
 ## How consumer crates use this

@@ -87,7 +87,7 @@ component DagMiniViz inherits Rectangle {
             width: dot.is-tip ? 12px : 8px;
             height: dot.is-tip ? 12px : 8px;
             border-radius: 6px;
-            background: dot.is-tip ? Theme.accent : Theme.periwinkle;
+            background: dot.is-tip ? Theme.accent : Theme.info;
             border-width: dot.is-tip ? 2px : 0;
             border-color: Theme.accent-hover;
         }
@@ -254,6 +254,7 @@ export component TransactionModal inherits Rectangle {
                 Text {
                     text: "Transaction";
                     color: Theme.text;
+                    font-family: Theme.font-display;
                     font-size: 18px;
                     font-weight: 600;
                     horizontal-stretch: 1;
@@ -434,7 +435,7 @@ export component TransactionModal inherits Rectangle {
                     background: footer-close-touch.has-hover ? Theme.accent-hover : Theme.accent;
                     Text {
                         text: "Close";
-                        color: #ffffff;
+                        color: Theme.on-accent;
                         font-size: 12px;
                         font-weight: 500;
                         horizontal-alignment: center;
@@ -498,6 +499,7 @@ export component DagExplorer inherits Rectangle {
             Text {
                 text: "DAG Explorer";
                 color: Theme.text;
+                font-family: Theme.font-display;
                 font-size: 24px;
                 font-weight: 600;
                 vertical-alignment: center;
@@ -578,7 +580,7 @@ export component DagExplorer inherits Rectangle {
             border-radius: Theme.radius-md;
             background: Theme.error;
 
-            Text { text: root.error; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { text: root.error; color: Theme.on-solid; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
         }
 
         // Block detail view
@@ -608,7 +610,7 @@ export component DagExplorer inherits Rectangle {
                     Rectangle { horizontal-stretch: 1; }
                 }
 
-                Text { text: "Block #" + root.detail-height; color: Theme.text; font-size: 20px; font-weight: 600; }
+                Text { text: "Block #" + root.detail-height; color: Theme.text; font-family: Theme.font-display; font-size: 20px; font-weight: 600; }
 
                 // Fields
                 VerticalLayout {

@@ -65,9 +65,9 @@ component StatusBadge inherits Rectangle {
     height: 24px;
     border-radius: 12px;
     background:
-        status == "Green" ? #064e3b
-      : status == "Yellow" ? #78350f
-      : status == "Red" ? #7f1d1d
+        status == "Green" ? Theme.success-bg
+      : status == "Yellow" ? Theme.warning-bg
+      : status == "Red" ? Theme.error-bg
       : status == "N/A" ? Theme.bg-tertiary
       : Theme.bg-tertiary;
 
@@ -76,9 +76,9 @@ component StatusBadge inherits Rectangle {
         Text {
             text: root.status == "" ? "—" : root.status;
             color:
-                root.status == "Green" ? #6ee7b7
-              : root.status == "Yellow" ? #fde68a
-              : root.status == "Red" ? #fca5a5
+                root.status == "Green" ? Theme.success-text
+              : root.status == "Yellow" ? Theme.warning-text
+              : root.status == "Red" ? Theme.error-text
               : Theme.text-muted;
             font-size: 11px;
             font-weight: 600;
@@ -96,7 +96,7 @@ export component EnvelopeDrawer inherits Rectangle {
 
     // Backdrop — semi-transparent overlay that captures clicks-outside.
     Rectangle {
-        background: #000000a0;
+        background: Theme.scrim;
         TouchArea {
             mouse-cursor: default;
             clicked => { root.close(); }

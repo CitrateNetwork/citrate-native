@@ -55,6 +55,7 @@ export component EduPanel inherits Rectangle {
             Text {
                 text: "Education";
                 color: Theme.text;
+                font-family: Theme.font-display;
                 font-size: 18px;
                 font-weight: 600;
             }
@@ -99,14 +100,14 @@ export component EduPanel inherits Rectangle {
         if root.vault-paused : Rectangle {
             height: 40px;
             border-radius: Theme.radius-md;
-            background: #7f1d1d;
+            background: Theme.error-bg;
             border-width: 1px;
             border-color: Theme.error;
 
             HorizontalLayout {
                 padding-left: Theme.space-md;
                 alignment: start;
-                Text { text: "⚠ Vault is PAUSED — all outflows are blocked"; color: #fca5a5; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                Text { text: "⚠ Vault is PAUSED — all outflows are blocked"; color: Theme.error-text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
             }
         }
 
@@ -218,7 +219,7 @@ export component EduPanel inherits Rectangle {
                     border-radius: Theme.radius-md;
                     background: Theme.accent;
 
-                    Text { text: "Request Cashout"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: "Request Cashout"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                     TouchArea { clicked => { root.request-cashout(); } }
                 }
             }
@@ -327,7 +328,7 @@ export component EduPanel inherits Rectangle {
                     height: 40px;
                     border-radius: Theme.radius-md;
                     background: Theme.accent;
-                    Text { text: "Create Classroom"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: "Create Classroom"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                     TouchArea { clicked => { root.create-classroom(); } }
                 }
 
@@ -390,7 +391,7 @@ export component EduPanel inherits Rectangle {
                 height: 40px;
                 border-radius: Theme.radius-md;
                 background: Theme.accent;
-                Text { text: "Register Device"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Register Device"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 TouchArea { clicked => { root.register-device(); } }
             }
 

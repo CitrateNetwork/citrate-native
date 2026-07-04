@@ -8,6 +8,9 @@ import { SchoolContextBanner } from "cmo/school_context_banner.slint";
 import { EnvelopeDrawer, EnvelopeDetail } from "cmo/envelope_drawer.slint";
 
 export { SchoolEntry, CmoDashboardStats, CmoSchoolRow, CmoEvent, TenancyNode, ComplianceCell, ComplianceSchoolMatrixRow }
+// NATIVE-R1-S1 WP-1: expose the Theme global to Rust so the Appearance
+// setting can flip `Theme.dark-mode` at runtime.
+export { Theme }
 import { StatusBar } from "shell/status_bar.slint";
 import { Onboarding } from "onboarding/onboarding.slint";
 import { LockScreen } from "shell/lock_screen.slint";
@@ -215,6 +218,12 @@ export component App inherits Window {
     in-out property <string> compute-schedule: "always";
     in property <string> compute-schedule-description: "Share compute 24/7";
 
+    // NATIVE-R1-S1 WP-5: shared CitrateLoader facet-command model. One
+    // Rust-side driver (citrate_ui_kit::loader::start_loader) feeds both
+    // loader instances — onboarding node-bootstrap and chat thinking —
+    // since the two states can never be active at the same time.
+    in property <[string]> loader-facets: [];
+
     // Chat tool approval state
     in property <bool> chat-tool-pending: false;
     in property <string> chat-tool-name: "";
@@ -278,6 +287,9 @@ export component App inherits Window {
     callback settings-add-bootnode(string);
     callback settings-remove-bootnode(string);
     callback settings-set-theme(string);
+    // Selected appearance mode ("light" | "dark" | "system") — pushed from
+    // Rust at startup (config.theme) and after each set-theme.
+    in property <string> settings-theme-mode: "dark";
     callback settings-factory-reset;
     callback settings-connect-github;
     callback settings-connect-huggingface;
@@ -493,6 +505,7 @@ export component App inherits Window {
         model-ready: root.onboarding-model-ready;
         model-status: root.onboarding-model-status;
         verify-word-number: root.onboarding-verify-word;
+        loader-facets: root.loader-facets;
         create-wallet(password, label) => { root.create-wallet(password, label); }
         start-node(env) => { root.start-node(env); }
         check-model => { root.check-model(); }
@@ -708,6 +721,7 @@ export component App inherits Window {
                     restart-node => { root.settings-restart-node(); }
                     add-bootnode(addr) => { root.settings-add-bootnode(addr); }
                     remove-bootnode(addr) => { root.settings-remove-bootnode(addr); }
+                    theme-mode: root.settings-theme-mode;
                     set-theme(mode) => { root.settings-set-theme(mode); }
                     factory-reset => { root.settings-factory-reset(); }
                     connect-github => { root.settings-connect-github(); }
@@ -748,6 +762,7 @@ export component App inherits Window {
                     tool-target: root.chat-tool-target;
                     tool-scope: root.chat-tool-scope;
                     tool-disclosure: root.chat-tool-disclosure;
+                    loader-facets: root.loader-facets;
                     send-message(msg) => { root.chat-send(msg); }
                     approve-tool => { root.chat-approve-tool(); }
                     reject-tool => { root.chat-reject-tool(); }
@@ -925,6 +940,7 @@ export component App inherits Window {
                     Text {
                         text: root.active-tab;
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 24px;
                         font-weight: 600;
                     }
@@ -994,7 +1010,7 @@ export component App inherits Window {
         border-width: 1px;
         border-color: Theme.success;
         drop-shadow-blur: 18px;
-        drop-shadow-color: #00000055;
+        drop-shadow-color: Theme.shadow-color-md;
 
         toast-text := Text {
             text: "✓  " + root.clipboard-toast;
@@ -1049,7 +1065,7 @@ export component App inherits Window {
     // inputs, fixed Open access + 1000 SALT minStake for v1.
     if root.show-create-pool-dialog : Rectangle {
         x: 0; y: 0; width: 100%; height: 100%;
-        background: #00000099;
+        background: Theme.scrim;
         TouchArea {
             // Backdrop click closes (matches SendDialog convention)
             clicked => {
@@ -1068,7 +1084,7 @@ export component App inherits Window {
             VerticalLayout {
                 padding: Theme.space-xl;
                 spacing: Theme.space-md;
-                Text { text: "Create learning pool"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Create learning pool"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
                 Text {
                     text: "Open-access pool with 1000 SALT minimum stake. You'll be the first member.";
                     color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
@@ -1145,7 +1161,7 @@ export component App inherits Window {
                         animate background { duration: 120ms; }
                         Text {
                             text: "Create · 1000 SALT";
-                            color: #000000; font-size: 12px; font-weight: 600;
+                            color: Theme.on-accent; font-size: 12px; font-weight: 600;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                         submit-ta := TouchArea {
