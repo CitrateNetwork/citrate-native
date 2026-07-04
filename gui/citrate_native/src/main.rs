@@ -797,7 +797,7 @@ async fn run_health_probes(
     let config = core.config.read().await;
     let bootnode = config.bootnodes.first().cloned()
         .unwrap_or_else(|| "<none configured>".to_string());
-    let rpc_url = format!("http://127.0.0.1:{}", config.rpc_port);
+    let rpc_url = config.active_rpc_url();
     drop(config);
     let ipfs_url = "http://127.0.0.1:5001".to_string();
 
@@ -947,18 +947,10 @@ fn short_hash(hex: &str) -> String {
     format!("0x{}…{}", &s[..6], &s[s.len() - 4..])
 }
 
-/// Compute the RPC URL the wallet and receipt-polling helpers should use
-/// for the current environment. Devnet targets the GUI's embedded node on
-/// `rpc_port` (localhost); anything else targets the remote testnet RPC.
-/// Keeping this in one place prevents the tx-submission vs. receipt-poll
-/// port-mismatch bug (submit to 8545, poll on 18545, wonder why receipts
-/// never arrive).
-fn active_rpc_url(cfg: &citrate_desktop_app::AppConfig) -> String {
-    match cfg.network.as_str() {
-        "devnet" => format!("http://127.0.0.1:{}", cfg.rpc_port),
-        _ => "https://rpc.citrate.ai".to_string(),
-    }
-}
+// The RPC-URL selector now lives on AppConfig as `active_rpc_url()`
+// (single source of truth, see citrate_desktop_app::AppConfig). The
+// former free function here was a duplicate and was removed in the RPC
+// port canonicalization sweep.
 
 /// Format session-remaining seconds as a short, unambiguous human-readable
 /// string that fits the 60px session pill. Must always lead with a time
@@ -1345,7 +1337,7 @@ fn main() {
     // the tx — not on the arbitrary port the poller defaulted to.
     {
         let cfg = rt.block_on(app_core.config.read());
-        let rpc_url = active_rpc_url(&cfg);
+        let rpc_url = cfg.active_rpc_url();
         app_core.wallet.set_rpc_url(&rpc_url);
         app_core.wallet.set_chain_id(cfg.chain_id);
         tracing::info!(
@@ -2121,6 +2113,9 @@ fn main() {
     {
         let config = rt.block_on(app_core.config.read());
         ui.set_environment(config.network.to_uppercase().into());
+        // Bind the Settings RPC-port display to the actual config value
+        // (canonicalized to 8545) instead of a hardcoded literal.
+        ui.set_rpc_port(config.rpc_port as i32);
 
         // NATIVE-R1-S1 WP-1: apply the persisted appearance mode at startup.
         // "dark" → evergreen dark; "light"/"system" → canonical light.
@@ -2675,8 +2670,7 @@ fn main() {
                 });
 
                 // T2-5: chain pause status — citrate_emergencyStatus
-                let rpc_port = core.config.read().await.rpc_port;
-                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let rpc_url = core.config.read().await.active_rpc_url();
                 let client = reqwest::Client::new();
                 let body = serde_json::json!({
                     "jsonrpc": "2.0",
@@ -2727,8 +2721,7 @@ fn main() {
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
                 let chain_id = core.config.read().await.chain_id;
-                let rpc_port = core.config.read().await.rpc_port;
-                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let rpc_url = core.config.read().await.active_rpc_url();
                 let Some(addr) = marketplace_client::model_registry_address(chain_id) else {
                     return;
                 };
@@ -2764,8 +2757,7 @@ fn main() {
             let core = core.clone();
             spawn_async(&rt_h, async move {
                 let chain_id = core.config.read().await.chain_id;
-                let rpc_port = core.config.read().await.rpc_port;
-                let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                let rpc_url = core.config.read().await.active_rpc_url();
                 let market_addr = marketplace_client::compute_marketplace_address(chain_id);
                 let accounts = core.wallet.list_accounts().await;
                 let self_addr = accounts.first().map(|a| a.address.clone());
@@ -3257,8 +3249,7 @@ fn main() {
                 // the compute/learning tab to be opened.
                 if tick_counter % 10 == 0 {
                     let chain_id = rt_handle.block_on(core.config.read()).chain_id;
-                    let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
-                    let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                    let rpc_url = rt_handle.block_on(core.config.read()).active_rpc_url();
                     let accounts = rt_handle.block_on(core.wallet.list_accounts());
                     let self_addr = accounts.first().map(|a| a.address.clone());
                     let acc_addr = marketplace_client::contribution_accounting_address(chain_id);
@@ -3296,8 +3287,7 @@ fn main() {
                         .map(|ui| ui.get_active_tab().to_string());
                     if active_tab.as_deref() == Some("compute") {
                         let chain_id = rt_handle.block_on(core.config.read()).chain_id;
-                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
-                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                        let rpc_url = rt_handle.block_on(core.config.read()).active_rpc_url();
                         let accounts = rt_handle.block_on(core.wallet.list_accounts());
                         let self_addr = accounts.first().map(|a| a.address.clone());
 
@@ -3448,8 +3438,7 @@ fn main() {
                         .map(|ui| ui.get_active_tab().to_string());
                     if active_tab.as_deref() == Some("learning") {
                         let chain_id = rt_handle.block_on(core.config.read()).chain_id;
-                        let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
-                        let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                        let rpc_url = rt_handle.block_on(core.config.read()).active_rpc_url();
                         let accounts = rt_handle.block_on(core.wallet.list_accounts());
                         let self_addr = accounts.first().map(|a| a.address.clone());
                         let pool_addr = marketplace_client::learning_pool_address(chain_id);
@@ -3652,8 +3641,7 @@ fn main() {
 
                 // T2-4: DAG stats RPC — every 30s when tab is open.
                 if dag_active && tick_counter % 10 == 0 {
-                    let rpc_port = rt_handle.block_on(core.config.read()).rpc_port;
-                    let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+                    let rpc_url = rt_handle.block_on(core.config.read()).active_rpc_url();
                     let body = serde_json::json!({
                         "jsonrpc": "2.0",
                         "method": "citrate_getDagStats",
@@ -5455,7 +5443,7 @@ fn main() {
                 // Re-read so the `rpc_port` we pass to active_rpc_url
                 // reflects any edits the network switch just made.
                 let cfg = core.config.read().await;
-                active_rpc_url(&cfg)
+                cfg.active_rpc_url()
             };
             core.wallet.set_rpc_url(&rpc_url);
             tracing::info!("Wallet updated: chain_id={}, rpc={} for {}", new_chain_id, rpc_url, lower);
@@ -5904,7 +5892,7 @@ fn main() {
                 // as the contract-deploy receipt poll below.
                 let rpc = {
                     let config = core.config.read().await;
-                    format!("http://127.0.0.1:{}", config.rpc_port)
+                    config.active_rpc_url()
                 };
 
                 let inst = RpcInstitutionalBackend::new(&rpc);
@@ -6435,7 +6423,7 @@ fn main() {
             let core = core.clone();
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
-                let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                let rpc_url = core.config.read().await.active_rpc_url();
                 let client = reqwest::Client::new();
                 match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyPause")).send().await {
                     Ok(_) => {
@@ -6469,7 +6457,7 @@ fn main() {
             let core = core.clone();
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
-                let rpc_url = format!("http://127.0.0.1:{}", core.config.read().await.rpc_port);
+                let rpc_url = core.config.read().await.active_rpc_url();
                 let client = reqwest::Client::new();
                 match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyResume")).send().await {
                     Ok(_) => {
