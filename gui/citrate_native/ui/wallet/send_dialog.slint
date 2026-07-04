@@ -71,7 +71,7 @@ export component SendDialog inherits Rectangle {
                     Text { text: "✓"; color: Theme.on-solid; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
                 }
 
-                Text { text: "Transaction Sent"; color: Theme.success; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
+                Text { text: "Transaction Sent"; color: Theme.success; font-family: Theme.font-display; font-size: 20px; font-weight: 600; horizontal-alignment: center; }
                 Text { text: root.amount + " SALT sent"; color: Theme.text-secondary; font-size: 13px; horizontal-alignment: center; }
 
                 Rectangle {
@@ -111,7 +111,7 @@ export component SendDialog inherits Rectangle {
             if root.tx-hash == "" && root.confirming : VerticalLayout {
                 spacing: Theme.space-md;
 
-                Text { text: "Confirm Transaction"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Confirm Transaction"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
 
                 Rectangle {
                     border-radius: Theme.radius-md;
@@ -167,7 +167,7 @@ export component SendDialog inherits Rectangle {
             if root.tx-hash == "" && !root.confirming : VerticalLayout {
                 spacing: Theme.space-md;
 
-                Text { text: "Send SALT"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Send SALT"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
 
                 // From
                 VerticalLayout {

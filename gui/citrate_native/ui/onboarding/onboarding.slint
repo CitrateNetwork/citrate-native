@@ -314,6 +314,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Welcome to Citrate";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 24px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -345,6 +346,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Secure Your Wallet";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -415,6 +417,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Recovery Phrase";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -551,6 +554,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Security Confirmation";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -607,6 +611,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "How will you use Citrate?";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -661,6 +666,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Select Network";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -718,21 +724,23 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Starting Your Node";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
                     }
 
                     // NATIVE-R1-S1 WP-5: liquid-morph CitrateLoader while the
-                    // node bootstraps. The spinning ring overflows the mark's
-                    // square by ~25%, so host it in a roomier fixed-height
-                    // Rectangle to keep it clear of the texts above/below.
+                    // node bootstraps. WP-6 survey fix: the spinning ring
+                    // overflows the mark's square, so the host must be
+                    // ≥ ~1.45× the loader size — 100px in the 150px host
+                    // (1.5×) keeps the ring clear of the texts above/below.
                     Rectangle {
                         height: 150px;
                         CitrateLoader {
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
-                            size: 110px;
+                            size: 100px;
                             color: Theme.accent;
                             running: !root.node-ready;
                             facet-commands: root.loader-facets;
@@ -769,6 +777,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "AI Assistant";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -816,6 +825,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Quick Start";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
