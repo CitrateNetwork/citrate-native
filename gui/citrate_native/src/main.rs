@@ -443,8 +443,34 @@ async fn upload_paths_to_ipfs(
     rt_handle: &tokio::runtime::Handle,
     ui_w: slint::Weak<App>,
     paths: Vec<std::path::PathBuf>,
+    encrypt: bool,
 ) {
     let _ = rt_handle; // Present for symmetry + future streaming use.
+
+    // ENCRYPT-S1 WP-9a: when the "Private (encrypted)" toggle is on,
+    // resolve the device envelope key BEFORE any bytes move. Fail
+    // CLOSED — a user who asked for private never silently gets a
+    // plaintext upload because the keyring was unavailable.
+    let owner_pub: Option<[u8; 32]> = if encrypt {
+        let store = citrate_desktop_app::ports::SystemSecretStore::new();
+        match storage_service::EnvelopeKey::load_or_create(&store) {
+            Ok(key) => Some(key.public_bytes()),
+            Err(e) => {
+                tracing::error!("storage envelope key unavailable: {}", e);
+                let ui_w2 = ui_w.clone();
+                let emsg = format!("Private upload cancelled — encryption key unavailable: {}", e);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w2.upgrade() {
+                        ui.set_storage_uploading(false);
+                        ui.set_storage_upload_status(emsg.into());
+                    }
+                });
+                return;
+            }
+        }
+    } else {
+        None
+    };
 
     let client = reqwest::Client::new();
     let total = paths.len();
@@ -473,8 +499,24 @@ async fn upload_paths_to_ipfs(
             });
         }
 
-        match storage_service::ipfs_add_file(&client, path).await {
-            Ok((cid, size)) => {
+        // Plaintext vs encrypted path — both return (cid, plaintext
+        // size, envelope fields).
+        let added = match owner_pub {
+            Some(ref owner) => storage_service::ipfs_add_file_encrypted(
+                &client,
+                storage_service::DEFAULT_IPFS_API,
+                path,
+                owner,
+            )
+            .await
+            .map(|r| (r.cid, r.size_bytes, true, r.wrapped_key, r.nonce)),
+            None => storage_service::ipfs_add_file(&client, path)
+                .await
+                .map(|(cid, size)| (cid, size, false, String::new(), String::new())),
+        };
+
+        match added {
+            Ok((cid, size, encrypted, wrapped_key, nonce)) => {
                 let mime = mime_guess::from_path(path)
                     .first_raw()
                     .unwrap_or("application/octet-stream")
@@ -489,6 +531,9 @@ async fn upload_paths_to_ipfs(
                     size_bytes: size,
                     uploaded_at,
                     mime,
+                    encrypted,
+                    wrapped_key,
+                    nonce,
                 };
                 index.upsert(rec);
             }
@@ -544,6 +589,7 @@ fn build_file_entries(index: &storage_service::FilesIndex) -> Vec<FileEntry> {
         mime_icon: f.mime_icon().into(),
         uploaded: f.uploaded_display(now_secs).into(),
         cid: f.cid.clone().into(),
+        encrypted: f.encrypted,
     }).collect()
 }
 
@@ -6837,9 +6883,14 @@ fn main() {
         let ui_w = ui_w.clone();
         tracing::info!("Storage: upload-file dialog open");
 
+        // ENCRYPT-S1 WP-9a: capture the "Private (encrypted)" toggle at
+        // click time (defaults ON) so the async task can't race a
+        // toggle flip mid-dialog.
+        let mut encrypt = true;
         if let Some(ui) = ui_w.upgrade() {
             ui.set_storage_uploading(true);
             ui.set_storage_upload_status("Choosing files…".into());
+            encrypt = ui.get_storage_encrypt_uploads();
         }
 
         let rt_h_inner = rt_h.clone();
@@ -6861,7 +6912,7 @@ fn main() {
                     return;
                 }
             };
-            upload_paths_to_ipfs(&rt_h_inner, ui_w, paths).await;
+            upload_paths_to_ipfs(&rt_h_inner, ui_w, paths, encrypt).await;
         });
     });
 
@@ -6869,10 +6920,20 @@ fn main() {
     // clipboard callback that was added in earlier work (flashes the
     // "✓ Copied: …" toast).
     let ui_w = ui.as_weak();
-    ui.on_storage_copy_share_link(move |cid| {
+    ui.on_storage_copy_share_link(move |cid, encrypted| {
         if let Some(ui) = ui_w.upgrade() {
             let link = storage_service::share_link(&cid);
             ui.invoke_copy_to_clipboard(link.into());
+            // ENCRYPT-S1 WP-9a: for a private file the CID resolves to
+            // ciphertext — override the generic "Copied" toast with the
+            // warning so nobody mails a link expecting it to open.
+            if encrypted {
+                ui.set_clipboard_toast(
+                    "Copied — private file: the link serves encrypted bytes; \
+                     recipients can't read it without your key"
+                        .into(),
+                );
+            }
         }
     });
 
