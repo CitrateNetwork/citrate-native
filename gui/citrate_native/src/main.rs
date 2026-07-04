@@ -9,6 +9,9 @@ slint::include_modules!();
 
 mod app_binder;
 // BFR-INT-4: Boeing surface moved to `citrate-boeing-shell` crate.
+// NATIVE-R1-S2 WP-A1: crash telemetry (panic hook + session marker +
+// rotating file log) — forensics for the silent node-start death.
+mod crash_telemetry;
 mod storage_service;
 mod compute_service;
 mod marketplace_client;
@@ -128,11 +131,16 @@ fn clean_markdown(text: &str) -> String {
 /// Set to 0 when locked. Background thread uses this to compute remaining session time.
 static SESSION_UNLOCK_EPOCH: AtomicI64 = AtomicI64::new(0);
 
-/// Session timeout duration in seconds. 8 hours so a typical work
-/// session never expires mid-flow. The backend's `session.is_active`
-/// is the authoritative gate; this constant only controls the GUI
-/// countdown display + the moment we clear SESSION_UNLOCK_EPOCH.
-const SESSION_TIMEOUT_SECS: i64 = 8 * 3600;
+/// Session timeout duration in seconds for the GUI countdown display +
+/// the moment we clear SESSION_UNLOCK_EPOCH.
+///
+/// NATIVE-R1-S2 WP-A5: single source of truth is
+/// `wallet_service::SESSION_TIMEOUT_SECS` — the ENFORCING backend value
+/// (1h). This alias only widens the type for countdown math; it must
+/// never be a second literal. (Pre-fix: UI said 8h while the backend
+/// locked at 1h, so the countdown lied for 7 hours.)
+const SESSION_TIMEOUT_SECS: i64 =
+    citrate_desktop_app::services::wallet_service::SESSION_TIMEOUT_SECS as i64;
 
 /// Push wallet accounts to the Slint UI as a VecModel.
 /// Applies EIP-55 checksum encoding to all addresses for display.
@@ -310,6 +318,36 @@ mod clipboard_autoclear_tests {
         let wallet_slint = include_str!("../ui/wallet/wallet.slint");
         assert!(wallet_slint.contains("callback clear-export-state"));
         assert!(wallet_slint.contains("root.clear-export-state(); root.show-export-dialog = false"));
+    }
+}
+
+/// NATIVE-R1-S2 WP-A5: session-timeout unification regression tests.
+/// There is now exactly ONE timeout constant (wallet_service's, the
+/// enforcing side); the UI value is derived from it at compile time,
+/// so agreement is by construction — these tests pin that construction
+/// and what the countdown pill displays for it.
+#[cfg(test)]
+mod session_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn wp_a5_ui_and_backend_share_one_session_timeout() {
+        assert_eq!(
+            SESSION_TIMEOUT_SECS as u64,
+            citrate_desktop_app::services::wallet_service::SESSION_TIMEOUT_SECS,
+            "UI countdown constant must be the wallet_service constant"
+        );
+        // The unified value is the enforcing backend's 1 hour — the
+        // pre-fix UI-only 8h value must be gone.
+        assert_eq!(SESSION_TIMEOUT_SECS, 3600);
+        assert_ne!(SESSION_TIMEOUT_SECS, 8 * 3600);
+    }
+
+    #[test]
+    fn wp_a5_countdown_pill_displays_unified_timeout() {
+        // What the session pill shows at unlock (the `session_initial`
+        // sites all call this with SESSION_TIMEOUT_SECS).
+        assert_eq!(format_session_remaining(SESSION_TIMEOUT_SECS), "1h00m");
     }
 }
 
@@ -1183,14 +1221,42 @@ async fn fetch_cmo_portal_data(
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,citrate=debug".into()),
-        )
-        .init();
+    // NATIVE-R1-S2 WP-A1: panic hook FIRST — before the subscriber, before
+    // the runtime — so even an early-boot panic on any thread writes a
+    // crash record under ~/.local/share/citrate-gui/crash/ (and still
+    // prints to stderr via the chained default hook).
+    crash_telemetry::install_panic_hook();
+
+    // WP-A1: tracing goes to stdout (as before) AND to a rotating file
+    // log (~/.local/share/citrate-gui/logs/citrate-gui.log, 5 MB × 2) so
+    // a silent death leaves logs that survive the terminal.
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "info,citrate=debug".into());
+        let file_layer = crash_telemetry::file_log_writer().map(|writer| {
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer)
+        });
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(file_layer)
+            .init();
+    }
 
     tracing::info!("Citrate Desktop starting (Slint native)");
+
+    // WP-A1: surface any stale session marker (previous unclean death —
+    // abort/SIGKILL/segfault never run the panic hook) or old crash
+    // records, THEN write this session's marker. The marker is removed
+    // on clean exit; `set_last_state` keeps it pointing at the latest
+    // app state so a kill is attributable on the next launch.
+    crash_telemetry::startup_scan();
+    crash_telemetry::init_session_marker();
+    crash_telemetry::set_last_state("app-boot");
 
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
@@ -2170,9 +2236,11 @@ fn main() {
         loader_set_running(true); // WP-5: animate the bootstrap loader
 
         spawn_async(&rt_h, async move {
+            crash_telemetry::set_last_state("node-start (onboarding bootstrap)");
             match core.node.start().await {
                 Ok(()) => {
                     tracing::info!("Node started");
+                    crash_telemetry::set_last_state("node-running (onboarding bootstrap)");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_onboarding_node_status("Node running — connecting to network...".into());
@@ -2237,9 +2305,11 @@ fn main() {
                 tracing::info!("Onboarding: auto-starting node");
                 ui.set_connection_status("Starting node...".into());
                 spawn_async(&rt_h, async move {
+                    crash_telemetry::set_last_state("node-start (onboarding auto)");
                     match core.node.start().await {
                         Ok(()) => {
                             tracing::info!("Onboarding: node auto-started");
+                            crash_telemetry::set_last_state("node-running (onboarding auto)");
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = ui_w_inner.upgrade() {
                                     ui.set_node_running(true);
@@ -4588,9 +4658,13 @@ fn main() {
         let ui_w = ui_w.clone();
         tracing::info!("Settings: starting node");
         spawn_async(&rt_h, async move {
+            // WP-A1: the silent death happened right AFTER this log line —
+            // breadcrumb both sides so a recurrence is attributable.
+            crash_telemetry::set_last_state("node-start (settings)");
             match core.node.start().await {
                 Ok(()) => {
                     tracing::info!("Node started via settings");
+                    crash_telemetry::set_last_state("node-running (settings)");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() { ui.set_node_running(true); }
                     });
@@ -4609,9 +4683,11 @@ fn main() {
         let ui_w = ui_w.clone();
         tracing::info!("Settings: stopping node");
         spawn_async(&rt_h, async move {
+            crash_telemetry::set_last_state("node-stop (settings)");
             match core.node.stop().await {
                 Ok(()) => {
                     tracing::info!("Node stopped via settings");
+                    crash_telemetry::set_last_state("node-stopped (settings)");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() { ui.set_node_running(false); }
                     });
@@ -4636,11 +4712,13 @@ fn main() {
             }
         });
         spawn_async(&rt_h, async move {
+            crash_telemetry::set_last_state("node-restart (settings)");
             let _ = core.node.stop().await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             match core.node.start().await {
                 Ok(()) => {
                     tracing::info!("Node restarted");
+                    crash_telemetry::set_last_state("node-running (settings restart)");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_node_running(true);
@@ -5337,8 +5415,11 @@ fn main() {
             tracing::info!("Wallet updated: chain_id={}, rpc={} for {}", new_chain_id, rpc_url, lower);
 
             // Restart node with new config (reads updated data_dir + chain_id)
+            crash_telemetry::set_last_state("node-start (environment switch)");
             if let Err(e) = core.node.start().await {
                 tracing::error!("Failed to restart node: {}", e);
+            } else {
+                crash_telemetry::set_last_state("node-running (environment switch)");
             }
 
             // Refresh chat context with new network info
@@ -7090,8 +7171,14 @@ fn main() {
     // (transitive via i-slint-backend-winit on Linux for dark-mode +
     // portal queries) panics with "no reactor running" without this.
     let _rt_guard = rt.enter();
+    crash_telemetry::set_last_state("ui-event-loop-running");
     if let Err(err) = ui.run() {
+        // Deliberately do NOT remove the session marker: an event-loop
+        // failure is not a clean exit and should be visible next launch.
         eprintln!("Slint event loop failed: {err}");
         std::process::exit(1);
     }
+    // WP-A1: clean exit — remove the session marker so the next launch
+    // doesn't flag this session as an unclean death.
+    crash_telemetry::mark_clean_exit();
 }
