@@ -32,12 +32,12 @@ WP definitions, acceptance criteria (Rule 11), and the survey→WP traceability 
 
 | WP | Name | Status | Commit(s) |
 |----|------|--------|-----------|
-| A1 | Node-start crash telemetry + soak | `[~] IN PROGRESS` | — |
-| A2 | boot2 eof-after-handshake | `[ ] BLOCKED (after A6)` | — |
-| A3 | Encryption-at-rest | `[~] IN PROGRESS (scoping)` | — |
-| A4 | ComputeMarketplace address drift + tripwire | `[~] IN PROGRESS` | — |
-| A5 | Session-timeout unification | `[~] IN PROGRESS` | — |
-| A6 | citrate-network pin bump + resolve_bootnode dedup | `[~] IN PROGRESS` | — |
+| A1 | Node-start crash telemetry (telemetry half; soak rides C3, in-app banner deferred to B-track) | `[x] COMPLETE` | 2315065 |
+| A2 | boot2 eof-after-handshake | `[ ] UNBLOCKED (A6 done; re-verify against new pin first — stale-genesis fix may have resolved it)` | — |
+| A3 | Encryption-at-rest — **OWNER DECISION 2026-07-04: BETA BLOCKS on real encryption** (fallback rejected). Scoping verdict: crypto library real+tested but fully un-wired (StorageManager::new hardcodes None; initialize_encryption drops the object; no salt persistence). Enablement = chain-side work in core/storage: cipher through all RocksDB get/put/batch/iter paths, salt+commitment persistence, OS-keyring master key (port citrate-comms keyvault.rs/EncryptedStore pattern; keyring crate already in tree), GUI config plumbing, benchmark gate (<10% regression), then pin bump. Migration = wipe-and-resync (wallet keystore separate tree, untouched). | `[~] IN PROGRESS (chain-side build)` | — |
+| A4 | ComputeMarketplace address drift + tripwire (book was canonical; 3 literals drifted incl. 2 newly found; chain DEPLOYED_ADDRESSES.md systematically stale — owner follow-up in chain repo) | `[x] COMPLETE` | 255bad1 |
+| A5 | Session-timeout unification (3600s single source) | `[x] COMPLETE` | 2315065 |
+| A6 | citrate-chain pin bump 0f2d16b→ca40429 + resolve_bootnode dedup. **FINDING: old pin computed stale genesis vs live 40204; new pin verified byte-identical (0x6b6d…3e2f) vs eth_getBlockByNumber(0x0)** — likely contributor to desktop sync symptoms/A2. | `[x] COMPLETE` | 47f8844 |
 | B1–B6 | Experience (Gherkin-first) | `[ ] NOT STARTED` | — |
 | C1–C4 | Harness lanes | `[ ] NOT STARTED` | — |
 | D1–D4 | Release checklist | `[ ] NOT STARTED` | — |
