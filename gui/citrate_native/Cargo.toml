@@ -26,6 +26,11 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
+# ENCRYPT-S1 WP-4 (inventory A7/A8): disk-boundary redaction of crash
+# records / session marker / file log (crash_telemetry.rs). Already in
+# the build graph via tracing-subscriber's env-filter — no new crate
+# versions enter the tree.
+regex = "1"
 
 # Clipboard for copy buttons (mnemonic, addresses)
 arboard = "3"
@@ -61,6 +66,16 @@ mime_guess = "2"
 
 # P960-C WP-C.3: serde for the persisted `files.json` index.
 serde = { version = "1", features = ["derive"] }
+
+# ENCRYPT-S1 WP-9a: client-side encryption for private IPFS uploads
+# (age-style envelope: X25519 wrap + ChaCha20-Poly1305 content key).
+# All of these are already in the workspace dependency tree via
+# citrate-storage / citrate-wallet-core — no new supply-chain surface.
+chacha20poly1305 = "0.10"
+x25519-dalek = { workspace = true, features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
+zeroize = "1"
 
 # P960-D WP-D.1: hardware detection (CPU / RAM / optional NVIDIA
 # GPU). sysinfo is pure-Rust, cross-platform. nvml-wrapper is

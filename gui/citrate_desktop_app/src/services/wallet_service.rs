@@ -15,7 +15,13 @@ use tokio::sync::RwLock;
 /// Session timeout: 1 hour. After this many seconds without activity
 /// the wallet auto-locks and `is_session_active` returns false.
 /// RM-B1 / WP-E2.1 (audit GUI-C-01).
-const SESSION_TIMEOUT_SECS: u64 = 3600;
+///
+/// NATIVE-R1-S2 WP-A5: THE single source of truth for session expiry.
+/// This backend value is the ENFORCING one (it parameterizes the
+/// `SessionManager` that actually locks the wallet); the GUI countdown
+/// in `citrate_native/src/main.rs` derives its constant from this one.
+/// Do not introduce a second timeout literal anywhere.
+pub const SESSION_TIMEOUT_SECS: u64 = 3600;
 
 /// Lockout policy: 5 wrong-password attempts triggers a 5-minute
 /// lockout. Matches the planset's "5 attempts / 5-min cooldown."
@@ -1050,6 +1056,28 @@ mod tests {
         assert!(
             after.remaining_seconds.is_none(),
             "remaining_seconds is None when locked"
+        );
+    }
+
+    /// NATIVE-R1-S2 WP-A5: session-timeout unification. The enforcing
+    /// backend expiry (SessionManager, constructed from the now-public
+    /// `SESSION_TIMEOUT_SECS`) must be driven by the SAME constant the
+    /// GUI countdown consumes — a fresh unlock's remaining time sits at
+    /// the constant, not at some second hardcoded value (the pre-fix
+    /// state was backend 1h vs UI 8h).
+    /// Data source: `WalletService` session state (the enforcing side).
+    #[tokio::test]
+    async fn test_wp_a5_backend_expiry_reads_shared_constant() {
+        assert_eq!(
+            SESSION_TIMEOUT_SECS, 3600,
+            "owner-ratified value: the enforcing 1h wins the unification"
+        );
+        let svc = test_service();
+        let status = svc.unlock("0xabc", "password123").await.expect("unlock");
+        let remaining = status.remaining_seconds.expect("active session");
+        assert!(
+            remaining <= SESSION_TIMEOUT_SECS && remaining + 5 >= SESSION_TIMEOUT_SECS,
+            "fresh-unlock expiry must equal SESSION_TIMEOUT_SECS (±5s slack), got {remaining}"
         );
     }
 

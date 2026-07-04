@@ -38,6 +38,11 @@ sha3 = "0.10"
 sha2 = "0.10"
 k256 = { version = "0.13", features = ["ecdsa"] }
 rand = { workspace = true }
+# ENCRYPT-S1 WP-4 (inventory A6): mcp_tokens.json is sealed with
+# AES-256-GCM under an OS-keyring master key (see services/mcp_host.rs
+# token vault). 0.10 is already in Cargo.lock transitively — no new
+# crate versions enter the tree.
+aes-gcm = "0.10"
 
 # IDE — Editor
 ropey = "1.6"
@@ -82,3 +87,7 @@ tokio-test = "0.4"
 proptest = "1"
 async-trait = "0.1"
 tempfile = "3"
+# ENCRYPT-S1 WP-1: raw-bytes probe that the embedded node's on-disk
+# RocksDB values are ciphertext. Same version citrate-storage pins, so
+# cargo unifies it into the existing rocksdb build (no new artifact).
+rocksdb = "0.22"

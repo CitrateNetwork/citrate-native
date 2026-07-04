@@ -9,6 +9,252 @@ use crate::AppConfig;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+// ── ENCRYPT-S1 WP-1: embedded-node RocksDB encryption at rest ────────
+//
+// The chain storage layer (citrate-chain `feat/stor-encryption-at-rest`,
+// PR #62) AES-256-GCMs every RocksDB value when opened via
+// `StorageManager::with_config(.., StorageConfig::with_encryption(..))`.
+// The 32-byte master key is held in the OS keyring under the app-wide
+// `citrate-desktop` service (same store `SystemSecretStore` / the WP-4
+// token vault / the WP-9a storage envelope use), generated on first run.
+//
+// Node RocksDB holds only PUBLIC chain data, so the migration stance for
+// an encryption/plaintext mismatch is wipe-and-resync: the network
+// data-dir is deleted and re-initialised encrypted, then the node
+// resyncs from peers. The wallet keystore lives in a SEPARATE tree and
+// is never touched by this path.
+
+/// Keyring account (under service `citrate-desktop`) for the embedded
+/// node's 32-byte storage-at-rest master key.
+pub const NODE_STORAGE_KEYRING_ACCOUNT: &str = "node-storage-master-key";
+
+/// Load the node storage master key from a secret store, generating and
+/// persisting a fresh 32-byte key on first run. Mirrors the WP-4 / WP-9a
+/// keyring pattern. Testable core: callers in production pass a
+/// `SystemSecretStore`; tests pass an in-memory store.
+fn load_or_create_storage_key_from(
+    store: &dyn crate::ports::SecretStore,
+) -> Result<[u8; 32], String> {
+    if let Some(hex_key) = store.get_secret(NODE_STORAGE_KEYRING_ACCOUNT) {
+        let raw = hex::decode(hex_key.trim())
+            .map_err(|e| format!("node storage key in keyring is not hex: {e}"))?;
+        let bytes: [u8; 32] = raw
+            .try_into()
+            .map_err(|_| "node storage key in keyring is not 32 bytes".to_string())?;
+        return Ok(bytes);
+    }
+    let mut bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    store.set_secret(NODE_STORAGE_KEYRING_ACCOUNT, &hex::encode(bytes))?;
+    Ok(bytes)
+}
+
+/// Load the node storage master key from the OS keyring (production),
+/// generating one on first run. Fails (rather than silently opening
+/// plaintext) when no keyring is available — the caller surfaces the error.
+fn load_or_create_storage_key() -> Result<[u8; 32], String> {
+    load_or_create_storage_key_from(&crate::ports::SystemSecretStore::new())
+}
+
+/// True when an `anyhow` error from opening storage indicates the on-disk
+/// database is incompatible with the requested encryption setting (the
+/// only class of error we recover from by wipe-and-resync).
+fn is_encryption_mismatch(err: &anyhow::Error) -> bool {
+    use citrate_storage::crypto::at_rest::AtRestError;
+    matches!(
+        err.downcast_ref::<AtRestError>(),
+        Some(
+            AtRestError::PlaintextDbWithEncryptionEnabled(_)
+                | AtRestError::EncryptedDbWithoutEncryption(_)
+                | AtRestError::EncryptedValuesWithoutMeta(_)
+                | AtRestError::WrongKey
+        )
+    )
+}
+
+/// Delete and recreate the network data directory (public chain data →
+/// wipe-and-resync). NOTE: this removes the RocksDB, `encryption.meta`,
+/// `noise.key`, and the local IPFS repo under `data_dir`; all are
+/// regenerated on the next start. The wallet keystore is a separate tree.
+fn wipe_data_dir(data_dir: &str) -> Result<(), AppError> {
+    let path = std::path::Path::new(data_dir);
+    if path.exists() {
+        std::fs::remove_dir_all(path)
+            .map_err(|e| AppError::Node(format!("Failed to wipe data dir {data_dir}: {e}")))?;
+    }
+    std::fs::create_dir_all(path)
+        .map_err(|e| AppError::Node(format!("Failed to recreate data dir {data_dir}: {e}")))?;
+    Ok(())
+}
+
+/// Open the embedded node's RocksDB with an explicit key source.
+/// `key = None` → plaintext; `Some(k)` → AES-256-GCM at rest under `k`.
+///
+/// On an encryption/plaintext mismatch (see [`is_encryption_mismatch`])
+/// the data dir is wiped and the open is retried, so an existing plaintext
+/// install transparently upgrades to encrypted on first launch (and vice
+/// versa if encryption is turned off).
+fn open_storage_with_key(
+    data_dir: &str,
+    key: Option<[u8; 32]>,
+) -> Result<Arc<citrate_storage::StorageManager>, AppError> {
+    use citrate_storage::crypto::at_rest::EncryptionAtRestConfig;
+    use citrate_storage::{StorageConfig, StorageManager};
+
+    let build = |key: Option<[u8; 32]>| -> anyhow::Result<StorageManager> {
+        match key {
+            Some(k) => {
+                let cfg = StorageConfig::default()
+                    .with_encryption(EncryptionAtRestConfig::with_raw_key(k));
+                StorageManager::with_config(data_dir, cfg)
+            }
+            None => StorageManager::new(
+                data_dir,
+                citrate_storage::pruning::PruningConfig::default(),
+            ),
+        }
+    };
+
+    match build(key) {
+        Ok(storage) => Ok(Arc::new(storage)),
+        Err(e) if is_encryption_mismatch(&e) => {
+            tracing::error!(
+                "==== EMBEDDED-NODE STORAGE ENCRYPTION MISMATCH ====\n{e}\n\
+                 The chain database at {data_dir} is incompatible with the current \
+                 encryption setting (encrypt={}). This RocksDB holds only PUBLIC chain \
+                 data, so recovery is WIPE-AND-RESYNC: deleting {data_dir} and \
+                 re-initialising, then resyncing from peers. The wallet keystore is a \
+                 SEPARATE tree and is NOT touched.",
+                key.is_some(),
+            );
+            wipe_data_dir(data_dir)?;
+            let storage = build(key).map_err(|e| {
+                AppError::Node(format!("Storage re-init after wipe-and-resync failed: {e}"))
+            })?;
+            tracing::warn!(
+                "Embedded-node storage wiped and re-initialised (encrypt={}); \
+                 node will resync from peers",
+                key.is_some()
+            );
+            Ok(Arc::new(storage))
+        }
+        Err(e) => Err(AppError::Node(format!("Storage init failed: {e}"))),
+    }
+}
+
+/// Open the embedded node's RocksDB, sourcing the encryption key from the
+/// OS keyring when `encrypt` is true (first-run default).
+fn open_storage(
+    data_dir: &str,
+    encrypt: bool,
+) -> Result<Arc<citrate_storage::StorageManager>, AppError> {
+    let key = if encrypt {
+        Some(load_or_create_storage_key().map_err(|e| {
+            AppError::Node(format!("Failed to source node storage master key: {e}"))
+        })?)
+    } else {
+        tracing::warn!(
+            "Embedded node starting with encryption-at-rest DISABLED — \
+             local chain data will be stored in plaintext"
+        );
+        None
+    };
+    open_storage_with_key(data_dir, key)
+}
+
+// ── ENCRYPT-S1 WP-5: seal the embedded node's noise.key ──────────────
+//
+// The P2P Noise static identity (`noise.key` in the data dir) used to be
+// written as raw plaintext key bytes. It is now sealed with AES-256-GCM
+// under the same OS-keyring master used for storage-at-rest (WP-1):
+//   MAGIC(8) ‖ nonce(12) ‖ ciphertext(noise key bytes)
+// A legacy plaintext key found on load is re-sealed in place and the
+// plaintext shredded (zero-overwrite + fsync + unlink). The sealed key
+// decrypts to the SAME bytes, so the P2P peer id is stable across
+// restarts. (The fleet/droplet half of WP-5 is a separate ops task.)
+
+/// File-format magic for a sealed noise.key (version 1).
+const NOISE_SEAL_MAGIC: &[u8; 8] = b"CITNOIS1";
+const NOISE_SEAL_NONCE_LEN: usize = 12;
+
+/// Seal noise key bytes: MAGIC ‖ nonce ‖ AES-256-GCM ciphertext.
+fn seal_noise_key(master: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::{Aead, AeadCore, OsRng};
+    use aes_gcm::{Aes256Gcm, KeyInit};
+    let cipher = Aes256Gcm::new(master.into());
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("noise key encrypt: {e}"))?;
+    let mut out = Vec::with_capacity(NOISE_SEAL_MAGIC.len() + nonce.len() + ciphertext.len());
+    out.extend_from_slice(NOISE_SEAL_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Open a sealed noise.key back to the raw key bytes.
+fn open_noise_key(master: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+    let body = bytes
+        .strip_prefix(NOISE_SEAL_MAGIC.as_slice())
+        .ok_or_else(|| "not a sealed noise key (bad magic)".to_string())?;
+    if body.len() < NOISE_SEAL_NONCE_LEN {
+        return Err("sealed noise key truncated".to_string());
+    }
+    let (nonce, ciphertext) = body.split_at(NOISE_SEAL_NONCE_LEN);
+    let cipher = Aes256Gcm::new(master.into());
+    cipher
+        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .map_err(|e| format!("noise key decrypt: {e}"))
+}
+
+/// Best-effort shred of a plaintext file (zero-overwrite + fsync + unlink).
+/// Hygiene, not a guarantee on CoW/journaled filesystems — the real fix is
+/// that new writes are ciphertext-only.
+fn shred_file(path: &std::path::Path, len: usize) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.write_all(&vec![0u8; len]);
+        let _ = f.sync_all();
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Load the sealed noise.key (or generate + seal a fresh one), returning
+/// the RAW key bytes for `NoiseKeypair::from_bytes`. A legacy plaintext
+/// key is re-sealed in place and shredded. `master` is the WP-1 keyring
+/// storage master key. `fresh` produces a new identity's bytes only when
+/// no key file exists.
+fn load_or_create_sealed_noise_key(
+    path: &std::path::Path,
+    master: &[u8; 32],
+    fresh: impl FnOnce() -> Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    if path.exists() {
+        let bytes = std::fs::read(path).map_err(|e| format!("read noise key: {e}"))?;
+        if bytes.starts_with(NOISE_SEAL_MAGIC.as_slice()) {
+            return open_noise_key(master, &bytes);
+        }
+        // Legacy plaintext key — re-seal in place, shred the plaintext.
+        tracing::warn!(
+            "Embedded node: legacy plaintext noise.key at {} — re-sealing under the \
+             keyring master and shredding the plaintext (P2P identity preserved)",
+            path.display()
+        );
+        let sealed = seal_noise_key(master, &bytes)?;
+        shred_file(path, bytes.len());
+        std::fs::write(path, &sealed).map_err(|e| format!("write sealed noise key: {e}"))?;
+        return Ok(bytes);
+    }
+    let raw = fresh();
+    let sealed = seal_noise_key(master, &raw)?;
+    std::fs::write(path, &sealed).map_err(|e| format!("write sealed noise key: {e}"))?;
+    tracing::info!("Generated new persistent Noise identity (sealed under keyring master)");
+    Ok(raw)
+}
+
 /// Live node status snapshot
 #[derive(Debug, Clone)]
 pub struct NodeStatus {
@@ -67,6 +313,9 @@ pub trait NodeBackend: Send + Sync {
     }
     /// Update bootstrap nodes for network switching.
     async fn set_bootnodes(&self, _bootnodes: Vec<String>) {}
+    /// ENCRYPT-S1 WP-1: toggle encryption-at-rest for the next node start.
+    /// Default backends ignore it; the embedded backend honours it.
+    async fn set_encryption(&self, _enabled: bool) {}
     /// Get transactions for an address from local storage.
     async fn get_transactions_for(&self, _address: &str, _limit: usize) -> Vec<TxSummary> {
         Vec::new()
@@ -158,6 +407,10 @@ pub struct EmbeddedNodeBackend {
     /// Lifecycle mutex — prevents concurrent start/stop races that cause RocksDB LOCK errors.
     /// Held for the entire duration of start_node and stop_node.
     lifecycle: tokio::sync::Mutex<()>,
+    /// ENCRYPT-S1 WP-1: encrypt the RocksDB at rest on start. Set from
+    /// `AppConfig::encryption_at_rest` via `set_encryption` before start;
+    /// defaults to ENCRYPTED (the beta gate).
+    encryption_at_rest: std::sync::atomic::AtomicBool,
 }
 
 impl EmbeddedNodeBackend {
@@ -181,6 +434,8 @@ impl EmbeddedNodeBackend {
             ]),
             ipfs_daemon: tokio::sync::RwLock::new(None),
             lifecycle: tokio::sync::Mutex::new(()),
+            // First-run default: ENCRYPTED (ENCRYPT-S1 beta gate).
+            encryption_at_rest: std::sync::atomic::AtomicBool::new(true),
         }
     }
 
@@ -196,6 +451,12 @@ impl EmbeddedNodeBackend {
     /// Update bootnodes from config (F-05 fix: read from config, not hardcoded)
     pub async fn set_bootnodes(&self, bootnodes: Vec<String>) {
         *self.bootnodes.write().await = bootnodes;
+    }
+
+    /// ENCRYPT-S1 WP-1: set the encryption-at-rest flag applied on the next start.
+    pub fn set_encryption_at_rest(&self, enabled: bool) {
+        self.encryption_at_rest
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -238,12 +499,18 @@ impl NodeBackend for EmbeddedNodeBackend {
             let _ = std::fs::remove_file(&lock_path);
         }
 
-        // 2. Initialize RocksDB storage
-        tracing::info!("Initializing RocksDB storage at {}", data_dir);
-        let storage = Arc::new(citrate_storage::StorageManager::new(
-            data_dir,
-            citrate_storage::pruning::PruningConfig::default(),
-        ).map_err(|e| AppError::Node(format!("Storage init failed: {}", e)))?);
+        // 2. Initialize RocksDB storage (ENCRYPT-S1 WP-1: encrypted at rest
+        // by default; key from the OS keyring). An encryption/plaintext
+        // mismatch on an existing dir triggers wipe-and-resync inside
+        // open_storage (public chain data — safe to re-fetch).
+        let encrypt = self
+            .encryption_at_rest
+            .load(std::sync::atomic::Ordering::SeqCst);
+        tracing::info!(
+            "Initializing RocksDB storage at {} (encryption at rest: {})",
+            data_dir, encrypt
+        );
+        let storage = open_storage(data_dir, encrypt)?;
 
         // 3. Initialize state DB and load existing state
         let state_db = Arc::new(citrate_execution::StateDB::new());
@@ -327,20 +594,21 @@ impl NodeBackend for EmbeddedNodeBackend {
             score_threshold: -100,
         }));
 
-        // 7. Load or generate persistent Noise identity
+        // 7. Load or generate persistent Noise identity (ENCRYPT-S1 WP-5:
+        // sealed at rest with AES-256-GCM under the keyring master; a legacy
+        // plaintext noise.key is re-sealed + shredded on load. The sealed
+        // key decrypts to the same bytes, so the peer id stays stable.)
         let noise_key_path = std::path::Path::new(data_dir).join("noise.key");
-        let noise_keypair = if noise_key_path.exists() {
-            let key_bytes = std::fs::read(&noise_key_path)
-                .map_err(|e| AppError::Node(format!("Failed to read noise key: {}", e)))?;
-            NoiseKeypair::from_bytes(&key_bytes)
-                .map_err(|e| AppError::Node(format!("Failed to parse noise key: {}", e)))?
-        } else {
-            let kp = NoiseKeypair::generate();
-            std::fs::write(&noise_key_path, kp.to_bytes())
-                .map_err(|e| AppError::Node(format!("Failed to write noise key: {}", e)))?;
-            tracing::info!("Generated new persistent Noise identity");
-            kp
-        };
+        let noise_master = load_or_create_storage_key()
+            .map_err(|e| AppError::Node(format!("Failed to source noise-seal master key: {e}")))?;
+        let noise_key_bytes = load_or_create_sealed_noise_key(
+            &noise_key_path,
+            &noise_master,
+            || NoiseKeypair::generate().to_bytes(),
+        )
+        .map_err(|e| AppError::Node(format!("Failed to load/seal noise key: {e}")))?;
+        let noise_keypair = NoiseKeypair::from_bytes(&noise_key_bytes)
+            .map_err(|e| AppError::Node(format!("Failed to parse noise key: {}", e)))?;
         let local_peer_id = noise_keypair.derive_peer_id();
         tracing::info!(
             "Noise identity: {}... (peer_id={})",
@@ -384,26 +652,16 @@ impl NodeBackend for EmbeddedNodeBackend {
         let configured_bootnodes = self.bootnodes.read().await.clone();
         let mut connected_count = 0u32;
         for s in &configured_bootnodes {
-            // Resolve [identity@]host:port, performing DNS for hostnames so the
-            // baked hostname-based testnet config (boot1.citrate.ai, …) connects
-            // out of the box. Inlined rather than calling
-            // citrate_network::resolve_bootnode because this repo pins an older
-            // citrate-network rev that predates that shared helper; bump the pin
-            // to de-duplicate once the chain rev is advanced federation-wide.
-            let host_port = s.split_once('@').map(|(_, rest)| rest).unwrap_or(s.as_str()).trim();
-            let addr = match host_port.parse::<std::net::SocketAddr>() {
-                Ok(a) => a,
-                Err(_) => match tokio::net::lookup_host(host_port)
-                    .await
-                    .ok()
-                    .and_then(|mut it| it.next())
-                {
-                    Some(a) => a,
-                    None => {
-                        tracing::warn!("Cannot resolve bootnode address: {}", s);
-                        continue;
-                    }
-                },
+            // Resolve [identity@]host:port via the shared citrate-network
+            // helper (single resolver federation-wide), performing DNS for
+            // hostnames so the baked hostname-based testnet config
+            // (boot1.citrate.ai, …) connects out of the box.
+            let addr = match citrate_network::resolve_bootnode(s).await {
+                Some((_identity, addr)) => addr,
+                None => {
+                    tracing::warn!("Cannot resolve bootnode address: {}", s);
+                    continue;
+                }
             };
 
             tracing::info!("=== Connecting to bootnode {} ===", addr);
@@ -768,6 +1026,10 @@ impl NodeBackend for EmbeddedNodeBackend {
         *self.bootnodes.write().await = bootnodes;
     }
 
+    async fn set_encryption(&self, enabled: bool) {
+        self.set_encryption_at_rest(enabled);
+    }
+
     /// Full per-transaction detail for a block, including receipt status + gas used.
     ///
     /// Data source: `citrate_storage::BlockStore::get_block` (CF_BLOCKS) for the tx
@@ -971,6 +1233,9 @@ impl NodeService {
         let config = self.config.read().await;
         tracing::info!("Starting node for network={}, chain_id={}", config.network, config.chain_id);
 
+        // ENCRYPT-S1 WP-1: apply the config's at-rest posture before start.
+        self.backend.set_encryption(config.encryption_at_rest).await;
+
         self.backend.start_node(config.chain_id, &config.data_dir).await?;
 
         let mut status = self.status.write().await;
@@ -1069,6 +1334,224 @@ impl NodeService {
     /// Get recent transactions for an address via the backend.
     pub async fn get_transactions_for_address(&self, address: &str, limit: usize) -> Vec<TxSummary> {
         self.backend.get_transactions_for(address, limit).await
+    }
+}
+
+#[cfg(test)]
+mod encryption_tests {
+    use super::*;
+    use crate::ports::SecretStore;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// In-memory secret store so the keyring test never touches the OS
+    /// keychain and persists across simulated restarts (the mock keyring
+    /// does NOT persist across separate `Entry::new` calls).
+    #[derive(Default)]
+    struct InMemorySecrets {
+        data: Mutex<HashMap<String, String>>,
+    }
+    impl SecretStore for InMemorySecrets {
+        fn get_secret(&self, key: &str) -> Option<String> {
+            self.data.lock().unwrap().get(key).cloned()
+        }
+        fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
+            self.data.lock().unwrap().insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn delete_secret(&self, key: &str) -> Result<(), String> {
+            self.data.lock().unwrap().remove(key);
+            Ok(())
+        }
+        fn has_secret(&self, key: &str) -> bool {
+            self.data.lock().unwrap().contains_key(key)
+        }
+    }
+
+    /// Read raw stored bytes from a CLOSED database directory with the raw
+    /// rocksdb crate — bypasses the storage layer's cipher entirely, so we
+    /// see exactly what hit the disk. Mirrors the chain repo's probe.
+    fn raw_read(path: &std::path::Path, cf: &str, key: &[u8]) -> Option<Vec<u8>> {
+        let db = rocksdb::DB::open_cf_for_read_only(
+            &rocksdb::Options::default(),
+            path,
+            [cf],
+            false,
+        )
+        .expect("raw read-only open should succeed");
+        let handle = db.cf_handle(cf).expect("cf handle");
+        db.get_cf(&handle, key).expect("raw get should succeed")
+    }
+
+    /// The at-rest envelope prefix used by citrate-storage
+    /// (`QSSP` magic + value-format version 2). See crypto::at_rest.
+    fn is_sealed(raw: &[u8]) -> bool {
+        raw.len() >= 34 && &raw[0..4] == b"QSSP" && raw[4] == 2
+    }
+
+    const TEST_KEY: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn encrypted_node_rocksdb_values_are_ciphertext_on_disk() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp.path().to_str().expect("utf8");
+
+        let plaintext = b"citrate-plaintext-marker-abcdef0123456789".to_vec();
+        let key = b"probe-key";
+        {
+            let storage = open_storage_with_key(dir, Some(TEST_KEY)).expect("open encrypted");
+            storage
+                .db
+                .put_cf("metadata", key, &plaintext)
+                .expect("put_cf");
+            storage.flush().expect("flush");
+            // Roundtrip through the cipher returns the original bytes.
+            let got = storage.db.get_cf("metadata", key).expect("get_cf");
+            assert_eq!(got.as_deref(), Some(plaintext.as_slice()));
+        } // storage dropped → RocksDB closed
+
+        // Raw on-disk bytes must be sealed, differ from plaintext, and not
+        // contain the plaintext marker anywhere.
+        let raw = raw_read(tmp.path(), "metadata", key).expect("raw bytes present");
+        assert!(is_sealed(&raw), "on-disk value must carry the at-rest envelope prefix");
+        assert_ne!(raw, plaintext, "on-disk value must not equal plaintext");
+        assert!(
+            raw.windows(plaintext.len()).all(|w| w != plaintext.as_slice()),
+            "plaintext marker must not appear in the ciphertext"
+        );
+    }
+
+    #[test]
+    fn encryption_mismatch_triggers_wipe_and_resync() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp.path().to_str().expect("utf8");
+        let key = b"legacy-key";
+        let legacy = b"legacy-plaintext-value".to_vec();
+
+        // 1. Create a PLAINTEXT database with a value.
+        {
+            let storage = open_storage_with_key(dir, None).expect("open plaintext");
+            storage.db.put_cf("metadata", key, &legacy).expect("put");
+            storage.flush().expect("flush");
+        }
+
+        // 2. Reopen ENCRYPTED — mismatch must be recovered by wipe-and-resync,
+        //    not error. The old plaintext value must be gone afterwards.
+        let storage = open_storage_with_key(dir, Some(TEST_KEY))
+            .expect("mismatch should wipe-and-resync, not fail");
+        assert!(
+            storage.db.get_cf("metadata", key).expect("get").is_none(),
+            "wipe-and-resync must discard the old plaintext database"
+        );
+        assert!(storage.is_encryption_enabled(), "re-init must be encrypted");
+        drop(storage);
+
+        // 3. And a plaintext open of the now-encrypted dir must itself be
+        //    recovered by wipe-and-resync (reverse mismatch).
+        let storage = open_storage_with_key(dir, None)
+            .expect("reverse mismatch should wipe-and-resync");
+        assert!(!storage.is_encryption_enabled());
+    }
+
+    #[test]
+    fn keyring_sourced_storage_key_is_stable_across_restart() {
+        let store = InMemorySecrets::default();
+
+        // First "boot" generates + persists the key.
+        let first = load_or_create_storage_key_from(&store).expect("first load generates + stores");
+        assert!(store.has_secret(NODE_STORAGE_KEYRING_ACCOUNT));
+
+        // Second "boot" (same store = same keyring) must read the SAME key.
+        let second = load_or_create_storage_key_from(&store).expect("second load reads the same key");
+        assert_eq!(first, second, "keyring-sourced key must be stable across restarts");
+
+        // And that stable key decrypts a DB it created: write encrypted,
+        // drop, reopen with the same key, read back.
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let dir = tmp.path().to_str().expect("utf8");
+        {
+            let storage = open_storage_with_key(dir, Some(first)).expect("open encrypted");
+            storage.db.put_cf("metadata", b"k", b"v").expect("put");
+            storage.flush().expect("flush");
+        }
+        let storage = open_storage_with_key(dir, Some(second)).expect("reopen with stable key");
+        assert!(storage.is_encryption_enabled());
+        assert_eq!(
+            storage.db.get_cf("metadata", b"k").expect("get").as_deref(),
+            Some(b"v".as_slice()),
+            "the stable key must decrypt data it previously wrote"
+        );
+    }
+}
+
+#[cfg(test)]
+mod noise_seal_tests {
+    use super::*;
+
+    // A fake 32-byte "noise identity" — the loader is agnostic to the
+    // actual NoiseKeypair encoding, it just seals/returns the bytes.
+    fn fake_identity() -> Vec<u8> {
+        (0u8..32).collect()
+    }
+
+    #[test]
+    fn sealed_noise_key_roundtrips() {
+        let master = [9u8; 32];
+        let identity = fake_identity();
+        let sealed = seal_noise_key(&master, &identity).expect("seal");
+        assert!(sealed.starts_with(NOISE_SEAL_MAGIC.as_slice()));
+        assert_ne!(sealed, identity, "sealed bytes must differ from plaintext");
+        assert_eq!(open_noise_key(&master, &sealed).expect("open"), identity);
+        // Wrong master must fail (AEAD auth).
+        assert!(open_noise_key(&[8u8; 32], &sealed).is_err());
+    }
+
+    #[test]
+    fn noise_key_is_sealed_on_disk_and_identity_stable_across_restart() {
+        let master = [4u8; 32];
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("noise.key");
+        let identity = fake_identity();
+
+        // First "boot": generate + seal.
+        let a = load_or_create_sealed_noise_key(&path, &master, || identity.clone())
+            .expect("first boot");
+        assert_eq!(a, identity);
+        let on_disk = std::fs::read(&path).expect("read");
+        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "on disk must be sealed");
+        assert!(
+            on_disk.windows(identity.len()).all(|w| w != identity.as_slice()),
+            "plaintext identity must not appear on disk"
+        );
+
+        // Second "boot": decrypts to the SAME identity, without regenerating.
+        let b = load_or_create_sealed_noise_key(&path, &master, || {
+            panic!("must not regenerate when a sealed key exists")
+        })
+        .expect("second boot");
+        assert_eq!(b, identity, "P2P identity must be stable across restarts");
+    }
+
+    #[test]
+    fn legacy_plaintext_noise_key_is_resealed_and_shredded() {
+        let master = [3u8; 32];
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("noise.key");
+        let identity = fake_identity();
+
+        // Legacy: raw plaintext key on disk (pre-ENCRYPT-S1).
+        std::fs::write(&path, &identity).expect("write plaintext");
+
+        let got = load_or_create_sealed_noise_key(&path, &master, || {
+            panic!("must not regenerate — legacy key must be migrated in place")
+        })
+        .expect("load migrates legacy key");
+        assert_eq!(got, identity, "identity preserved across re-seal");
+
+        // File is now sealed, and decrypts back to the same identity.
+        let on_disk = std::fs::read(&path).expect("read");
+        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "migrated to sealed");
+        assert_eq!(open_noise_key(&master, &on_disk).expect("open"), identity);
     }
 }
 

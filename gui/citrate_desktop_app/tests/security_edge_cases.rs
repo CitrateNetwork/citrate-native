@@ -464,28 +464,28 @@ fn test_config_partial_json() {
 
 #[test]
 fn test_config_extra_fields_ignored() {
-    let json = r#"{"network":"devnet","chain_id":40204,"data_dir":"/tmp","rpc_port":18545,"p2p_port":30304,"bootnodes":[],"theme":"dark","extra_field":"ignored"}"#;
+    let json = r#"{"network":"devnet","chain_id":40204,"data_dir":"/tmp","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"dark","extra_field":"ignored"}"#;
     let result = serde_json::from_str::<AppConfig>(json);
     assert!(result.is_ok(), "Extra fields should be silently ignored");
 }
 
 #[test]
 fn test_config_chain_id_zero() {
-    let json = r#"{"network":"test","chain_id":0,"data_dir":"/tmp","rpc_port":18545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
+    let json = r#"{"network":"test","chain_id":0,"data_dir":"/tmp","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
     let config: AppConfig = serde_json::from_str(json).expect("deserialization succeeded");
     assert_eq!(config.chain_id, 0);
 }
 
 #[test]
 fn test_config_chain_id_max() {
-    let json = r#"{"network":"test","chain_id":18446744073709551615,"data_dir":"/tmp","rpc_port":18545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
+    let json = r#"{"network":"test","chain_id":18446744073709551615,"data_dir":"/tmp","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
     let config: AppConfig = serde_json::from_str(json).expect("deserialization succeeded");
     assert_eq!(config.chain_id, u64::MAX);
 }
 
 #[test]
 fn test_config_empty_bootnodes() {
-    let json = r#"{"network":"test","chain_id":40204,"data_dir":"/tmp","rpc_port":18545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
+    let json = r#"{"network":"test","chain_id":40204,"data_dir":"/tmp","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#;
     let config: AppConfig = serde_json::from_str(json).expect("deserialization succeeded");
     assert!(config.bootnodes.is_empty());
 }
