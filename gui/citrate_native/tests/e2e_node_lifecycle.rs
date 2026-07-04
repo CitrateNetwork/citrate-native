@@ -872,7 +872,7 @@ async fn test_config_accessible_through_node_service() {
     assert_eq!(config.chain_id, 40204);
     assert_eq!(config.network, "testnet");
     assert!(!config.bootnodes.is_empty());
-    assert_eq!(config.rpc_port, 18545);
+    assert_eq!(config.rpc_port, citrate_desktop_app::DEFAULT_RPC_PORT);
     assert_eq!(config.p2p_port, 30304);
 }
 

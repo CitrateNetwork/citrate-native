@@ -15,6 +15,7 @@ export struct FileEntry {
     mime-icon: string,   // short icon glyph based on mime type ("📄" / "🖼" / ...)
     uploaded: string,    // pre-formatted "2 min ago" / "2026-04-22"
     cid: string,         // exposed via "Copy share link" only
+    encrypted: bool,     // ENCRYPT-S1 WP-9a: client-side encrypted upload
 }
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ component FileRow inherits Rectangle {
     in property <string> mime-icon;
     in property <string> uploaded;
     in property <string> cid;
+    in property <bool> encrypted;
     callback copy-link(string);
     callback remove;
 
@@ -54,6 +56,26 @@ component FileRow inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
             horizontal-stretch: 1;
+        }
+
+        // ENCRYPT-S1 WP-9a: "Private" badge on client-side-encrypted
+        // entries. Zero-width when plaintext so plain rows are unchanged.
+        if root.encrypted : Rectangle {
+            width: badge-text.preferred-width + 14px;
+            height: 20px;
+            y: 14px;
+            border-radius: 10px;
+            background: transparent;
+            border-width: 1px;
+            border-color: Theme.accent.darker(0.2);
+            badge-text := Text {
+                text: "🔒 Private";
+                color: Theme.accent;
+                font-size: 9px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
         Text {
             text: root.size;
@@ -151,12 +173,17 @@ export component StorageView inherits Rectangle {
     // manual pin). Default false so new users don't see IPFS jargon.
     in-out property <bool> show-advanced: false;
 
+    // ENCRYPT-S1 WP-9a: encrypt-before-add for new uploads. Defaults ON
+    // (the ratified local-and-private-first posture) — users opt OUT
+    // into public plaintext, never accidentally in.
+    in-out property <bool> encrypt-uploads: true;
+
     // Callbacks
     callback start-daemon;
     callback stop-daemon;
     callback upload-file;
     callback remove-file(string);          // remove by CID (unpin + files.json entry drop)
-    callback copy-share-link(string);      // emits to unified clipboard flow
+    callback copy-share-link(string, bool); // (cid, encrypted) — encrypted links get a ciphertext warning
     callback pin-cid(string);              // advanced: manual pin
     callback refresh;
 
@@ -226,8 +253,9 @@ export component StorageView inherits Rectangle {
             }
 
             // ── Upload + drag-drop zone ────────────────────────────
+            // (Height grew 96→128px for the WP-9a private-upload toggle.)
             Rectangle {
-                height: 96px;
+                height: 128px;
                 border-radius: Theme.radius-lg;
                 border-width: 2px;
                 border-color: root.drag-hovering ? Theme.accent : Theme.border-subtle;
@@ -250,12 +278,49 @@ export component StorageView inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     Text {
-                        text: root.daemon-running
-                            ? "Files are stored on IPFS and shared via a copy-paste link."
-                            : "Start the storage daemon to upload files.";
+                        text: !root.daemon-running
+                            ? "Start the storage daemon to upload files."
+                            : (root.encrypt-uploads
+                                ? "Files are encrypted on this device before upload — only you can read them."
+                                : "Files are stored on IPFS in the clear and shared via a copy-paste link.");
                         color: Theme.text-muted;
                         font-size: 11px;
                         horizontal-alignment: center;
+                    }
+
+                    // ENCRYPT-S1 WP-9a: private-upload toggle. A pill
+                    // switch, ON by default.
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Theme.space-xs;
+
+                        Rectangle {
+                            width: 30px; height: 16px; y: 1px;
+                            border-radius: 8px;
+                            background: root.encrypt-uploads ? Theme.accent : Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: root.encrypt-uploads ? Theme.accent : Theme.border;
+                            animate background { duration: Theme.duration-fast; }
+                            Rectangle {
+                                width: 12px; height: 12px;
+                                x: root.encrypt-uploads ? 16px : 2px;
+                                y: 1px;
+                                border-radius: 6px;
+                                background: root.encrypt-uploads ? Theme.on-accent : Theme.text-muted;
+                                animate x { duration: Theme.duration-fast; }
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.encrypt-uploads = !root.encrypt-uploads; }
+                            }
+                        }
+                        Text {
+                            text: root.encrypt-uploads ? "🔒 Private (encrypted)" : "Public (plaintext)";
+                            color: root.encrypt-uploads ? Theme.text-secondary : Theme.text-muted;
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
                     }
 
                     // Upload button — stays visible even during drag-hover
@@ -364,7 +429,8 @@ export component StorageView inherits Rectangle {
                                 mime-icon: f.mime-icon;
                                 uploaded: f.uploaded;
                                 cid: f.cid;
-                                copy-link(text) => { root.copy-share-link(text); }
+                                encrypted: f.encrypted;
+                                copy-link(text) => { root.copy-share-link(text, f.encrypted); }
                                 remove => { root.remove-file(f.cid); }
                             }
                         }

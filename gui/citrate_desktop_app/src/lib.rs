@@ -27,6 +27,19 @@ const SECRET_MARKER_PREFIX: &str = "keyring:v1:";
 const SECRET_KIND_AI: &str = "ai";
 const SECRET_KIND_INTEGRATION: &str = "integration";
 
+/// Canonical local-node JSON-RPC port (platform-wide). This is what the
+/// chain binds, what rpc.citrate.ai proxies to, and what the SDKs/wallet/
+/// CLI default to. The old co-resident-offset default was a latent
+/// dead-endpoint bug — nothing ever served it (the embedded node is
+/// in-process, no loopback RPC) — and is RETIRED as a client default.
+/// See handoffs/RPC_PORT_CANONICALIZATION.md.
+pub const DEFAULT_RPC_PORT: u16 = 8545;
+/// Canonical local-node WebSocket port.
+pub const DEFAULT_WS_PORT: u16 = 8546;
+/// The retired legacy default (the co-resident +10000 offset was wrongly
+/// used as a client default), migrated to `DEFAULT_RPC_PORT` on load.
+const LEGACY_RPC_PORT: u16 = DEFAULT_RPC_PORT + 10_000;
+
 /// Top-level application state shared across all services.
 ///
 /// Constructed once at startup. The UI layer receives an `Arc<AppCore>`
@@ -117,6 +130,17 @@ pub struct AppConfig {
     /// them to the OS credential store and rewrites this map with markers.
     #[serde(default)]
     pub integration_tokens: HashMap<String, String>,
+    /// ENCRYPT-S1 WP-1: encrypt the embedded node's RocksDB at rest
+    /// (AES-256-GCM via `citrate_storage`, key held in the OS keyring).
+    /// Default `true` — this is the citrate-native beta gate. Inspectable
+    /// and toggleable; threaded into `node_service`. Onboarding / storage
+    /// copy may state "local data encrypted at rest" ONLY when this is true.
+    #[serde(default = "default_true")]
+    pub encryption_at_rest: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl fmt::Debug for AppConfig {
@@ -140,6 +164,7 @@ impl fmt::Debug for AppConfig {
                 "integration_tokens",
                 &redacted_secret_keys(&self.integration_tokens),
             )
+            .field("encryption_at_rest", &self.encryption_at_rest)
             .finish()
     }
 }
@@ -160,7 +185,7 @@ impl Default for AppConfig {
             network: "testnet".to_string(),
             chain_id: 40204,
             data_dir: data_dir_for_network("testnet"),
-            rpc_port: 18545,
+            rpc_port: DEFAULT_RPC_PORT,
             p2p_port: 30304,
             mcp_port: services::mcp_host::DEFAULT_MCP_PORT,
             // Current testnet-beta bootnodes (mirror of citrate-chain
@@ -181,6 +206,7 @@ impl Default for AppConfig {
             auto_journal: false,
             on_chain_anchoring: false,
             integration_tokens: HashMap::new(),
+            encryption_at_rest: true,
         }
     }
 }
@@ -275,6 +301,21 @@ impl AppConfig {
                                 needs_save = true;
                             }
 
+                            // RPC port canonicalization: the retired legacy default
+                            // was a dead port (nothing ever served it). Installed
+                            // configs carrying it are migrated to the canonical
+                            // DEFAULT_RPC_PORT so devnet users stop hitting a dead
+                            // endpoint. See handoffs/RPC_PORT_CANONICALIZATION.md.
+                            if config.rpc_port == LEGACY_RPC_PORT {
+                                tracing::warn!(
+                                    "Config migration: rpc_port {} is the retired dead-port \
+                                     default; rewriting to canonical {}.",
+                                    LEGACY_RPC_PORT, DEFAULT_RPC_PORT
+                                );
+                                config.rpc_port = DEFAULT_RPC_PORT;
+                                needs_save = true;
+                            }
+
                             match config.migrate_plaintext_secrets(secret_store) {
                                 Ok(changed) => needs_save |= changed,
                                 Err(e) => {
@@ -303,6 +344,20 @@ impl AppConfig {
             }
         }
         Self::default()
+    }
+
+    /// Compute the RPC URL the wallet, receipt-polling, and marketplace
+    /// helpers should use for the current environment. Devnet targets the
+    /// GUI's embedded node on `rpc_port` (localhost); anything else targets
+    /// the remote testnet RPC (https://rpc.citrate.ai). Single source of
+    /// truth — prevents the tx-submit vs. receipt-poll port-mismatch bug
+    /// (submit to 8545, poll on a dead port, wonder why receipts never
+    /// arrive). See handoffs/RPC_PORT_CANONICALIZATION.md.
+    pub fn active_rpc_url(&self) -> String {
+        match self.network.as_str() {
+            "devnet" => format!("http://127.0.0.1:{}", self.rpc_port),
+            _ => "https://rpc.citrate.ai".to_string(),
+        }
     }
 
     /// Save config to disk.
@@ -486,15 +541,12 @@ impl AppCore {
         // RPC URL — the embedded node DELIBERATELY does not serve HTTP JSON-RPC
         // (only P2P sync), so a local-port URL is wrong by design for every
         // network except an isolated devnet. Testnet/anything-else points at
-        // the public sequencer (https://rpc.citrate.ai), matching the same
-        // network-aware selector used by the GUI's `active_rpc_url` and the
-        // wallet-core default. This fixes the chat/model/block/learning/compute
-        // services that previously failed with "Chat RPC failed: error sending
-        // request for url(…127.0.0.1:18545)".
-        let rpc_url = match loaded.network.as_str() {
-            "devnet" => format!("http://127.0.0.1:{}", loaded.rpc_port),
-            _ => "https://rpc.citrate.ai".to_string(),
-        };
+        // the public sequencer (https://rpc.citrate.ai), via the single
+        // `AppConfig::active_rpc_url` selector (also used by the wallet-core
+        // default). This fixes the chat/model/block/learning/compute services
+        // that previously failed with "Chat RPC failed: error sending request
+        // for url(…dead-port)".
+        let rpc_url = loaded.active_rpc_url();
 
         // First-run bundled-model seeding. The installer ships
         // gemma-4-E4B-it-Q4_K_M.gguf inside the .app/.deb/.msi (see
@@ -779,7 +831,7 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.chain_id, 40204);
         assert_eq!(config.network, "testnet");
-        assert_eq!(config.rpc_port, 18545);
+        assert_eq!(config.rpc_port, DEFAULT_RPC_PORT);
         assert_eq!(config.p2p_port, 30304);
         assert!(!config.bootnodes.is_empty());
         assert_eq!(config.theme, "dark");
@@ -808,7 +860,7 @@ mod tests {
 
     #[test]
     fn test_config_deserialization() {
-        let json = r#"{"network":"testnet","chain_id":40204,"data_dir":"/tmp/test","rpc_port":18545,"p2p_port":30304,"bootnodes":[],"theme":"light"}"#;
+        let json = r#"{"network":"testnet","chain_id":40204,"data_dir":"/tmp/test","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"light"}"#;
         let config: AppConfig = serde_json::from_str(json).expect("deserialization succeeded");
         assert_eq!(config.network, "testnet");
         assert_eq!(config.theme, "light");
@@ -892,7 +944,7 @@ mod tests {
   "network": "testnet",
   "chain_id": 40204,
   "data_dir": "/tmp/test",
-  "rpc_port": 18545,
+  "rpc_port": 8545,
   "p2p_port": 30304,
   "mcp_port": 9600,
   "bootnodes": [],
@@ -928,6 +980,46 @@ mod tests {
         assert_eq!(
             migrated.get_integration_token_with_secret_store("github", &store),
             Some("ghp_legacy_secret".to_string())
+        );
+    }
+
+    #[test]
+    fn test_load_migrates_legacy_rpc_port_to_canonical() {
+        // An installed config carrying the retired dead-port default must
+        // be migrated to the canonical port on load AND persisted.
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("config.json");
+        let legacy = format!(
+            r#"{{"network":"devnet","chain_id":40204,"data_dir":"/tmp/test","rpc_port":{},"p2p_port":30304,"bootnodes":[],"theme":"dark"}}"#,
+            LEGACY_RPC_PORT
+        );
+        std::fs::write(&path, &legacy).expect("write legacy config");
+        let store = TestSecretStore::default();
+
+        let migrated = AppConfig::load_from_path_with_secret_store(&path, &store);
+        assert_eq!(migrated.rpc_port, DEFAULT_RPC_PORT, "legacy dead port migrated in memory");
+
+        let raw = std::fs::read_to_string(&path).expect("read migrated config");
+        assert!(
+            raw.contains(&DEFAULT_RPC_PORT.to_string()),
+            "canonical port persisted to disk"
+        );
+        assert!(
+            !raw.contains(&LEGACY_RPC_PORT.to_string()),
+            "legacy dead port removed from disk"
+        );
+    }
+
+    #[test]
+    fn test_active_rpc_url_selector() {
+        let mut cfg = AppConfig::default();
+        // Testnet (and anything non-devnet) → public sequencer.
+        assert_eq!(cfg.active_rpc_url(), "https://rpc.citrate.ai");
+        // Devnet → the embedded node on the configured local port.
+        cfg.network = "devnet".to_string();
+        assert_eq!(
+            cfg.active_rpc_url(),
+            format!("http://127.0.0.1:{}", DEFAULT_RPC_PORT)
         );
     }
 

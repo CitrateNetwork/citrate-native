@@ -33,7 +33,7 @@ use citrate_agent_core::mcp_server::McpServer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -48,6 +48,160 @@ pub const DEFAULT_MCP_PORT: u16 = 9600;
 /// a token leaks but operators don't notice.
 /// RM-B1 / WP-E1.1 (audit GUI-C-04).
 const DEFAULT_AUTH_TOKEN_TTL_SECS: u64 = 30 * 24 * 3600;
+
+// ── ENCRYPT-S1 WP-4: token vault (inventory A6) ─────────────────────
+//
+// `mcp_tokens.json` used to be plaintext JSON — bearer tokens at rest,
+// protected only by 0600. It is now AES-256-GCM ciphertext under a
+// 32-byte master key held in the OS keyring (macOS Keychain / Windows
+// Credential Manager / Linux native keystore), mirroring the
+// citrate-comms `keyvault` pattern. On-disk layout:
+//
+//   MAGIC(8) ‖ nonce(12) ‖ AES-256-GCM ciphertext(JSON token array)
+//
+// A legacy plaintext file found at load time is migrated in place:
+// parsed, best-effort shredded (overwritten with zeros + fsync +
+// removed), and rewritten sealed. If no keyring is available
+// (headless), tokens are held in memory only for the session — never
+// written back as plaintext.
+
+/// Keyring service — matches `SystemSecretStore` in `ports/mod.rs` so
+/// all of the desktop app's secrets live under one service name.
+pub const TOKEN_VAULT_KEYRING_SERVICE: &str = "citrate-desktop";
+/// Keyring account for the token-vault master key.
+pub const TOKEN_VAULT_KEYRING_ACCOUNT: &str = "mcp-token-vault-master-key";
+/// File-format magic for the sealed tokens file (version 1).
+const TOKEN_VAULT_MAGIC: &[u8; 8] = b"CITMCPV1";
+/// AES-GCM nonce length.
+const TOKEN_VAULT_NONCE_LEN: usize = 12;
+
+/// Load the token-vault master key from the OS keyring, generating and
+/// storing one on first run (citrate-comms keyvault shape).
+///
+/// The key is cached process-wide after the first successful load: the
+/// keyring is hit once per process, and every `McpHostService` in the
+/// process seals/opens with the same key. (Failures are NOT cached, so
+/// a transient keyring hiccup doesn't stick for the process lifetime.)
+fn load_or_create_master_key() -> Result<[u8; 32], String> {
+    static CACHED: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    if let Some(key) = CACHED.get() {
+        return Ok(*key);
+    }
+    let key = load_master_key_from_keyring()?;
+    Ok(*CACHED.get_or_init(|| key))
+}
+
+/// The uncached keyring get-or-create.
+fn load_master_key_from_keyring() -> Result<[u8; 32], String> {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        let entry = keyring::Entry::new(TOKEN_VAULT_KEYRING_SERVICE, TOKEN_VAULT_KEYRING_ACCOUNT)
+            .map_err(|e| format!("keyring entry: {e}"))?;
+        match entry.get_secret() {
+            Ok(bytes) => bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| "stored master key is not 32 bytes".to_string()),
+            Err(keyring::Error::NoEntry) => {
+                let mut key = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut key);
+                entry
+                    .set_secret(&key)
+                    .map_err(|e| format!("keyring write: {e}"))?;
+                Ok(key)
+            }
+            Err(e) => Err(format!("keyring read: {e}")),
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Err("OS keyring unsupported on this platform".to_string())
+    }
+}
+
+/// Seal a plaintext token-array JSON blob: MAGIC ‖ nonce ‖ ciphertext.
+fn seal_token_blob(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::{Aead, AeadCore, OsRng};
+    use aes_gcm::{Aes256Gcm, KeyInit};
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("token vault encrypt: {e}"))?;
+    let mut out = Vec::with_capacity(TOKEN_VAULT_MAGIC.len() + nonce.len() + ciphertext.len());
+    out.extend_from_slice(TOKEN_VAULT_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Open a sealed tokens file back to the plaintext JSON blob.
+fn open_token_blob(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+    let body = bytes
+        .strip_prefix(TOKEN_VAULT_MAGIC.as_slice())
+        .ok_or_else(|| "not a sealed token vault (bad magic)".to_string())?;
+    if body.len() < TOKEN_VAULT_NONCE_LEN {
+        return Err("sealed token vault truncated".to_string());
+    }
+    let (nonce, ciphertext) = body.split_at(TOKEN_VAULT_NONCE_LEN);
+    let cipher = Aes256Gcm::new(key.into());
+    cipher
+        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .map_err(|e| format!("token vault decrypt: {e}"))
+}
+
+/// Parse the (plaintext) JSON token array into the in-memory map.
+/// `None` = malformed (as opposed to a valid-but-empty array).
+fn parse_token_entries(bytes: &[u8]) -> Option<HashMap<String, AuthToken>> {
+    let entries: Vec<AuthToken> = serde_json::from_slice(bytes).ok()?;
+    Some(entries.into_iter().map(|t| (t.token.clone(), t)).collect())
+}
+
+/// Best-effort shred: overwrite the plaintext bytes with zeros, fsync,
+/// then unlink. (On CoW/journaled filesystems the old extents may
+/// survive — this is hygiene, not a guarantee; the real fix is that new
+/// writes are ciphertext-only.)
+fn shred_plaintext_file(path: &Path, len: usize) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.write_all(&vec![0u8; len]);
+        let _ = f.sync_all();
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Serialize + seal + write the tokens file (0600 on Unix).
+fn write_sealed_tokens(path: &Path, key: &[u8; 32], tokens: &HashMap<String, AuthToken>) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let entries: Vec<&AuthToken> = tokens.values().collect();
+    let plaintext = match serde_json::to_vec(&entries) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("MCP host: token serialization failed: {}", e);
+            return;
+        }
+    };
+    let sealed = match seal_token_blob(key, &plaintext) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("MCP host: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(path, &sealed) {
+        tracing::warn!("MCP host: failed to persist tokens: {}", e);
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
 
 /// A pre-issued authentication token bound to a maximum policy.
 /// MCP clients pass `auth_token` at `initialize`; the server resolves
@@ -124,8 +278,12 @@ pub struct McpHostService {
     /// RM-B1 / WP-E1.1 (audit GUI-C-04).
     tokens: RwLock<HashMap<String, AuthToken>>,
     /// On-disk path for token persistence. `None` means in-memory
-    /// only (used in tests).
+    /// only (tests, or headless hosts without an OS keyring).
     tokens_file: Option<PathBuf>,
+    /// ENCRYPT-S1 WP-4: AES-256-GCM master key from the OS keyring.
+    /// `None` means no keyring → no on-disk persistence (in-memory
+    /// tokens only; we never fall back to writing plaintext).
+    master_key: Option<[u8; 32]>,
     /// GUI_NATIVE-2026-05-31-005 (WP 6.4b): grant ownership — which
     /// auth_token (if any) minted each grant. `session/end` for a
     /// token-minted grant requires the SAME token; `None` (tokenless
@@ -142,6 +300,7 @@ impl McpHostService {
             listening: RwLock::new(false),
             tokens: RwLock::new(HashMap::new()),
             tokens_file: None,
+            master_key: None,
             grant_owners: RwLock::new(HashMap::new()),
         }
     }
@@ -151,15 +310,43 @@ impl McpHostService {
     /// permissions on Unix to keep it out of reach of other local
     /// users.
     /// RM-B1 / WP-E1.2 (audit GUI-C-04).
+    ///
+    /// ENCRYPT-S1 WP-4: the file is AES-256-GCM ciphertext under an
+    /// OS-keyring master key. A legacy plaintext file is migrated
+    /// (sealed + plaintext shredded) on first load. Without a usable
+    /// keyring, tokens stay in-memory for the session (with a WARN) —
+    /// plaintext is never written back.
     pub fn with_token_storage(mcp: Arc<McpServer>, data_dir: PathBuf) -> Self {
         let tokens_file = data_dir.join("mcp_tokens.json");
-        let initial = load_tokens_from_disk(&tokens_file);
+        let (initial, tokens_file, master_key) = match load_or_create_master_key() {
+            Ok(key) => {
+                let initial = load_tokens_from_disk(&tokens_file, &key);
+                (initial, Some(tokens_file), Some(key))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "MCP host: OS keyring unavailable ({e}); auth tokens will be held \
+                     in memory only for this session and will NOT persist across restarts"
+                );
+                // Best-effort continuity: surface tokens from a legacy
+                // plaintext file so existing clients keep working, but
+                // leave the file untouched (we cannot re-seal it) and
+                // never persist back to it.
+                let initial = std::fs::read(&tokens_file)
+                    .ok()
+                    .filter(|b| !b.starts_with(TOKEN_VAULT_MAGIC))
+                    .and_then(|b| parse_token_entries(&b))
+                    .unwrap_or_default();
+                (initial, None, None)
+            }
+        };
         Self {
             mcp,
             endpoint: RwLock::new(String::new()),
             listening: RwLock::new(false),
             tokens: RwLock::new(initial),
-            tokens_file: Some(tokens_file),
+            tokens_file,
+            master_key,
             grant_owners: RwLock::new(HashMap::new()),
         }
     }
@@ -248,31 +435,14 @@ impl McpHostService {
         Some(record)
     }
 
+    /// ENCRYPT-S1 WP-4: persistence is ciphertext-only. No master key
+    /// (headless/no-keyring) → in-memory only, nothing touches disk.
     async fn persist_tokens(&self, tokens: &HashMap<String, AuthToken>) {
-        let Some(path) = self.tokens_file.as_ref() else {
+        let (Some(path), Some(key)) = (self.tokens_file.as_ref(), self.master_key.as_ref())
+        else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let entries: Vec<&AuthToken> = tokens.values().collect();
-        match serde_json::to_vec_pretty(&entries) {
-            Ok(bytes) => {
-                if let Err(e) = std::fs::write(path, &bytes) {
-                    tracing::warn!("MCP host: failed to persist tokens: {}", e);
-                    return;
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        path,
-                        std::fs::Permissions::from_mode(0o600),
-                    );
-                }
-            }
-            Err(e) => tracing::warn!("MCP host: token serialization failed: {}", e),
-        }
+        write_sealed_tokens(path, key, tokens);
     }
 
     /// Start the HTTP listener on 127.0.0.1:port. Spawns the
@@ -351,18 +521,41 @@ impl McpHostService {
 
 /// Load tokens from disk, returning an empty map if the file is
 /// missing or malformed (a corrupt file should not brick the host).
-fn load_tokens_from_disk(path: &PathBuf) -> HashMap<String, AuthToken> {
+///
+/// ENCRYPT-S1 WP-4: understands both formats —
+/// - sealed vault (magic prefix): decrypt with the keyring master key;
+/// - legacy plaintext JSON: parse, then MIGRATE in place — the
+///   plaintext is shredded (zero-overwrite + fsync + unlink) and the
+///   same path is rewritten as ciphertext.
+fn load_tokens_from_disk(path: &PathBuf, master_key: &[u8; 32]) -> HashMap<String, AuthToken> {
     let Ok(bytes) = std::fs::read(path) else {
         return HashMap::new();
     };
-    let entries: Vec<AuthToken> = match serde_json::from_slice(&bytes) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("MCP host: tokens file corrupt, ignoring: {}", e);
-            return HashMap::new();
+    if bytes.starts_with(TOKEN_VAULT_MAGIC) {
+        match open_token_blob(master_key, &bytes).and_then(|pt| {
+            parse_token_entries(&pt).ok_or_else(|| "sealed payload not a token array".into())
+        }) {
+            Ok(map) => map,
+            Err(e) => {
+                tracing::warn!("MCP host: sealed tokens file unreadable, ignoring: {}", e);
+                HashMap::new()
+            }
         }
-    };
-    entries.into_iter().map(|t| (t.token.clone(), t)).collect()
+    } else {
+        // Legacy plaintext file (pre-ENCRYPT-S1).
+        let Some(map) = parse_token_entries(&bytes) else {
+            tracing::warn!("MCP host: tokens file corrupt, ignoring");
+            return HashMap::new();
+        };
+        tracing::warn!(
+            "MCP host: legacy plaintext tokens file found at {} — migrating to \
+             keyring-sealed ciphertext and shredding the plaintext",
+            path.display()
+        );
+        shred_plaintext_file(path, bytes.len());
+        write_sealed_tokens(path, master_key, &map);
+        map
+    }
 }
 
 /// Pick the more restrictive of two policies. ReadOnly < Guided <
@@ -656,6 +849,23 @@ mod tests {
         Arc::new(McpHostService::new(mcp))
     }
 
+    /// ENCRYPT-S1 WP-4: route all keyring access in this test binary to
+    /// the in-memory mock keystore — tests must never touch the real OS
+    /// keychain. Process-global, idempotent via Once.
+    fn use_mock_keyring() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        });
+    }
+
+    fn storage_host(dir: &std::path::Path) -> Arc<McpHostService> {
+        use_mock_keyring();
+        let registry = Arc::new(ToolRegistry::new());
+        let mcp = Arc::new(McpServer::new(registry));
+        Arc::new(McpHostService::with_token_storage(mcp, dir.to_path_buf()))
+    }
+
     #[tokio::test]
     async fn status_before_start() {
         let host = test_host();
@@ -894,6 +1104,7 @@ mod tests {
     /// File-backed token storage round-trips through restart.
     #[tokio::test]
     async fn test_guic04_token_storage_persists_across_restart() {
+        use_mock_keyring();
         let tmp = tempfile::tempdir().expect("tempdir");
         let registry = Arc::new(ToolRegistry::new());
         let mcp = Arc::new(McpServer::new(registry.clone()));
@@ -928,10 +1139,7 @@ mod tests {
     async fn test_guic04_token_file_is_0600() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().expect("tempdir");
-        let registry = Arc::new(ToolRegistry::new());
-        let mcp = Arc::new(McpServer::new(registry));
-        let host =
-            Arc::new(McpHostService::with_token_storage(mcp, tmp.path().to_path_buf()));
+        let host = storage_host(tmp.path());
         host.create_token("perm-check", PolicyProfile::ReadOnly, None)
             .await;
         let path = tmp.path().join("mcp_tokens.json");
@@ -941,5 +1149,103 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600, "tokens file must be 0600");
+    }
+
+    // ── ENCRYPT-S1 WP-4 (inventory A6): token vault ─────────────────
+
+    /// Probe test (WP-4 AC): after a save, the on-disk file carries NO
+    /// plaintext token bytes — not the secret, not the label — and is
+    /// a sealed vault (magic prefix).
+    #[tokio::test]
+    async fn test_encrypt_s1_token_file_contains_no_plaintext_token_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let host = storage_host(tmp.path());
+        let token = host
+            .create_token("probe-label-hermes", PolicyProfile::Operator, None)
+            .await;
+
+        let path = tmp.path().join("mcp_tokens.json");
+        let raw = std::fs::read(&path).expect("tokens file exists");
+        assert!(
+            raw.starts_with(TOKEN_VAULT_MAGIC),
+            "tokens file must be a sealed vault"
+        );
+        let window_contains = |needle: &[u8]| raw.windows(needle.len()).any(|w| w == needle);
+        assert!(
+            !window_contains(token.token.as_bytes()),
+            "bearer token bytes must not appear on disk"
+        );
+        // Even a prefix of the secret must not leak in the clear.
+        assert!(
+            !window_contains(token.token[..16].as_bytes()),
+            "token prefix must not appear on disk"
+        );
+        assert!(
+            !window_contains(b"probe-label-hermes"),
+            "token label must not appear on disk"
+        );
+        assert!(
+            !window_contains(b"max_policy"),
+            "JSON structure must not appear on disk"
+        );
+    }
+
+    /// Legacy migration (WP-4 AC): a pre-ENCRYPT-S1 plaintext
+    /// mcp_tokens.json is loaded, re-sealed in place, and the plaintext
+    /// is gone; the token still validates after ANOTHER restart (i.e.
+    /// the sealed file round-trips).
+    #[tokio::test]
+    async fn test_encrypt_s1_legacy_plaintext_file_migrates_to_ciphertext() {
+        use_mock_keyring();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("mcp_tokens.json");
+
+        // Fabricate the legacy plaintext format (a JSON array of AuthToken).
+        let secret = "ab".repeat(32);
+        let legacy = AuthToken {
+            token: secret.clone(),
+            max_policy: PolicyProfile::Guided,
+            created_at: 1,
+            expires_at: u64::MAX,
+            label: "legacy-plaintext".to_string(),
+            revoked: false,
+        };
+        std::fs::write(&path, serde_json::to_vec_pretty(&vec![&legacy]).unwrap()).unwrap();
+
+        // First load performs the migration.
+        let host = storage_host(tmp.path());
+        let summaries = host.list_tokens().await;
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].label, "legacy-plaintext");
+
+        let raw = std::fs::read(&path).expect("file still exists (sealed)");
+        assert!(raw.starts_with(TOKEN_VAULT_MAGIC), "file must now be sealed");
+        assert!(
+            !raw.windows(secret.len()).any(|w| w == secret.as_bytes()),
+            "plaintext token must be shredded from disk"
+        );
+
+        // The migrated token survives a second restart via the sealed file.
+        let host2 = storage_host(tmp.path());
+        let params = serde_json::json!({ "auth_token": secret, "policy": "Guided" });
+        let resp = handle_initialize(&host2, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_none(), "migrated token must still validate");
+    }
+
+    /// Vault primitives: seal/open round-trip, and tampering (or the
+    /// wrong key) fails closed.
+    #[test]
+    fn test_encrypt_s1_vault_seal_open_roundtrip_and_tamper() {
+        let key = [7u8; 32];
+        let sealed = seal_token_blob(&key, b"[]").expect("seal");
+        assert!(sealed.starts_with(TOKEN_VAULT_MAGIC));
+        assert_eq!(open_token_blob(&key, &sealed).expect("open"), b"[]");
+
+        let mut tampered = sealed.clone();
+        *tampered.last_mut().unwrap() ^= 0x01;
+        assert!(open_token_blob(&key, &tampered).is_err(), "tamper must fail");
+
+        let wrong = [8u8; 32];
+        assert!(open_token_blob(&wrong, &sealed).is_err(), "wrong key must fail");
     }
 }
