@@ -1002,22 +1002,42 @@ mod tests {
         assert!(decode_bool("0x01").is_none());
     }
 
+    /// Independent re-parse of the vendored canonical table
+    /// (`src/generated/addresses.json`). Tests compare the public
+    /// helpers against THIS, never against hardcoded address literals —
+    /// literals drift across re-rolls (NATIVE-R1-S2 WP-A4: the previous
+    /// `0xf62ab4…5283` ComputeMarketplace pin had NO code on chain
+    /// 40204, while the book's `0xd7a20b…d599` did — verified via
+    /// eth_getCode on rpc.citrate.ai, 2026-07-04). On-chain validity of
+    /// the book itself is covered by `tests/live_addresses.rs`.
+    fn book_address(name: &str) -> String {
+        let v: serde_json::Value = serde_json::from_str(ADDRESS_TABLE_JSON)
+            .expect("vendored src/generated/addresses.json parses");
+        for section in ["contracts", "aaStack"] {
+            if let Some(addr) = v[section].get(name).and_then(|a| a.as_str()) {
+                return addr.to_string();
+            }
+        }
+        panic!(
+            "{name:?} not found in src/generated/addresses.json \
+             (stale table? run `bash scripts/sync-addresses.sh`)"
+        );
+    }
+
     #[test]
     fn known_contract_returns_listed_addresses() {
-        // Spot-check a few well-known names.
-        // WP 6.4b 2026-06-11: pins re-verified against the LIVE chain
-        // (eth_getCode via rpc.citrate.ai returns bytecode at these
-        // addresses; the previous pins — e.g. ComputeMarketplace
-        // 0xc12dbc…373c — return 0x, i.e. no contract). The vendored
-        // generated/addresses.json is the source; citrate-chain's
+        // Spot-check well-known names resolve to the book's entries.
+        // WP-A4 2026-07-04: no literals — the vendored
+        // generated/addresses.json is the single source; citrate-chain's
         // DEPLOYED_ADDRESSES.md still carries the stale pre-reroll set
         // and needs its own reconcile (flagged to the chain repo).
-        assert_eq!(known_contract(40204, "ModelRegistry"),
-            Some("0xf64636d56ec9e0c406149b34ea9c5c5d80b342c0"));
-        assert_eq!(known_contract(40204, "ComputeMarketplace"),
-            Some("0xf62ab4903f22c149be3d29501cebfe6761ab5283"));
-        assert_eq!(known_contract(40204, "LearningPool"),
-            Some("0xfc514b826daee16c590f86ad83370f4fb8a1d564"));
+        for name in ["ModelRegistry", "ComputeMarketplace", "LearningPool"] {
+            assert_eq!(
+                known_contract(40204, name),
+                Some(book_address(name).as_str()),
+                "known_contract(40204, {name:?}) diverged from the vendored book"
+            );
+        }
         // Unknown name returns None
         assert!(known_contract(40204, "NotARealContract").is_none());
         // Wrong chain returns None
@@ -1192,40 +1212,42 @@ mod tests {
 
     // ── Canonical address-book tripwire ──────────────────────────────
     //
-    // The address book in this file is a hand-maintained mirror of
-    // `citrate-chain/contracts/DEPLOYED_ADDRESSES.md` (chain 40204).
-    // A prior reroll left it systematically mis-mapped — names pointed
-    // at the *next* contract's address — which silently routed on-chain
-    // calls (incl. provider registration via "List on marketplace") to
-    // the wrong/stale contracts. These tests pin the compute-critical
-    // names to their canonical addresses so any future divergence
-    // between this map and DEPLOYED_ADDRESSES.md fails CI instead of
-    // shipping a wrong-contract footgun.
+    // A prior reroll left a hand-maintained address map systematically
+    // mis-mapped — names pointed at the *next* contract's address —
+    // which silently routed on-chain calls (incl. provider registration
+    // via "List on marketplace") to the wrong/stale contracts. And a
+    // later drift (WP-A4) left test literals pinning addresses that had
+    // NO code on-chain. The rule now: `src/generated/addresses.json` is
+    // the ONLY place a contract address may be written. These tests
+    // assert (a) every public helper faithfully exposes the book and
+    // (b) no 0x-40-hex literal anywhere in `src/**/*.rs` contradicts
+    // it. On-chain validity of the book is enforced by
+    // `tests/live_addresses.rs` (eth_getCode over every entry).
 
     #[test]
     fn canonical_address_book_compute_critical() {
-        // Each pair is (name, canonical address from DEPLOYED_ADDRESSES.md).
-        // WP 6.4b 2026-06-11: re-pinned to generated/addresses.json after
-        // verifying ComputeMarketplace on-chain (eth_getCode: bytecode at
-        // 0xf62ab4…5283, empty at the old 0xc12dbc…373c pin).
-        let canonical: &[(&str, &str)] = &[
-            ("ComputeMarketplace",     "0xf62ab4903f22c149be3d29501cebfe6761ab5283"),
-            ("ComputePool",            "0xeed18c3c32389affec78d5e233e56d5e6a65baf1"),
-            ("ComputeVerifier",        "0xd1b723174d200e6eb06482a12c86fc693bea6c99"),
-            ("HeartbeatMonitor",       "0xe9eaac272844f342266862bbefc6d117a227ad9b"),
-            ("ComputePricingOracle",   "0xdcebd5ec209161810c85f3d97e194f0f0d02b02d"),
-            ("ContributionAccounting", "0xcdd2477387279c7d44a1053f44db5dac0fd8faef"),
-            ("BulkComputeGateway",     "0xf96584f9019619a827d170d5fd233fef391cc8ab"),
-            ("ModelRegistry",          "0xf64636d56ec9e0c406149b34ea9c5c5d80b342c0"),
-            ("WrappedSALT",            "0x61bc737f67b430fe2567630823694032a049253e"),
-            ("InferenceRouter",        "0xcdca7e85598485a562606cf8beec757dd265477f"),
-        ];
-        for (name, addr) in canonical {
+        // Compute-critical names the GUI drives daily: each must be
+        // present in the vendored book and exposed verbatim by
+        // `known_contract`. No literals — see WP-A4 note on
+        // `book_address` (the old 0xf62ab4…5283 / 0xd1b723…6c99 /
+        // 0x61bc73…253e pins were empty on-chain).
+        for name in [
+            "ComputeMarketplace",
+            "ComputePool",
+            "ComputeVerifier",
+            "HeartbeatMonitor",
+            "ComputePricingOracle",
+            "ContributionAccounting",
+            "BulkComputeGateway",
+            "ModelRegistry",
+            "WrappedSALT",
+            "InferenceRouter",
+        ] {
             assert_eq!(
                 known_contract(40204, name),
-                Some(*addr),
-                "known_contract(40204, {:?}) diverged from DEPLOYED_ADDRESSES.md",
-                name
+                Some(book_address(name).as_str()),
+                "known_contract(40204, {name:?}) diverged from \
+                 src/generated/addresses.json"
             );
         }
     }
@@ -1233,15 +1255,126 @@ mod tests {
     #[test]
     fn compute_marketplace_helper_is_canonical() {
         // The dedicated helper drives the "List on marketplace" /
-        // registerProvider path. It MUST equal the canonical
-        // ComputeMarketplace address — and the per-name map entry.
+        // registerProvider path. It MUST equal the canonical book's
+        // ComputeMarketplace entry — and the per-name map entry.
         assert_eq!(
             compute_marketplace_address(40204),
-            Some("0xf62ab4903f22c149be3d29501cebfe6761ab5283")
+            Some(book_address("ComputeMarketplace").as_str())
         );
         assert_eq!(
             compute_marketplace_address(40204),
             known_contract(40204, "ComputeMarketplace")
+        );
+    }
+
+    #[test]
+    fn no_source_address_literal_contradicts_the_book() {
+        // WP-A4 tripwire: scan every `src/**/*.rs` file for 0x-40-hex
+        // literals. Each one must either be a value present in the
+        // vendored canonical book (any section — contracts, aaStack,
+        // precompiles, genesis, deployer) or sit on the explicit
+        // fixture allowlist below. A contract pin that drifts from the
+        // book is neither, and fails here instead of shipping a
+        // wrong-contract footgun.
+        const ALLOWED_FIXTURES: &[&str] = &[
+            // ABI-encoding fixtures (marketplace_client.rs tests)
+            "0x1234567890abcdef1234567890abcdef12345678",
+            "0xabababababababababababababababababababab",
+            "0x1234567890123456789012345678901234567890",
+            // Known-stale sentinel asserted ABSENT in
+            // `stale_compute_marketplace_address_is_gone`
+            "0x8951ae72e5479cae28ef7bb3caa4207d5719e24b",
+            // Visual-test wallet fixture (ui_visual_tests.rs)
+            "0xaceaa7d00c024d32e6e0a07094ceb1a7706786d1",
+        ];
+
+        // Every 40-hex string value anywhere in the book, lowercased.
+        fn collect_book_values(v: &serde_json::Value, out: &mut Vec<String>) {
+            match v {
+                serde_json::Value::String(s) => {
+                    if is_addr_literal(s) {
+                        out.push(s.to_ascii_lowercase());
+                    }
+                }
+                serde_json::Value::Object(m) => {
+                    m.values().for_each(|v| collect_book_values(v, out))
+                }
+                serde_json::Value::Array(a) => {
+                    a.iter().for_each(|v| collect_book_values(v, out))
+                }
+                _ => {}
+            }
+        }
+        fn is_addr_literal(s: &str) -> bool {
+            s.len() == 42
+                && s.starts_with("0x")
+                && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
+        }
+        // Extract exactly-40-hex 0x literals (longer hex runs — tx
+        // hashes, topics, bytes32 — are skipped).
+        fn extract_addr_literals(text: &str) -> Vec<String> {
+            let bytes = text.as_bytes();
+            let mut found = Vec::new();
+            let mut i = 0;
+            while i + 1 < bytes.len() {
+                if bytes[i] == b'0' && bytes[i + 1] == b'x' {
+                    let start = i + 2;
+                    let mut end = start;
+                    while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
+                        end += 1;
+                    }
+                    if end - start == 40 {
+                        found.push(text[i..end].to_ascii_lowercase());
+                    }
+                    i = end;
+                } else {
+                    i += 1;
+                }
+            }
+            found
+        }
+        fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("src dir readable") {
+                let path = entry.expect("dir entry readable").path();
+                if path.is_dir() {
+                    rs_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let book: serde_json::Value = serde_json::from_str(ADDRESS_TABLE_JSON)
+            .expect("vendored src/generated/addresses.json parses");
+        let mut book_values = Vec::new();
+        collect_book_values(&book, &mut book_values);
+        assert!(!book_values.is_empty(), "book has no addresses at all?");
+
+        let src_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rs_files(&src_root, &mut files);
+        assert!(!files.is_empty(), "no .rs files under {src_root:?}?");
+
+        let mut offenders = Vec::new();
+        for path in &files {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+            for lit in extract_addr_literals(&text) {
+                if !book_values.contains(&lit)
+                    && !ALLOWED_FIXTURES.contains(&lit.as_str())
+                {
+                    offenders.push(format!("{} in {}", lit, path.display()));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "address literal(s) in src/ that are neither in \
+             src/generated/addresses.json nor allowlisted fixtures — \
+             contract addresses must come from the book (run `bash \
+             scripts/sync-addresses.sh` if the book is stale, or extend \
+             ALLOWED_FIXTURES for a genuine test fixture): {offenders:#?}"
         );
     }
 
