@@ -21,3 +21,8 @@ slint = { version = "1.9", default-features = false, features = ["renderer-softw
 
 [build-dependencies]
 slint-build = "1.9"
+
+[dev-dependencies]
+# Used by tests/citrate_loader_slint_compiles.rs to validate the loader
+# component's .slint (not yet in ui/lib.slint's import graph) at test time.
+slint-build = "1.9"

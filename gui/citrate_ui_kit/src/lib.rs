@@ -16,3 +16,5 @@
 //! pattern (2). The two patterns can coexist within one consumer crate.
 
 slint::include_modules!();
+
+pub mod loader;
