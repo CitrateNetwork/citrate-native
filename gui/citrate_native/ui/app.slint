@@ -95,6 +95,9 @@ export component App inherits Window {
     in property <bool> storage-uploading: false;
     in property <string> storage-upload-status: "";
     in-out property <bool> storage-drag-hovering: false;
+    // ENCRYPT-S1 WP-9a: encrypt-before-add toggle state, read by the
+    // Rust upload handler at click time. Default ON (private-first).
+    in-out property <bool> storage-encrypt-uploads: true;
 
     // DAG Explorer detail state
     in-out property <bool> dag-show-detail: false;
@@ -350,7 +353,7 @@ export component App inherits Window {
     callback storage-stop-daemon;
     callback storage-upload-file;
     callback storage-remove-file(string);       // P960-C: unpin + drop from files.json by CID
-    callback storage-copy-share-link(string);   // P960-C: CID → clipboard + toast
+    callback storage-copy-share-link(string, bool); // P960-C: CID → clipboard + toast; bool = encrypted (WP-9a ciphertext warning)
     callback storage-pin-cid(string);
     callback storage-refresh;
 
@@ -896,11 +899,12 @@ export component App inherits Window {
                     uploading: root.storage-uploading;
                     upload-status: root.storage-upload-status;
                     drag-hovering: root.storage-drag-hovering;
+                    encrypt-uploads <=> root.storage-encrypt-uploads;
                     start-daemon => { root.storage-start-daemon(); }
                     stop-daemon => { root.storage-stop-daemon(); }
                     upload-file => { root.storage-upload-file(); }
                     remove-file(cid) => { root.storage-remove-file(cid); }
-                    copy-share-link(cid) => { root.storage-copy-share-link(cid); }
+                    copy-share-link(cid, enc) => { root.storage-copy-share-link(cid, enc); }
                     pin-cid(cid) => { root.storage-pin-cid(cid); }
                     refresh => { root.storage-refresh(); }
                 }
