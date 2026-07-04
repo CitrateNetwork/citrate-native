@@ -32,10 +32,10 @@ component ProviderRow inherits Rectangle {
             }
             Rectangle {
                 width: 36px; height: 20px; border-radius: 10px;
-                background: root.enabled ? Theme.accent : Theme.bg-tertiary;
+                background: root.enabled ? Theme.accent : Theme.border;
                 Rectangle {
                     width: 14px; height: 14px; border-radius: 7px;
-                    background: #ffffff;
+                    background: Theme.knob;
                     x: root.enabled ? 19px : 3px; y: 3px;
                 }
                 TouchArea { clicked => { root.toggled(); } }

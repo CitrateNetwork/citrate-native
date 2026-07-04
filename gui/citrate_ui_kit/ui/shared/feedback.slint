@@ -39,7 +39,7 @@ export component LoadingButton inherits Rectangle {
                   root.state == "error" ? "Failed" :
                   root.state == "working" ? "Working..." :
                   root.label;
-            color: root.state == "success" || root.state == "error" ? #ffffff :
+            color: root.state == "success" || root.state == "error" ? Theme.on-solid :
                    root.state == "working" ? Theme.accent : Theme.text;
             font-size: 12px;
             font-weight: 500;
@@ -73,7 +73,7 @@ export component StatusBadge inherits Rectangle {
 
     Text {
         text: root.text;
-        color: root.variant == "muted" ? Theme.text-muted : #ffffff;
+        color: root.variant == "muted" ? Theme.text-muted : Theme.on-solid;
         font-size: 9px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -108,7 +108,7 @@ export component PrimaryButton inherits Rectangle {
 
     Text {
         text: root.text;
-        color: root.disabled ? Theme.text-muted : #000000;
+        color: root.disabled ? Theme.text-muted : Theme.on-accent;
         font-size: Theme.font-size-md;
         font-weight: Theme.font-weight-semibold;
         horizontal-alignment: center;
@@ -212,9 +212,9 @@ export component PrivacyIndicator inherits HorizontalLayout {
         height: 6px;
         border-radius: 3px;
         background: root.source == "local" ? Theme.success :
-                    root.source == "testnet" ? Theme.periwinkle :
+                    root.source == "testnet" ? Theme.info :
                     root.source == "api" ? Theme.warning :
-                    root.source == "pool" ? Theme.wisteria :
+                    root.source == "pool" ? Theme.accent-deep :
                     Theme.text-muted;
     }
 

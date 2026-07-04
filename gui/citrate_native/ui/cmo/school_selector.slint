@@ -40,7 +40,7 @@ export component SchoolSelector inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: root.open ? 8px : 0px;
-    drop-shadow-color: #00000040;
+    drop-shadow-color: Theme.shadow-color-md;
     animate drop-shadow-blur { duration: Theme.duration-fast; easing: ease-in-out; }
 
     property <bool> hovered: trigger-touch.has-hover;

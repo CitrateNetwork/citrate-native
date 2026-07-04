@@ -62,6 +62,7 @@ export component LearningView inherits Rectangle {
                 Text {
                     text: "Learning Center";
                     color: Theme.text;
+                    font-family: Theme.font-display;
                     font-size: 24px;
                     font-weight: 600;
                     vertical-alignment: center;
@@ -72,15 +73,16 @@ export component LearningView inherits Rectangle {
                     width: 140px; height: 22px;
                     border-radius: 11px;
                     background: root.contract-status == "LearningPool live"
-                        ? Theme.success.darker(0.3)
-                        : #2a1f0a;
+                        ? Theme.success-bg
+                        : Theme.warning-bg;
                     border-width: root.contract-status == "LearningPool live" ? 0 : 1px;
                     border-color: Theme.warning;
                     Text {
                         text: root.contract-status == "LearningPool live"
                             ? "● live · " + root.pool-count + " pools"
                             : "● offline";
-                        color: Theme.text;
+                        color: root.contract-status == "LearningPool live"
+                            ? Theme.success-text : Theme.warning-text;
                         font-size: 10px;
                         font-weight: 600;
                         font-family: Theme.font-mono;
@@ -94,10 +96,9 @@ export component LearningView inherits Rectangle {
             if root.contract-status != "LearningPool live" : Rectangle {
                 height: 48px;
                 border-radius: Theme.radius-md;
-                // Dark amber-tinted bg + yellow border + white text
-                // reads as "warning accent" rather than a yellow wall.
-                // darker(0.4) was too light to read white on.
-                background: #2a1f0a;
+                // Warning-tinted bg + amber border reads as "warning
+                // accent" rather than a yellow wall (mode-aware token).
+                background: Theme.warning-bg;
                 border-width: 1px;
                 border-color: Theme.warning;
                 HorizontalLayout {
@@ -144,7 +145,7 @@ export component LearningView inherits Rectangle {
                         animate background { duration: 120ms; }
                         Text {
                             text: "Create pool";
-                            color: #000000; font-size: 12px; font-weight: 600;
+                            color: Theme.on-accent; font-size: 12px; font-weight: 600;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                         cp-ta := TouchArea {
@@ -386,7 +387,7 @@ export component LearningView inherits Rectangle {
                     animate background { duration: 120ms; }
                     Text {
                         text: "Join pool #" + root.current-pool-id + "  ·  1000 SALT";
-                        color: #000000; font-size: 13px; font-weight: 600;
+                        color: Theme.on-accent; font-size: 13px; font-weight: 600;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
                     join-ta := TouchArea {

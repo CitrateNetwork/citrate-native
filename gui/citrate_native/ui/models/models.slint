@@ -33,7 +33,7 @@ component ModelCard inherits Rectangle {
                     height: 18px;
                     border-radius: 9px;
                     background: Theme.success;
-                    Text { text: "Loaded"; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: "Loaded"; color: Theme.on-solid; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 }
             }
 
@@ -75,7 +75,7 @@ export component ModelsView inherits Rectangle {
         padding-right: Theme.space-lg;
         spacing: Theme.space-lg;
 
-        Text { text: "Models"; color: Theme.text; font-size: 24px; font-weight: 600; }
+        Text { text: "Models"; color: Theme.text; font-family: Theme.font-display; font-size: 24px; font-weight: 600; }
 
         // Local models section
         VerticalLayout {
@@ -186,7 +186,7 @@ export component ModelsView inherits Rectangle {
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
                             background: step-pinned ? Theme.success : Theme.bg-tertiary;
-                            Text { text: "1"; color: step-pinned ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "1"; color: step-pinned ? Theme.on-solid : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         Text { text: "Pin"; color: step-pinned ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
@@ -201,7 +201,7 @@ export component ModelsView inherits Rectangle {
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
                             background: step-submitted ? Theme.warning : Theme.bg-tertiary;
-                            Text { text: "2"; color: step-submitted ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "2"; color: step-submitted ? Theme.on-solid : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         Text { text: "Submit"; color: step-submitted ? Theme.warning : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
@@ -216,7 +216,7 @@ export component ModelsView inherits Rectangle {
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
                             background: step-confirmed ? Theme.info : Theme.bg-tertiary;
-                            Text { text: "3"; color: step-confirmed ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "3"; color: step-confirmed ? Theme.on-solid : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         Text { text: "Confirm"; color: step-confirmed ? Theme.info : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
@@ -231,7 +231,7 @@ export component ModelsView inherits Rectangle {
                         Rectangle {
                             width: 24px; height: 24px; border-radius: 12px;
                             background: step-verified ? Theme.success : Theme.bg-tertiary;
-                            Text { text: "4"; color: step-verified ? #000000 : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "4"; color: step-verified ? Theme.on-solid : Theme.text-muted; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         }
                         Text { text: "Verify"; color: step-verified ? Theme.success : Theme.text-muted; font-size: 10px; horizontal-alignment: center; }
                     }
@@ -265,7 +265,8 @@ export component ModelsView inherits Rectangle {
                         : root.publish-state == "ready" ? "Ready for Inference"
                         : root.publish-state == "failed" ? "Retry Publish"
                         : "Pin Model to IPFS";
-                    color: #000000;
+                    color: root.publish-state == "failed" || root.publish-state == "verified" || root.publish-state == "ready"
+                        ? Theme.on-solid : Theme.on-accent;
                     font-size: 13px;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -359,7 +360,7 @@ export component ModelsView inherits Rectangle {
                 background: hf-btn.pressed ? Theme.accent-hover.darker(0.15) :
                             (hf-btn.has-hover ? Theme.accent-hover : Theme.accent);
                 animate background { duration: Theme.duration-fast; easing: ease-in-out; }
-                Text { text: "Browse HuggingFace"; color: #000000; font-size: Theme.font-size-sm; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Browse HuggingFace"; color: Theme.on-accent; font-size: Theme.font-size-sm; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
                 hf-btn := TouchArea { mouse-cursor: pointer; clicked => { root.browse-huggingface(); } }
             }
 

@@ -48,8 +48,8 @@ component LevelIcon inherits Rectangle {
     border-radius: 6px;
     background:
         kind == "cmo" ? Theme.accent.with-alpha(0.15)
-      : kind == "school" ? Theme.aquamarine.with-alpha(0.15)
-      : kind == "classroom" ? Theme.periwinkle.with-alpha(0.15)
+      : kind == "school" ? Theme.warning.with-alpha(0.15)
+      : kind == "classroom" ? Theme.info.with-alpha(0.15)
       : Theme.bg-tertiary;
     Text {
         text:
@@ -59,8 +59,8 @@ component LevelIcon inherits Rectangle {
           : "?";
         color:
             root.kind == "cmo" ? Theme.accent
-          : root.kind == "school" ? Theme.aquamarine
-          : root.kind == "classroom" ? Theme.periwinkle
+          : root.kind == "school" ? Theme.warning
+          : root.kind == "classroom" ? Theme.info
           : Theme.text-muted;
         font-size: 12px;
         font-weight: 700;
@@ -216,6 +216,7 @@ export component CmoTenancy inherits Rectangle {
                 Text {
                     text: "Tenancy";
                     color: Theme.text;
+                    font-family: Theme.font-display;
                     font-size: 24px;
                     font-weight: 600;
                 }
@@ -230,7 +231,7 @@ export component CmoTenancy inherits Rectangle {
             // Banner shown when an action was attempted but the
             // mutation path hasn't landed yet (E6.1.5).
             if root.action-error != "": Rectangle {
-                background: #78350f;
+                background: Theme.warning-bg;
                 border-radius: Theme.radius-md;
                 border-width: 1px;
                 border-color: Theme.warning;
@@ -247,7 +248,7 @@ export component CmoTenancy inherits Rectangle {
                     }
                     Text {
                         text: root.action-error;
-                        color: #fde68a;
+                        color: Theme.warning-text;
                         font-size: 12px;
                         vertical-alignment: center;
                         horizontal-stretch: 1;

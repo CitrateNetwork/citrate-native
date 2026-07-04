@@ -81,6 +81,7 @@ component CmoStatCard inherits Rectangle {
         Text {
             text: root.value;
             color: Theme.text;
+            font-family: Theme.font-display;
             font-size: 22px;
             font-weight: 600;
             overflow: elide;
@@ -148,17 +149,17 @@ component SchoolTableRow inherits Rectangle {
                     width: 76px;
                     height: 22px;
                     border-radius: 11px;
-                    background: root.data.compliance-health == "Green" ? #064e3b
-                              : root.data.compliance-health == "Yellow" ? #78350f
-                              : root.data.compliance-health == "Red" ? #7f1d1d
+                    background: root.data.compliance-health == "Green" ? Theme.success-bg
+                              : root.data.compliance-health == "Yellow" ? Theme.warning-bg
+                              : root.data.compliance-health == "Red" ? Theme.error-bg
                               : Theme.bg-tertiary;
                     HorizontalLayout {
                         alignment: center;
                         Text {
                             text: root.data.compliance-health;
-                            color: root.data.compliance-health == "Green" ? #6ee7b7
-                                 : root.data.compliance-health == "Yellow" ? #fde68a
-                                 : root.data.compliance-health == "Red" ? #fca5a5
+                            color: root.data.compliance-health == "Green" ? Theme.success-text
+                                 : root.data.compliance-health == "Yellow" ? Theme.warning-text
+                                 : root.data.compliance-health == "Red" ? Theme.error-text
                                  : Theme.text-muted;
                             font-size: 11px;
                             font-weight: 600;
@@ -290,13 +291,13 @@ export component CmoDashboard inherits Rectangle {
                 CmoStatCard {
                     label: "TOTAL SCHOOLS";
                     value: root.stats.total-schools;
-                    accent-color: Theme.periwinkle;
+                    accent-color: Theme.info;
                     horizontal-stretch: 1;
                 }
                 CmoStatCard {
                     label: "TOTAL STUDENTS";
                     value: root.stats.total-students;
-                    accent-color: Theme.aquamarine;
+                    accent-color: Theme.accent-deep;
                     horizontal-stretch: 1;
                 }
                 CmoStatCard {

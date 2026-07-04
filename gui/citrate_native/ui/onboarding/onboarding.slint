@@ -12,7 +12,7 @@
 //   8: Interactive Lesson (developer only — skip for others)
 //   9: Session Active / Complete
 
-import { Theme } from "@citrate-ui-kit";
+import { Theme, CitrateLoader } from "@citrate-ui-kit";
 
 // ---------------------------------------------------------------------------
 // Shared components
@@ -38,7 +38,7 @@ component OnboardingButton inherits Rectangle {
 
     Text {
         text: root.label;
-        color: root.primary ? #000000 : Theme.text;
+        color: root.primary ? Theme.on-accent : Theme.text;
         font-size: Theme.font-size-md;
         font-weight: Theme.font-weight-semibold;
         horizontal-alignment: center;
@@ -85,7 +85,7 @@ component PersonaCard inherits Rectangle {
             Text {
                 text: root.icon-text;
                 font-size: 20px;
-                color: selected ? #000000 : Theme.text-muted;
+                color: selected ? Theme.on-accent : Theme.text-muted;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -262,6 +262,10 @@ export component Onboarding inherits Rectangle {
     in property <bool> node-ready: false;
     in property <bool> model-ready: false;
     in property <string> model-status: "Checking...";
+    // NATIVE-R1-S1 WP-5: per-facet SVG commands for the CitrateLoader on
+    // the node-bootstrap step. Fed from Rust (loader::LoaderHandle::model());
+    // left empty, the loader renders the static assembled triangle.
+    in property <[string]> loader-facets: [];
 
     // Mnemonic verification state
     in-out property <bool> mnemonic-copied: false;
@@ -310,6 +314,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Welcome to Citrate";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 24px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -341,6 +346,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Secure Your Wallet";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -411,6 +417,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Recovery Phrase";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -547,6 +554,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Security Confirmation";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -603,6 +611,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "How will you use Citrate?";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -657,6 +666,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Select Network";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -714,9 +724,27 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Starting Your Node";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
+                    }
+
+                    // NATIVE-R1-S1 WP-5: liquid-morph CitrateLoader while the
+                    // node bootstraps. WP-6 survey fix: the spinning ring
+                    // overflows the mark's square, so the host must be
+                    // ≥ ~1.45× the loader size — 100px in the 150px host
+                    // (1.5×) keeps the ring clear of the texts above/below.
+                    Rectangle {
+                        height: 150px;
+                        CitrateLoader {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            size: 100px;
+                            color: Theme.accent;
+                            running: !root.node-ready;
+                            facet-commands: root.loader-facets;
+                        }
                     }
 
                     Text {
@@ -749,6 +777,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "AI Assistant";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
@@ -796,6 +825,7 @@ export component Onboarding inherits Rectangle {
                     Text {
                         text: "Quick Start";
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;

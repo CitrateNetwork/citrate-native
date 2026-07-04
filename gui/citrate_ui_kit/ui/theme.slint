@@ -1,43 +1,106 @@
-// Citrate Design System — Brand-aligned theme tokens.
-// Typography: Space Grotesk (display + body), IBM Plex Mono (code).
-// Fonts are bundled OFL-licensed TTFs under assets/fonts/ — see
-// NOTICE-fonts.md. Slint's `import` directive embeds and registers
+// Citrate Design System — canonical brand tokens (Sprint NATIVE-R1-S1, WP-1/2).
+//
+// Source of truth: citrate-landing/src/styles/colors_and_type.css +
+// citrate-explorer/src/scan/scan.css (dual-mode split). Light-first on warm
+// paper; dark mode is deep evergreen — never black.
+//
+// Dual mode: Slint globals cannot be swapped at runtime, so every color
+// token is a ternary on `dark-mode`. The Appearance setting (Settings →
+// Appearance) drives `dark-mode` from Rust ("dark" → true; "light" and
+// "system" → false, light is the canonical default).
+//
+// Typography: Space Grotesk (display), Geist (body), Cormorant (serif),
+// Geist Mono (code/hashes). Bundled OFL-licensed TTFs under assets/fonts/
+// — see NOTICE-fonts.md. Slint's `import` directive embeds and registers
 // them at compile time so we don't depend on system fallbacks.
 import "../assets/fonts/SpaceGrotesk-Variable.ttf";
-import "../assets/fonts/IBMPlexMono-Regular.ttf";
-import "../assets/fonts/IBMPlexMono-Medium.ttf";
-import "../assets/fonts/IBMPlexMono-Bold.ttf";
+import "../assets/fonts/Geist-Variable.ttf";
+import "../assets/fonts/GeistMono-Variable.ttf";
+import "../assets/fonts/Cormorant-Variable.ttf";
 
 export global Theme {
-    // === DARK MODE (default) — Gunmetal black with warm brown undertone ===
-    out property <color> bg: #0A0E17;              // Abyss — primary background
-    out property <color> bg-secondary: #0D1117;    // Deep — section backgrounds
-    out property <color> bg-tertiary: #12161F;     // Surface — elevated panels
-    out property <color> surface: #161B25;         // Cards, modals
-    out property <color> text: #F9FAFB;            // Primary text
-    out property <color> text-secondary: #8B95A5;  // Descriptions, labels
-    out property <color> text-muted: #5A6070;      // Subdued/disabled
-    out property <color> border: rgba(139, 149, 165, 0.15); // Standard borders
-    out property <color> border-subtle: rgba(139, 149, 165, 0.08); // Subtle borders
+    // === Mode switch — light (default) vs deep-evergreen dark ===
+    in-out property <bool> dark-mode: false;
 
-    // Brand accent — Gold/Chamois (from CTA gradient)
-    out property <color> accent: #D4A76A;          // Primary accent (gold)
-    out property <color> accent-hover: #E8A87C;    // Hover state (peach)
+    // ========================================================================
+    // Brand constants (mode-independent)
+    // ========================================================================
+    out property <color> citrate-green: #8ecc09;       // primary accent — citric, alive
+    out property <color> citrate-green-deep: #5a8205;  // hover, AA text on cream
+    out property <color> citrate-green-dark: #2f4502;  // pressed, accent text on white
+    out property <color> citrate-green-tint: #e8f3c6;  // surface wash
+    out property <color> citrate-yellow: #ffbd10;      // secondary accent — sun, evidence
+    out property <color> citrate-yellow-deep: #c89400;
+    out property <color> citrate-yellow-dark: #6e5100;
+    out property <color> citrate-yellow-tint: #fff1c4;
+    out property <color> deep-evergreen: #0f2a1a;      // trust anchor; data viz
+    out property <color> evergreen-2: #1a3b27;
 
-    // Semantic colors
-    out property <color> success: #34D399;         // Emerald — connected, running
-    out property <color> warning: #FBBF24;         // Amber — syncing, pending
-    out property <color> error: #E88B8B;           // Rose — errors, danger
-    out property <color> info: #6B9AC4;            // Periwinkle — informational
+    // ========================================================================
+    // Surfaces — light: warm paper / dark: deep evergreen
+    // ========================================================================
+    out property <color> bg: dark-mode ? #0c2216 : #f1eee6;            // canvas
+    out property <color> bg-secondary: dark-mode ? #0a1c12 : #ecebe4;  // sunk wells
+    out property <color> bg-tertiary: dark-mode ? #11301f : #faf8f3;   // surface — panels
+    out property <color> surface: dark-mode ? #163a26 : #ffffff;       // surface-2 — cards, modals
+    // Canonical aliases (same values; new code may prefer these names)
+    out property <color> canvas: bg;
+    out property <color> sunk: bg-secondary;
+    out property <color> surface-2: surface;
 
-    // Spectral palette (feature-area colors from citrate.ai)
-    out property <color> sage: #7EC8A0;            // Contracts, deployments
-    out property <color> periwinkle: #6B9AC4;      // Nodes, networking
-    out property <color> aquamarine: #7EC4CF;       // Models, inference
-    out property <color> wisteria: #9B7FC4;        // Verification, TLA+
-    out property <color> mint: #6ABFA0;            // Performance, TPS
-    out property <color> chamois: #D4A76A;         // Economics, finality
-    out property <color> lavender: #B497D6;        // Specs, formal methods
+    // Text ladder
+    out property <color> text: dark-mode ? #edf3ea : #0e0f0c;           // text-1
+    out property <color> text-secondary: dark-mode ? #aec1b0 : #555851; // text-2
+    out property <color> text-muted: dark-mode ? #7a9a84 : #8a8c84;     // text-3
+
+    // Borders
+    out property <color> border: dark-mode ? rgba(205, 231, 214, 0.14) : #dbdcd5;
+    out property <color> border-subtle: dark-mode ? rgba(205, 231, 214, 0.08) : #e6e5df;
+    out property <color> border-strong: dark-mode ? rgba(205, 231, 214, 0.28) : #c3c4be;
+
+    // Header band (deep evergreen in both modes)
+    out property <color> header-bg: dark-mode ? #081a10 : #0f2a1a;
+    out property <color> header-fg: dark-mode ? #edf3ea : #f1eee6;
+
+    // ========================================================================
+    // Accent — citrate green
+    // ========================================================================
+    out property <color> accent: dark-mode ? #9ad60c : #8ecc09;
+    out property <color> accent-hover: dark-mode ? #b6e524 : #5a8205;   // accent-deep
+    out property <color> accent-deep: dark-mode ? #b6e524 : #5a8205;
+    out property <color> accent-text: dark-mode ? #a9df1a : #4f7304;    // AA text on canvas
+    out property <color> accent-tint: dark-mode ? rgba(142, 204, 9, 0.14) : #e8f3c6;
+    // Text/glyph color on accent-filled surfaces (green is bright in both modes)
+    out property <color> on-accent: #112005;
+    // Text/glyph color on solid semantic fills (success/warning/danger/info
+    // buttons and badges). Semantic fills are dark inks in light mode and
+    // bright in dark mode, so this flips with the mode.
+    out property <color> on-solid: dark-mode ? #0c2216 : #ffffff;
+    // Toggle-switch / slider knob — constant white; always rides on an
+    // accent or border-colored track, never directly on the canvas.
+    out property <color> knob: #ffffff;
+    // Focus ring — 3px rgba(142,204,9,.35)
+    out property <color> focus-ring: rgba(142, 204, 9, 0.35);
+    out property <length> focus-ring-width: 3px;
+
+    // ========================================================================
+    // Semantic colors (canonical success/warning/danger/info)
+    // ========================================================================
+    out property <color> success: dark-mode ? #9ad60c : #4f8a05;
+    out property <color> success-text: dark-mode ? #a9df1a : #4f7304;
+    out property <color> success-bg: dark-mode ? rgba(142, 204, 9, 0.14) : #ecf5d4;
+    out property <color> warning: dark-mode ? #ffbd10 : #b07b00;
+    out property <color> warning-text: dark-mode ? #ffcf52 : #8a6200;
+    out property <color> warning-bg: dark-mode ? rgba(255, 189, 16, 0.14) : #fff1c4;
+    out property <color> error: dark-mode ? #e26a58 : #a72414;          // danger
+    out property <color> error-text: dark-mode ? #ef8273 : #a72414;
+    out property <color> error-bg: dark-mode ? rgba(167, 36, 20, 0.22) : #f6e1de;
+    out property <color> info: dark-mode ? #8fbcd9 : #1b4965;
+    out property <color> info-text: dark-mode ? #a8cce3 : #1b4965;
+    out property <color> info-bg: dark-mode ? rgba(27, 73, 101, 0.32) : #dbe7ef;
+
+    // Modal scrim — dims content behind dialogs/drawers
+    out property <color> scrim: dark-mode ? rgba(0, 0, 0, 0.60) : rgba(14, 15, 12, 0.45);
 
     // Spacing (4px base)
     out property <length> space-xs: 4px;
@@ -73,12 +136,15 @@ export global Theme {
     out property <int> font-weight-semibold: 600;
     out property <int> font-weight-bold: 700;
 
-    // Font families. `font-body` is the default for every Text unless
-    // overridden. `font-mono` is for hashes, addresses, code, and any
-    // tabular figures where digit alignment matters. Use these instead
-    // of hardcoded "monospace" or "JetBrains Mono" strings.
-    out property <string> font-body: "Space Grotesk";
-    out property <string> font-mono: "IBM Plex Mono";
+    // Font families (NATIVE-R1-S1 WP-2 — canonical four-family system).
+    // `font-body` is the default for every Text unless overridden.
+    // `font-display` is for hero/page headings. `font-serif` is the
+    // Cormorant editorial voice. `font-mono` is for hashes, addresses,
+    // code, and any tabular figures where digit alignment matters.
+    out property <string> font-display: "Space Grotesk";
+    out property <string> font-body: "Geist";
+    out property <string> font-serif: "Cormorant";
+    out property <string> font-mono: "Geist Mono";
 
     // ========================================================================
     // Motion tokens (Sprint P950-C, WP-C.1)
@@ -97,11 +163,11 @@ export global Theme {
     // Elevation tokens (Sprint P950-C, WP-C.1)
     // ========================================================================
     // Apply to Rectangles via drop-shadow-*. Three levels match the standard
-    // elevation ladder: cards → dialogs → modals. The shadow color includes
-    // opacity so tokens work on any background.
-    out property <color> shadow-color-sm: rgba(0, 0, 0, 0.25);
-    out property <color> shadow-color-md: rgba(0, 0, 0, 0.35);
-    out property <color> shadow-color-lg: rgba(0, 0, 0, 0.50);
+    // elevation ladder: cards → dialogs → modals. Shadow ink is warm-black
+    // in light mode, true black in dark (per scan.css shadow recipes).
+    out property <color> shadow-color-sm: dark-mode ? rgba(0, 0, 0, 0.35) : rgba(14, 15, 12, 0.18);
+    out property <color> shadow-color-md: dark-mode ? rgba(0, 0, 0, 0.45) : rgba(14, 15, 12, 0.22);
+    out property <color> shadow-color-lg: dark-mode ? rgba(0, 0, 0, 0.60) : rgba(14, 15, 12, 0.30);
     out property <length> shadow-offset-sm: 2px;
     out property <length> shadow-offset-md: 4px;
     out property <length> shadow-offset-lg: 8px;
