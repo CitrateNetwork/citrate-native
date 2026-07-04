@@ -34,6 +34,7 @@ the sprint.
 - `e40f5cd` — WP-4: CitrateLoader liquid-morph port (MorphEngine + Slint Path component, 9 unit/compile tests)
 - `7db0953` — WP-1/2/3: canonical re-skin (dual-mode theme, Geist/Cormorant/Geist Mono fonts, logo refresh)
 - `6864d0c` — WP-5: loader integration + per-screen dual-mode snapshot baseline
+- `5c9feb5` — WP-6: owner-survey quick follow-ups — loader hosts resized to ≥1.45× ring clearance (chat 24/40px, onboarding 100/150px), theme-aware sidebar marquee (black/light, white/dark; icon kept for collapsed rail), Space Grotesk `font-display` on 40 heading/stat sites; workspace build + both visual suites green
 
 **Tests now / baseline:** 577 / 567 (Δ +10; `cargo test --workspace --locked -- --list | grep -c ': test$'`)
 

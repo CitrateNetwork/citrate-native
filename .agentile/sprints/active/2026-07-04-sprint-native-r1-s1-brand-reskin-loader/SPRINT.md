@@ -153,6 +153,55 @@ active (`loader_set_running` at the 6 toggle sites in `main.rs`).
 
 ---
 
+### WP-6: Owner-survey quick follow-ups (loader clearance + marquee + Space Grotesk)
+
+| Field | Value |
+|-------|-------|
+| **Status** | `[x] COMPLETE` |
+| **Order step** | polish (post-survey, pre-S2) |
+| **Estimated effort** | S |
+| **Commit(s)** | 5c9feb5 |
+
+**Scope:** The three "Quick S1 follow-ups" from SURVEY-2026-07-04 (owner QA
+walkthrough): chat loader clipped by its container, sidebar should carry the
+marquee wordmark not the icon mark, and Space Grotesk missing from all
+headings (re-skin set body=Geist; nothing applied `Theme.font-display`).
+
+**Acceptance Criteria**
+
+- [x] Chat + onboarding loaders render the full morph ring with no clipping —
+  the ring overflows the mark square (radius 52 + thickness 18 on the
+  100-unit viewBox ⇒ host must be ≥ ~1.45× the loader size). Chat thinking
+  indicator resized 30px → 24px inside its existing 40px host (1.67×);
+  onboarding bootstrap loader 110px → 100px inside its 150px host (1.5×).
+  No `clip: true` between either loader and its margin host (chat's
+  Flickable clips only at the scroll-area boundary, outside the host).
+  Evidence: geometry in `citrate_loader.slint` header + `MorphConfig`
+  defaults; e2e/ui_visual smoke-renders green post-change.
+- [x] Sidebar shows the theme-aware marquee wordmark — canonical
+  `citrate_marquee_black.svg` (light mode, black ink on warm paper) /
+  `citrate_marquee_white.svg` (dark mode, white on deep evergreen) copied
+  from `branding/` into `gui/citrate_native/assets/images/` and rendered at
+  141×44 (native ~3.2:1 aspect preserved) in the 52px logo band; SVG decodes
+  via resvg, already in the pinned Slint 1.16.1 dep tree. Triangle icon mark
+  retained for the collapsed/narrow rail (`logo-expanded` follows
+  compact/hover state). Evidence: `tests/screenshots/01_dashboard_default.png`
+  shows the black marquee lockup.
+- [x] Space Grotesk applied to heading-level text, tastefully — 40 sites got
+  `font-family: Theme.font-display`: every screen's top-level title
+  (Dashboard, Files, DAG Explorer, Compute, Learning Center, Agent Center,
+  Models, Settings, Chat, Tenancy, Compliance Matrix, placeholder-tab title),
+  shared settings `SectionHeader`, dialog titles (send/create/import/export
+  wallet flows, create-learning-pool), all 9 onboarding step titles, lock
+  screen, panel headers (Transaction, Block #, Education, Recent Blocks),
+  and the large stat/balance display values (StatCard, CmoStatCard,
+  operations StatCard, wallet hero balance, session earnings). Body copy,
+  mono eyebrows, buttons, and chat message text untouched. Evidence:
+  snapshots show SG on titles + stat values; `cargo build --workspace` and
+  both visual suites green.
+
+---
+
 ## Dependencies
 
 | Dependency | Status | Impact if blocked |
