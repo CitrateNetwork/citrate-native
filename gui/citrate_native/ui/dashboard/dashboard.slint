@@ -38,6 +38,7 @@ component StatCard inherits Rectangle {
         Text {
             text: root.value;
             color: Theme.text;
+            font-family: Theme.font-display;
             font-size: 22px;
             font-weight: 600;
             overflow: elide;
@@ -115,6 +116,7 @@ export component Dashboard inherits Rectangle {
                 Text {
                     text: "Dashboard";
                     color: Theme.text;
+                    font-family: Theme.font-display;
                     font-size: 24px;
                     font-weight: 600;
                 }
@@ -182,6 +184,7 @@ export component Dashboard inherits Rectangle {
                                 // Parse-free check: any non-zero + non-"0.0000" is a delta.
                                 text: (root.earned != "0" && root.earned != "0.0000" ? "+" : "") + root.earned + " SALT";
                                 color: root.earned != "0" && root.earned != "0.0000" ? Theme.warning : Theme.text-muted;
+                                font-family: Theme.font-display;
                                 font-size: 24px;
                                 font-weight: 600;
                                 overflow: elide;
@@ -218,7 +221,7 @@ export component Dashboard inherits Rectangle {
                 VerticalLayout {
                     spacing: Theme.space-md;
 
-                    Text { text: "Recent Blocks"; color: Theme.text; font-size: 16px; font-weight: 500; }
+                    Text { text: "Recent Blocks"; color: Theme.text; font-family: Theme.font-display; font-size: 16px; font-weight: 500; }
 
                     Rectangle {
                         border-radius: Theme.radius-lg;

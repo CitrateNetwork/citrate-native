@@ -221,7 +221,7 @@ export component ChatView inherits Rectangle {
             height: 36px;
             spacing: Theme.space-md;
 
-            Text { text: "Chat"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
+            Text { text: "Chat"; color: Theme.text; font-family: Theme.font-display; font-size: 20px; font-weight: 600; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
 
             HorizontalLayout {
@@ -314,9 +314,11 @@ export component ChatView inherits Rectangle {
                     }
 
                     // Thinking indicator — NATIVE-R1-S1 WP-5: the liquid-morph
-                    // CitrateLoader replaces the old pulsing dot. The 40px host
-                    // Rectangle gives the ring its ~25% overflow margin so the
-                    // animation never paints over the "Thinking..." label.
+                    // CitrateLoader replaces the old pulsing dot. WP-6 survey
+                    // fix: the morph ring overflows the mark square (ring
+                    // radius 52 + thickness 18 on a 100-unit viewBox), so the
+                    // host must be ≥ ~1.45× the loader size — 24px in a 40px
+                    // host (1.67×) keeps the full ring inside the row.
                     if root.thinking && root.error == "" : HorizontalLayout {
                         spacing: Theme.space-sm;
                         padding-left: Theme.space-sm;
@@ -326,7 +328,7 @@ export component ChatView inherits Rectangle {
                             CitrateLoader {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
-                                size: 30px;
+                                size: 24px;
                                 color: Theme.accent;
                                 running: root.thinking;
                                 facet-commands: root.loader-facets;

@@ -254,6 +254,7 @@ export component TransactionModal inherits Rectangle {
                 Text {
                     text: "Transaction";
                     color: Theme.text;
+                    font-family: Theme.font-display;
                     font-size: 18px;
                     font-weight: 600;
                     horizontal-stretch: 1;
@@ -498,6 +499,7 @@ export component DagExplorer inherits Rectangle {
             Text {
                 text: "DAG Explorer";
                 color: Theme.text;
+                font-family: Theme.font-display;
                 font-size: 24px;
                 font-weight: 600;
                 vertical-alignment: center;
@@ -608,7 +610,7 @@ export component DagExplorer inherits Rectangle {
                     Rectangle { horizontal-stretch: 1; }
                 }
 
-                Text { text: "Block #" + root.detail-height; color: Theme.text; font-size: 20px; font-weight: 600; }
+                Text { text: "Block #" + root.detail-height; color: Theme.text; font-family: Theme.font-display; font-size: 20px; font-weight: 600; }
 
                 // Fields
                 VerticalLayout {

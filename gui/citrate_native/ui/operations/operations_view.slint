@@ -27,7 +27,7 @@ component StatusCard inherits Rectangle {
             Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.status-color; y: 3px; }
             Text { text: root.title; color: Theme.text-secondary; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; vertical-alignment: center; }
         }
-        Text { text: root.value; color: Theme.text; font-size: 18px; font-weight: 700; }
+        Text { text: root.value; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 700; }
     }
 }
 
@@ -100,7 +100,7 @@ export component OperationsView inherits Rectangle {
             // Header
             HorizontalLayout {
                 alignment: space-between;
-                Text { text: "Agent Center"; color: Theme.text; font-size: 20px; font-weight: 600; vertical-alignment: center; }
+                Text { text: "Agent Center"; color: Theme.text; font-family: Theme.font-display; font-size: 20px; font-weight: 600; vertical-alignment: center; }
 
                 HorizontalLayout {
                     spacing: Theme.space-sm;

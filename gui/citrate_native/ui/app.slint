@@ -940,6 +940,7 @@ export component App inherits Window {
                     Text {
                         text: root.active-tab;
                         color: Theme.text;
+                        font-family: Theme.font-display;
                         font-size: 24px;
                         font-weight: 600;
                     }
@@ -1083,7 +1084,7 @@ export component App inherits Window {
             VerticalLayout {
                 padding: Theme.space-xl;
                 spacing: Theme.space-md;
-                Text { text: "Create learning pool"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Create learning pool"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
                 Text {
                     text: "Open-access pool with 1000 SALT minimum stake. You'll be the first member.";
                     color: Theme.text-muted; font-size: 11px; wrap: word-wrap;

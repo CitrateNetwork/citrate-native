@@ -265,7 +265,7 @@ export component WalletView inherits Rectangle {
                     VerticalLayout {
                         alignment: center;
                         min-width: 80px;
-                        Text { text: root.selected-balance; color: Theme.text; font-size: 18px; font-weight: 700; horizontal-alignment: right; overflow: elide; }
+                        Text { text: root.selected-balance; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 700; horizontal-alignment: right; overflow: elide; }
                         Text { text: "SALT"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: right; }
                     }
 
@@ -600,7 +600,7 @@ export component WalletView inherits Rectangle {
                     spacing: Theme.space-lg;
                     padding: Theme.space-2xl;
 
-                    Text { text: "Welcome to Citrate"; color: Theme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
+                    Text { text: "Welcome to Citrate"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
                     Text { text: "Create a new wallet or import an existing one to get started."; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
 
                     HorizontalLayout {
@@ -651,7 +651,7 @@ export component WalletView inherits Rectangle {
                 padding: Theme.space-xl;
                 spacing: Theme.space-lg;
 
-                Text { text: "Create New Account"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Create New Account"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
 
                 VerticalLayout {
                     spacing: Theme.space-sm;
@@ -728,7 +728,7 @@ export component WalletView inherits Rectangle {
                 padding: Theme.space-xl;
                 spacing: Theme.space-lg;
 
-                Text { text: "Import Account"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Import Account"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
 
                 VerticalLayout {
                     spacing: Theme.space-sm;
@@ -811,7 +811,7 @@ export component WalletView inherits Rectangle {
                 padding: Theme.space-xl;
                 spacing: Theme.space-lg;
 
-                Text { text: "Export Private Key"; color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text { text: "Export Private Key"; color: Theme.text; font-family: Theme.font-display; font-size: 18px; font-weight: 600; }
 
                 Text {
                     text: "WARNING: Never share your private key. Anyone with this key has full control of your account.";

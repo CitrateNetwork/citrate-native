@@ -75,6 +75,9 @@ export component Sidebar inherits Rectangle {
 
     // In compact mode, expand on hover (with smooth animation)
     property <bool> hovered: sidebar-hover.has-hover;
+    // NATIVE-R1-S1 WP-6: marquee shows when the sidebar is (or is becoming)
+    // full-width; the triangle icon mark covers the collapsed rail.
+    property <bool> logo-expanded: !root.compact || root.hovered;
     width: root.compact ? (root.hovered ? Theme.sidebar-width : Theme.sidebar-collapsed) : Theme.sidebar-width;
     background: Theme.bg-secondary;
     border-width: 0px;
@@ -87,29 +90,33 @@ export component Sidebar inherits Rectangle {
         spacing: 0px;
         alignment: start;
 
-        // Logo + brand
+        // Logo + brand — NATIVE-R1-S1 WP-6 (owner survey): the marquee
+        // wordmark lockup (custom font), theme-aware — black ink on the warm
+        // paper sidebar in light mode, white on deep evergreen in dark mode.
+        // The triangle icon mark remains for the collapsed/narrow rail.
         Rectangle {
             height: 52px;
-            HorizontalLayout {
-                padding-left: Theme.space-md;
-                spacing: Theme.space-sm;
-                alignment: start;
 
-                Image {
-                    source: @image-url("../../assets/images/citrate-icon.png");
-                    width: 28px;
-                    height: 28px;
-                    image-fit: contain;
-                    y: 12px;
-                }
+            if root.logo-expanded : Image {
+                source: Theme.dark-mode
+                    ? @image-url("../../assets/images/citrate_marquee_white.svg")
+                    : @image-url("../../assets/images/citrate_marquee_black.svg");
+                x: Theme.space-md;
+                y: (parent.height - self.height) / 2;
+                // Marquee SVG is ~3.2:1; 141×44 keeps comfortable padding
+                // inside the 220px sidebar and the 52px logo band.
+                width: 141px;
+                height: 44px;
+                image-fit: contain;
+            }
 
-                Text {
-                    text: "Citrate";
-                    color: Theme.accent;
-                    font-size: 18px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
+            if !root.logo-expanded : Image {
+                source: @image-url("../../assets/images/citrate-icon.png");
+                x: Theme.space-md;
+                y: (parent.height - self.height) / 2;
+                width: 28px;
+                height: 28px;
+                image-fit: contain;
             }
         }
 
