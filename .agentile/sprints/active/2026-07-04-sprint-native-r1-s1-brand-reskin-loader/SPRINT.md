@@ -134,7 +134,7 @@ Per WP: BDD framing → failing/updated test → code → adversarial check → 
 | **Status** | `[x] COMPLETE` |
 | **Order step** | harness |
 | **Estimated effort** | M |
-| **Commit(s)** | see DAILY.md 2026-07-04 (WP-5 closing commit on this branch) |
+| **Commit(s)** | 6864d0c |
 
 **Delivered scope (beyond the harness):** CitrateLoader exported from the
 ui-kit root (`lib.slint`) and embedded in the app — onboarding step-6 node

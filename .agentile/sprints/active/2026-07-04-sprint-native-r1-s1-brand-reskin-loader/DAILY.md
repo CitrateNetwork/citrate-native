@@ -33,7 +33,7 @@ the sprint.
 - `9844b4e` — sprint kickoff
 - `e40f5cd` — WP-4: CitrateLoader liquid-morph port (MorphEngine + Slint Path component, 9 unit/compile tests)
 - `7db0953` — WP-1/2/3: canonical re-skin (dual-mode theme, Geist/Cormorant/Geist Mono fonts, logo refresh)
-- WP-5 closing commit (this one) — loader integration + dual-mode snapshot baseline
+- `6864d0c` — WP-5: loader integration + per-screen dual-mode snapshot baseline
 
 **Tests now / baseline:** 577 / 567 (Δ +10; `cargo test --workspace --locked -- --list | grep -c ': test$'`)
 
