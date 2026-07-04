@@ -124,8 +124,8 @@ export component OperationsView inherits Rectangle {
                     Rectangle {
                         width: 110px; height: 36px;
                         border-radius: Theme.radius-md;
-                        // Dark amber bg so white text reads cleanly
-                        background: pause-ta.has-hover ? #3a2a0a : #2a1f0a;
+                        // Warning-tinted bg so the amber label reads cleanly
+                        background: pause-ta.has-hover ? Theme.warning.with-alpha(0.25) : Theme.warning-bg;
                         border-width: 1px;
                         border-color: Theme.warning;
                         animate background { duration: 120ms; }
@@ -147,7 +147,7 @@ export component OperationsView inherits Rectangle {
                     Rectangle {
                         width: 120px; height: 36px; border-radius: Theme.radius-md;
                         background: Theme.error;
-                        Text { text: "Deny pending"; color: #000000; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Deny pending"; color: Theme.on-solid; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => { root.emergency-stop(); } }
                     }
                 }
@@ -211,7 +211,7 @@ export component OperationsView inherits Rectangle {
                     animate background { duration: 120ms; }
                     Text {
                         text: "Guided";
-                        color: root.grant-scope == "guided" ? #000000 : Theme.text-secondary;
+                        color: root.grant-scope == "guided" ? Theme.on-solid : Theme.text-secondary;
                         font-size: 11px; font-weight: 600;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
@@ -231,7 +231,7 @@ export component OperationsView inherits Rectangle {
                     animate background { duration: 120ms; }
                     Text {
                         text: "Read-only";
-                        color: root.grant-scope == "read-only" ? #000000 : Theme.text-secondary;
+                        color: root.grant-scope == "read-only" ? Theme.on-solid : Theme.text-secondary;
                         font-size: 11px; font-weight: 600;
                         horizontal-alignment: center; vertical-alignment: center;
                     }
@@ -317,7 +317,7 @@ export component OperationsView inherits Rectangle {
                                 animate background { duration: 120ms; }
                                 Text {
                                     text: "Copy sidecar config";
-                                    color: copy-ta.has-hover ? #000000 : Theme.text-secondary;
+                                    color: copy-ta.has-hover ? Theme.on-accent : Theme.text-secondary;
                                     font-size: 10px; font-weight: 600;
                                     horizontal-alignment: center; vertical-alignment: center;
                                 }
@@ -374,7 +374,7 @@ export component OperationsView inherits Rectangle {
 
                     Rectangle {
                         width: 60px; height: 28px; border-radius: Theme.radius-sm; background: Theme.success;
-                        Text { text: "Allow"; color: #000000; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Allow"; color: Theme.on-solid; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => { root.approve-pending(approval.request-id); } }
                     }
                     Rectangle {
@@ -428,7 +428,7 @@ export component OperationsView inherits Rectangle {
                         background: evt.risk-level == "high" ? Theme.warning
                             : evt.risk-level == "critical" ? Theme.error
                             : Theme.text-muted;
-                        Text { text: evt.risk-level; color: #000000; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: evt.risk-level; color: Theme.on-solid; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
 
                     Text {

@@ -25,7 +25,7 @@ export component EnvironmentSection inherits VerticalLayout {
             background: root.network == env ? Theme.accent : transparent;
             Text {
                 text: env;
-                color: root.network == env ? #000000 : Theme.text-secondary;
+                color: root.network == env ? Theme.on-accent : Theme.text-secondary;
                 font-size: 12px; font-weight: 500;
                 horizontal-alignment: center; vertical-alignment: center;
             }

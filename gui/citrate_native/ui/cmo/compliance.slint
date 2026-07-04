@@ -62,9 +62,9 @@ component StatusPill inherits Rectangle {
     height: 22px;
     border-radius: 11px;
     background:
-        status == "Green" ? #064e3b
-      : status == "Yellow" ? #78350f
-      : status == "Red" ? #7f1d1d
+        status == "Green" ? Theme.success-bg
+      : status == "Yellow" ? Theme.warning-bg
+      : status == "Red" ? Theme.error-bg
       : status == "N/A" ? Theme.bg-tertiary
       : Theme.bg-tertiary;
 
@@ -73,9 +73,9 @@ component StatusPill inherits Rectangle {
         Text {
             text: root.status;
             color:
-                root.status == "Green" ? #6ee7b7
-              : root.status == "Yellow" ? #fde68a
-              : root.status == "Red" ? #fca5a5
+                root.status == "Green" ? Theme.success-text
+              : root.status == "Yellow" ? Theme.warning-text
+              : root.status == "Red" ? Theme.error-text
               : root.status == "N/A" ? Theme.text-muted
               : Theme.text-muted;
             font-size: 10px;
