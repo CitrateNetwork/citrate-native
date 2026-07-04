@@ -269,14 +269,14 @@ mod tests {
         let vm = SettingsViewModel {
             network: "devnet".to_string(),
             chain_id: 40204,
-            rpc_port: 18545,
+            rpc_port: 8545,
             p2p_port: 30304,
             bootnodes: vec!["node1@1.2.3.4:30303".to_string()],
             theme: "dark".to_string(),
             node_running: false,
         };
         assert_eq!(vm.chain_id, 40204);
-        assert_eq!(vm.rpc_port, 18545);
+        assert_eq!(vm.rpc_port, 8545);
         assert_ne!(vm.rpc_port, vm.p2p_port);
         assert!(!vm.node_running);
     }
@@ -286,7 +286,7 @@ mod tests {
         let vm = SettingsViewModel {
             network: "testnet".to_string(),
             chain_id: 40204,
-            rpc_port: 18545,
+            rpc_port: 8545,
             p2p_port: 30304,
             bootnodes: vec![],
             theme: "light".to_string(),

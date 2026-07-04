@@ -61,6 +61,9 @@ export component App inherits Window {
     in property <string> active-tab: "dashboard";
     in property <bool> node-running: false;
     in property <string> environment: "TESTNET";
+    // Canonical local-node RPC port, sourced from AppConfig (set by main.rs).
+    // Default 8545 mirrors citrate_desktop_app::DEFAULT_RPC_PORT.
+    in property <int> rpc-port: 8545;
     in property <int> block-height: 0;
     in property <int> peer-count: 0;
     in property <int> mempool-size: 0;
@@ -710,7 +713,7 @@ export component App inherits Window {
                     node-running: root.node-running;
                     network: root.environment;
                     chain-id: 40204;
-                    rpc-port: 18545;
+                    rpc-port: root.rpc-port;
                     p2p-port: 30304;
                     peer-count: root.peer-count;
                     block-height: root.block-height;
