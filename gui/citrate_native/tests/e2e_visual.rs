@@ -85,6 +85,11 @@ fn e2e_all_surfaces() {
     init_test_platform();
     set_window_size(1200, 800);
     let app = App::new().expect("create App");
+    // NATIVE-R1-S1 WP-5: land on the main shell, not the first-run
+    // onboarding overlay (App defaults show-onboarding to true, which
+    // previously made every panel screenshot capture the welcome screen).
+    app.set_show_onboarding(false);
+    app.set_show_lock_screen(false);
     app.show().expect("show App");
 
     let mut passed = 0u32;
@@ -288,6 +293,47 @@ fn e2e_all_surfaces() {
     check!("resolution_1440x960", {
         set_window_size(1440, 960);
         save_snapshot(&app, "27_resolution_1440x960");
+    });
+
+    // ── 28. NATIVE-R1-S1 WP-5: dark-mode sweep over every main panel ──
+    check!("dark_mode_all_panels", {
+        set_window_size(1200, 800);
+        app.global::<Theme>().set_dark_mode(true);
+        for tab in [
+            "dashboard", "wallet", "dag", "chat", "models",
+            "compute", "storage", "learning", "operations", "settings",
+        ] {
+            app.set_active_tab(tab.into());
+            assert_eq!(app.get_active_tab().to_string(), tab);
+            save_snapshot(&app, &format!("28_dark_{tab}"));
+        }
+        app.global::<Theme>().set_dark_mode(false);
+        app.set_active_tab("dashboard".into());
+    });
+
+    // ── 29. Onboarding node-bootstrap + CitrateLoader at t0 (both modes) ──
+    // No Rust loader driver is attached in tests, so the component renders
+    // the static assembled triangle bound to Theme.accent.
+    check!("onboarding_loader_t0_both_modes", {
+        app.set_show_onboarding(true);
+        app.set_onboarding_step(6);
+        app.set_onboarding_node_status("Initializing storage...".into());
+        app.set_onboarding_node_progress(0.4);
+        save_snapshot(&app, "29_onboarding_loader_t0_light");
+        app.global::<Theme>().set_dark_mode(true);
+        save_snapshot(&app, "29_onboarding_loader_t0_dark");
+        app.global::<Theme>().set_dark_mode(false);
+        app.set_show_onboarding(false);
+    });
+
+    // ── 30. Lock screen (both modes) ──
+    check!("lock_screen_both_modes", {
+        app.set_show_lock_screen(true);
+        save_snapshot(&app, "30_lock_screen_light");
+        app.global::<Theme>().set_dark_mode(true);
+        save_snapshot(&app, "30_lock_screen_dark");
+        app.global::<Theme>().set_dark_mode(false);
+        app.set_show_lock_screen(false);
     });
 
     // ── Summary ──

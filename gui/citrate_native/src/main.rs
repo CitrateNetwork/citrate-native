@@ -17,6 +17,34 @@ mod calldata_decoder;
 #[cfg(test)]
 mod ui_visual_tests;
 
+// NATIVE-R1-S1 WP-5: shared CitrateLoader animation driver. One
+// `start_loader` timer feeds the `loader-facets` model bound to both
+// loader instances (onboarding node-bootstrap + chat thinking) — the two
+// states are never active simultaneously. `LoaderHandle` is UI-thread-only
+// (slint::Timer + Rc), so it lives in a thread_local; every toggle site
+// already runs on the UI thread (callback body or invoke_from_event_loop).
+thread_local! {
+    static LOADER: std::cell::RefCell<Option<citrate_ui_kit::loader::LoaderHandle>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Pause/resume the shared loader timer. UI thread only. The timer idles
+/// (stopped) whenever no loading state is active so we don't burn ~60fps
+/// of morph math behind a static screen.
+fn loader_set_running(running: bool) {
+    LOADER.with(|slot| {
+        if let Some(handle) = slot.borrow().as_ref() {
+            if running {
+                if !handle.running() {
+                    handle.restart();
+                }
+            } else {
+                handle.stop();
+            }
+        }
+    });
+}
+
 /// EIP-55 mixed-case checksum encoding for Ethereum addresses.
 /// Takes a hex address (with or without 0x prefix) and returns the checksummed form.
 fn eip55_checksum(addr: &str) -> String {
@@ -1255,6 +1283,18 @@ fn main() {
     ui.set_show_lock_screen(!is_first_run);
     ui.set_active_tab("dashboard".into());
 
+    // NATIVE-R1-S1 WP-5: start the CitrateLoader driver (per the embed
+    // recipe in ui/loader/citrate_loader.slint) and park it. The one
+    // facet-commands model is bound to both loader instances via the
+    // `loader-facets` app property; loader_set_running(true/false) at the
+    // onboarding-bootstrap and chat-thinking toggle sites animates it.
+    {
+        let loader = citrate_ui_kit::loader::start_loader(Default::default());
+        loader.stop(); // idle until a loading state begins
+        ui.set_loader_facets(loader.model());
+        LOADER.with(|slot| *slot.borrow_mut() = Some(loader));
+    }
+
     // WP-E6.2 — CMO portal initialization. By default, the user is NOT a
     // CMOSuperAdmin and the school selector is hidden. The detected role
     // will flip this when E6.1.5 lands the on-chain getCmoRole RPC call.
@@ -2127,6 +2167,7 @@ fn main() {
             ui.set_onboarding_node_status("Initializing storage...".into());
             ui.set_onboarding_node_progress(0.2);
         }
+        loader_set_running(true); // WP-5: animate the bootstrap loader
 
         spawn_async(&rt_h, async move {
             match core.node.start().await {
@@ -2140,6 +2181,7 @@ fn main() {
                             ui.set_node_running(true);
                             ui.set_connection_status("Connecting to bootnode...".into());
                         }
+                        loader_set_running(false); // WP-5: bootstrap done
                     });
                 }
                 Err(e) => {
@@ -2149,6 +2191,7 @@ fn main() {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_onboarding_node_status(err.into());
                         }
+                        loader_set_running(false); // WP-5: bootstrap failed
                     });
                 }
             }
@@ -3959,6 +4002,7 @@ fn main() {
         let msg = message.to_string();
 
         // Show thinking state and user's message immediately (doesn't block)
+        loader_set_running(true); // WP-5: animate the thinking loader
         if let Some(ui) = ui_w.upgrade() {
             ui.set_chat_thinking(true);
             ui.set_chat_error("".into());
@@ -4425,6 +4469,7 @@ fn main() {
                             ui.set_chat_thinking(false);
                             ui.set_chat_model_loaded(true);
                         }
+                        loader_set_running(false); // WP-5: response arrived
                     });
                 }
                 Err(e) => {
@@ -4440,6 +4485,7 @@ fn main() {
                             ui.set_chat_error(err_msg.into());
                             ui.set_chat_thinking(false);
                         }
+                        loader_set_running(false); // WP-5: chat errored
                     });
                 }
             }

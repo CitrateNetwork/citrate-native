@@ -12,7 +12,7 @@
 //   8: Interactive Lesson (developer only — skip for others)
 //   9: Session Active / Complete
 
-import { Theme } from "@citrate-ui-kit";
+import { Theme, CitrateLoader } from "@citrate-ui-kit";
 
 // ---------------------------------------------------------------------------
 // Shared components
@@ -262,6 +262,10 @@ export component Onboarding inherits Rectangle {
     in property <bool> node-ready: false;
     in property <bool> model-ready: false;
     in property <string> model-status: "Checking...";
+    // NATIVE-R1-S1 WP-5: per-facet SVG commands for the CitrateLoader on
+    // the node-bootstrap step. Fed from Rust (loader::LoaderHandle::model());
+    // left empty, the loader renders the static assembled triangle.
+    in property <[string]> loader-facets: [];
 
     // Mnemonic verification state
     in-out property <bool> mnemonic-copied: false;
@@ -717,6 +721,22 @@ export component Onboarding inherits Rectangle {
                         font-size: 22px;
                         font-weight: 600;
                         horizontal-alignment: center;
+                    }
+
+                    // NATIVE-R1-S1 WP-5: liquid-morph CitrateLoader while the
+                    // node bootstraps. The spinning ring overflows the mark's
+                    // square by ~25%, so host it in a roomier fixed-height
+                    // Rectangle to keep it clear of the texts above/below.
+                    Rectangle {
+                        height: 150px;
+                        CitrateLoader {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            size: 110px;
+                            color: Theme.accent;
+                            running: !root.node-ready;
+                            facet-commands: root.loader-facets;
+                        }
                     }
 
                     Text {

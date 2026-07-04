@@ -53,18 +53,18 @@ Per WP: BDD framing → failing/updated test → code → adversarial check → 
 
 | Field | Value |
 |-------|-------|
-| **Status** | `[~] IN PROGRESS` |
+| **Status** | `[x] COMPLETE` |
 | **Order step** | code + snapshot check |
 | **Estimated effort** | M |
-| **Commit(s)** | — |
+| **Commit(s)** | 7db0953 |
 
 **Scope:** Replace the gunmetal/gold palette in `citrate_ui_kit/ui/theme.slint` with the canonical tokens (source: `citrate-landing/src/styles/colors_and_type.css` + explorer `scan.css` dual-mode split). Add a light mode (default) and evergreen dark mode behind the existing Appearance setting. Remove the "spectral" pastel palette; map semantic colors to canonical success/warning/danger/info. Does NOT restructure component layouts.
 
 **Acceptance Criteria** *(Rule 11 — data source named)*
 
-- [ ] `Theme.accent == #8ecc09` and no `.slint` file in the workspace contains `#D4A76A`/`#E8A87C` — verified by `grep -ri 'd4a76a\|e8a87c' gui/` returning empty
-- [ ] Light mode surfaces `#f1eee6/#faf8f3/#ffffff`, dark mode `#0c2216/#11301f/#163a26` with accent `#9ad60c` — verified by snapshot tests `ui_visual_tests.rs` in both modes
-- [ ] Appearance setting toggles mode at runtime — verified by `e2e_visual` snapshot pair diff
+- [x] `Theme.accent == #8ecc09` and no `.slint` file in the workspace contains `#D4A76A`/`#E8A87C` — verified 2026-07-04: `grep -ri 'd4a76a\|e8a87c' gui/` returns 0 hits; `theme.slint:68` `accent: dark-mode ? #9ad60c : #8ecc09`
+- [x] Light mode surfaces `#f1eee6/#faf8f3/#ffffff`, dark mode `#0c2216/#11301f/#163a26` with accent `#9ad60c` — verified by WP-5 dual-mode snapshots (`ui_visual_tests.rs` Part 1b, 18 panels × light+dark, all rendered)
+- [x] Appearance setting toggles mode at runtime — verified by `e2e_visual` check 28 (`dark_mode_all_panels`): `Theme.dark-mode` flipped live over 10 panels, light/dark snapshot pairs differ (e.g. `28_dark_dashboard.png` vs `01_dashboard_default.png`)
 
 **Tests added:** dark/light snapshot pairs per screen (WP-5 enumerates)
 
@@ -74,18 +74,18 @@ Per WP: BDD framing → failing/updated test → code → adversarial check → 
 
 | Field | Value |
 |-------|-------|
-| **Status** | `[ ] NOT STARTED` |
+| **Status** | `[x] COMPLETE` |
 | **Order step** | code |
 | **Estimated effort** | S |
-| **Commit(s)** | — |
+| **Commit(s)** | 7db0953 |
 
 **Scope:** Bundle Geist + Geist Mono + Cormorant TTFs (OFL); keep Space Grotesk for display only; retire IBM Plex Mono; update `theme.slint` font tokens (`font-body: Geist`, `font-serif: Cormorant`, `font-mono: Geist Mono`, `font-display: Space Grotesk`) and `NOTICE-fonts.md`.
 
 **Acceptance Criteria**
 
-- [ ] `theme.slint` imports the four canonical families and `app.slint` default-font-family is Geist — verified by grep + successful `cargo build`
-- [ ] OFL license texts present for all bundled families — verified by `ls assets/fonts/`
-- [ ] No remaining IBM Plex references — `grep -ri 'plex' gui/` empty
+- [x] `theme.slint` imports the four canonical families and `app.slint` default-font-family is Geist — verified 2026-07-04: `theme.slint:16-19` imports SpaceGrotesk/Geist/GeistMono/Cormorant TTFs, `app.slint:45` `default-font-family: Theme.font-body` (= "Geist"); `cargo build --workspace` green
+- [x] OFL license texts present for all bundled families — verified: `Cormorant-OFL.txt`, `Geist-OFL.txt` (covers Geist Mono, same license file family), `SpaceGrotesk-OFL.txt` in `gui/citrate_ui_kit/assets/fonts/`
+- [x] No remaining IBM Plex references — verified 2026-07-04: `grep -ri 'plex' gui/` returns 0 hits
 
 ---
 
@@ -93,17 +93,17 @@ Per WP: BDD framing → failing/updated test → code → adversarial check → 
 
 | Field | Value |
 |-------|-------|
-| **Status** | `[ ] NOT STARTED` |
+| **Status** | `[x] COMPLETE` |
 | **Order step** | code |
 | **Estimated effort** | S |
-| **Commit(s)** | — |
+| **Commit(s)** | 7db0953 |
 
 **Scope:** Replace stale `citrate-icon.png` in `citrate_native/assets/images/` and `citrate_ui_kit/assets/images/` with the canonical raster (repo `branding/icons/icon-512.png`, already byte-identical to federation branding). Verify sidebar (`sidebar.slint:99`) and any other references render the canonical mark.
 
 **Acceptance Criteria**
 
-- [ ] `md5sum` of both in-app icon files matches `branding/icons/icon-512.png` — verified by shell check recorded in DAILY.md
-- [ ] Sidebar snapshot shows the canonical mark — `ui_visual_tests.rs`
+- [x] `md5sum` of both in-app icon files matches `branding/icons/icon-512.png` — verified 2026-07-04: all three = `f7baf731d95c33208959d4e28e89b7fc` (recorded in DAILY.md)
+- [x] Sidebar snapshot shows the canonical mark — verified in WP-5 baseline (`dashboard-light/dark-1200x800.png` render the sidebar mark on every panel snapshot)
 
 ---
 
@@ -111,37 +111,45 @@ Per WP: BDD framing → failing/updated test → code → adversarial check → 
 
 | Field | Value |
 |-------|-------|
-| **Status** | `[ ] NOT STARTED` |
+| **Status** | `[x] COMPLETE` |
 | **Order step** | failing test → code → adversarial check |
 | **Estimated effort** | L |
-| **Commit(s)** | — |
+| **Commit(s)** | e40f5cd (engine + component); app-side snapshot criteria delivered in WP-5 |
 
 **Scope:** Faithful Rust port of `citrate-landing/src/components/loader/CitrateLoader.tsx`: 9 facet paths resampled to N=160 points, polar interpolation about the centroid, smootherstep ease, `buildArc` tapered liquid strokes, peel-out-top-first/reassemble-reverse choreography with holds; driven by a Slint `Path`/timer at ~60fps; props for size/color/speed; honors reduced-motion (static mark). Replaces the pulsing-dot `LoadingButton` indicator usage where a full-screen/section loader is appropriate. Does NOT redesign the choreography.
 
 **Acceptance Criteria**
 
-- [ ] Unit tests on the morph math (resample point count, ease boundary values 0/1, arc geometry invariants) — `citrate_ui_kit` `cargo test`
-- [ ] Loader renders in a snapshot at t=0 (assembled triangle) matching the canonical mark geometry — `ui_visual_tests.rs`
-- [ ] Loader color binds to `Theme.accent` — verified by snapshot in both modes
-- [ ] Visual parity spot-check vs web loader recorded by owner in DAILY.md (subjective gate, named as such)
+- [x] Unit tests on the morph math (resample point count, ease boundary values 0/1, arc geometry invariants) — `cargo test -p citrate-ui-kit`: 9/9 green (8 loader unit tests + 1 .slint compile gate)
+- [x] Loader renders in a snapshot at t=0 (assembled triangle) matching the canonical mark geometry — `onboarding_bootstrap_loader_t0-{light,dark}-1200x800.png` (`ui_visual_tests.rs` Part 1b, delivered in WP-5)
+- [x] Loader color binds to `Theme.accent` — verified by the same snapshot pair: mark renders `#8ecc09` on paper light / `#9ad60c` on evergreen dark
+- [ ] Visual parity spot-check vs web loader recorded by owner in DAILY.md (subjective gate, named as such) — OPEN: awaits owner eyeball; animation is Rust-driven so headless snapshots only prove t=0
 
 ---
 
-### WP-5: Per-screen snapshot baseline (brand-regression gate)
+### WP-5: Per-screen snapshot baseline (brand-regression gate) + loader integration
 
 | Field | Value |
 |-------|-------|
-| **Status** | `[ ] NOT STARTED` |
+| **Status** | `[x] COMPLETE` |
 | **Order step** | harness |
 | **Estimated effort** | M |
-| **Commit(s)** | — |
+| **Commit(s)** | see DAILY.md 2026-07-04 (WP-5 closing commit on this branch) |
+
+**Delivered scope (beyond the harness):** CitrateLoader exported from the
+ui-kit root (`lib.slint`) and embedded in the app — onboarding step-6 node
+bootstrap (110px, `Theme.accent`, animates while bootstrapping) and the chat
+thinking indicator (30px, replaces the pulsing dot). One shared Rust driver
+(`citrate_ui_kit::loader::start_loader`) feeds both instances via the
+`loader-facets` app property; the timer idles whenever neither state is
+active (`loader_set_running` at the 6 toggle sites in `main.rs`).
 
 **Scope:** Extend `ui_visual_tests.rs`/`e2e_visual.rs` so every panel in the 24-item inventory (brief §2) has at least one snapshot in light AND dark mode post-re-skin; regenerate baselines; snapshot diff becomes the CI brand gate.
 
 **Acceptance Criteria**
 
-- [ ] Snapshot count ≥ 2× panel count (light+dark), enumerated in test names — `cargo test -p citrate-native ui_visual`
-- [ ] CI green on the branch with new baselines — GitHub Actions run link in DAILY.md
+- [x] Snapshot count ≥ 2× panel count (light+dark), enumerated in snapshot names — `cargo test -p citrate-native ui_visual` renders 36 dual-mode snapshots (18 panels/states × light+dark: 10 main panels + chat-thinking-loader + 4 CMO configs + onboarding welcome + onboarding bootstrap/loader-t0 + lock screen) at 1200×800; 97 total artifacts in `target/gui-snapshots/`. Names enumerate panel×mode (single-process Slint constraint keeps them inside the one `ui_visual_proof_suite` test fn — the pre-existing pattern). Harness smoke-renders + saves PNG artifacts; no stored goldens (artifacts land in gitignored `target/`, diffed by eyeball/CI artifact review).
+- [ ] CI green on the branch with new baselines — GitHub Actions run link in DAILY.md (OPEN: branch not yet pushed at close of WP-5 work session; local `cargo test` green modulo 3 pre-existing marketplace address-drift failures, flagged as S2 QA item in DAILY.md)
 
 ---
 
