@@ -162,6 +162,99 @@ fn open_storage(
     open_storage_with_key(data_dir, key)
 }
 
+// ── ENCRYPT-S1 WP-5: seal the embedded node's noise.key ──────────────
+//
+// The P2P Noise static identity (`noise.key` in the data dir) used to be
+// written as raw plaintext key bytes. It is now sealed with AES-256-GCM
+// under the same OS-keyring master used for storage-at-rest (WP-1):
+//   MAGIC(8) ‖ nonce(12) ‖ ciphertext(noise key bytes)
+// A legacy plaintext key found on load is re-sealed in place and the
+// plaintext shredded (zero-overwrite + fsync + unlink). The sealed key
+// decrypts to the SAME bytes, so the P2P peer id is stable across
+// restarts. (The fleet/droplet half of WP-5 is a separate ops task.)
+
+/// File-format magic for a sealed noise.key (version 1).
+const NOISE_SEAL_MAGIC: &[u8; 8] = b"CITNOIS1";
+const NOISE_SEAL_NONCE_LEN: usize = 12;
+
+/// Seal noise key bytes: MAGIC ‖ nonce ‖ AES-256-GCM ciphertext.
+fn seal_noise_key(master: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::{Aead, AeadCore, OsRng};
+    use aes_gcm::{Aes256Gcm, KeyInit};
+    let cipher = Aes256Gcm::new(master.into());
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("noise key encrypt: {e}"))?;
+    let mut out = Vec::with_capacity(NOISE_SEAL_MAGIC.len() + nonce.len() + ciphertext.len());
+    out.extend_from_slice(NOISE_SEAL_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Open a sealed noise.key back to the raw key bytes.
+fn open_noise_key(master: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+    let body = bytes
+        .strip_prefix(NOISE_SEAL_MAGIC.as_slice())
+        .ok_or_else(|| "not a sealed noise key (bad magic)".to_string())?;
+    if body.len() < NOISE_SEAL_NONCE_LEN {
+        return Err("sealed noise key truncated".to_string());
+    }
+    let (nonce, ciphertext) = body.split_at(NOISE_SEAL_NONCE_LEN);
+    let cipher = Aes256Gcm::new(master.into());
+    cipher
+        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .map_err(|e| format!("noise key decrypt: {e}"))
+}
+
+/// Best-effort shred of a plaintext file (zero-overwrite + fsync + unlink).
+/// Hygiene, not a guarantee on CoW/journaled filesystems — the real fix is
+/// that new writes are ciphertext-only.
+fn shred_file(path: &std::path::Path, len: usize) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = f.write_all(&vec![0u8; len]);
+        let _ = f.sync_all();
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Load the sealed noise.key (or generate + seal a fresh one), returning
+/// the RAW key bytes for `NoiseKeypair::from_bytes`. A legacy plaintext
+/// key is re-sealed in place and shredded. `master` is the WP-1 keyring
+/// storage master key. `fresh` produces a new identity's bytes only when
+/// no key file exists.
+fn load_or_create_sealed_noise_key(
+    path: &std::path::Path,
+    master: &[u8; 32],
+    fresh: impl FnOnce() -> Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    if path.exists() {
+        let bytes = std::fs::read(path).map_err(|e| format!("read noise key: {e}"))?;
+        if bytes.starts_with(NOISE_SEAL_MAGIC.as_slice()) {
+            return open_noise_key(master, &bytes);
+        }
+        // Legacy plaintext key — re-seal in place, shred the plaintext.
+        tracing::warn!(
+            "Embedded node: legacy plaintext noise.key at {} — re-sealing under the \
+             keyring master and shredding the plaintext (P2P identity preserved)",
+            path.display()
+        );
+        let sealed = seal_noise_key(master, &bytes)?;
+        shred_file(path, bytes.len());
+        std::fs::write(path, &sealed).map_err(|e| format!("write sealed noise key: {e}"))?;
+        return Ok(bytes);
+    }
+    let raw = fresh();
+    let sealed = seal_noise_key(master, &raw)?;
+    std::fs::write(path, &sealed).map_err(|e| format!("write sealed noise key: {e}"))?;
+    tracing::info!("Generated new persistent Noise identity (sealed under keyring master)");
+    Ok(raw)
+}
+
 /// Live node status snapshot
 #[derive(Debug, Clone)]
 pub struct NodeStatus {
@@ -501,20 +594,21 @@ impl NodeBackend for EmbeddedNodeBackend {
             score_threshold: -100,
         }));
 
-        // 7. Load or generate persistent Noise identity
+        // 7. Load or generate persistent Noise identity (ENCRYPT-S1 WP-5:
+        // sealed at rest with AES-256-GCM under the keyring master; a legacy
+        // plaintext noise.key is re-sealed + shredded on load. The sealed
+        // key decrypts to the same bytes, so the peer id stays stable.)
         let noise_key_path = std::path::Path::new(data_dir).join("noise.key");
-        let noise_keypair = if noise_key_path.exists() {
-            let key_bytes = std::fs::read(&noise_key_path)
-                .map_err(|e| AppError::Node(format!("Failed to read noise key: {}", e)))?;
-            NoiseKeypair::from_bytes(&key_bytes)
-                .map_err(|e| AppError::Node(format!("Failed to parse noise key: {}", e)))?
-        } else {
-            let kp = NoiseKeypair::generate();
-            std::fs::write(&noise_key_path, kp.to_bytes())
-                .map_err(|e| AppError::Node(format!("Failed to write noise key: {}", e)))?;
-            tracing::info!("Generated new persistent Noise identity");
-            kp
-        };
+        let noise_master = load_or_create_storage_key()
+            .map_err(|e| AppError::Node(format!("Failed to source noise-seal master key: {e}")))?;
+        let noise_key_bytes = load_or_create_sealed_noise_key(
+            &noise_key_path,
+            &noise_master,
+            || NoiseKeypair::generate().to_bytes(),
+        )
+        .map_err(|e| AppError::Node(format!("Failed to load/seal noise key: {e}")))?;
+        let noise_keypair = NoiseKeypair::from_bytes(&noise_key_bytes)
+            .map_err(|e| AppError::Node(format!("Failed to parse noise key: {}", e)))?;
         let local_peer_id = noise_keypair.derive_peer_id();
         tracing::info!(
             "Noise identity: {}... (peer_id={})",
@@ -1387,6 +1481,77 @@ mod encryption_tests {
             Some(b"v".as_slice()),
             "the stable key must decrypt data it previously wrote"
         );
+    }
+}
+
+#[cfg(test)]
+mod noise_seal_tests {
+    use super::*;
+
+    // A fake 32-byte "noise identity" — the loader is agnostic to the
+    // actual NoiseKeypair encoding, it just seals/returns the bytes.
+    fn fake_identity() -> Vec<u8> {
+        (0u8..32).collect()
+    }
+
+    #[test]
+    fn sealed_noise_key_roundtrips() {
+        let master = [9u8; 32];
+        let identity = fake_identity();
+        let sealed = seal_noise_key(&master, &identity).expect("seal");
+        assert!(sealed.starts_with(NOISE_SEAL_MAGIC.as_slice()));
+        assert_ne!(sealed, identity, "sealed bytes must differ from plaintext");
+        assert_eq!(open_noise_key(&master, &sealed).expect("open"), identity);
+        // Wrong master must fail (AEAD auth).
+        assert!(open_noise_key(&[8u8; 32], &sealed).is_err());
+    }
+
+    #[test]
+    fn noise_key_is_sealed_on_disk_and_identity_stable_across_restart() {
+        let master = [4u8; 32];
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("noise.key");
+        let identity = fake_identity();
+
+        // First "boot": generate + seal.
+        let a = load_or_create_sealed_noise_key(&path, &master, || identity.clone())
+            .expect("first boot");
+        assert_eq!(a, identity);
+        let on_disk = std::fs::read(&path).expect("read");
+        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "on disk must be sealed");
+        assert!(
+            on_disk.windows(identity.len()).all(|w| w != identity.as_slice()),
+            "plaintext identity must not appear on disk"
+        );
+
+        // Second "boot": decrypts to the SAME identity, without regenerating.
+        let b = load_or_create_sealed_noise_key(&path, &master, || {
+            panic!("must not regenerate when a sealed key exists")
+        })
+        .expect("second boot");
+        assert_eq!(b, identity, "P2P identity must be stable across restarts");
+    }
+
+    #[test]
+    fn legacy_plaintext_noise_key_is_resealed_and_shredded() {
+        let master = [3u8; 32];
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let path = tmp.path().join("noise.key");
+        let identity = fake_identity();
+
+        // Legacy: raw plaintext key on disk (pre-ENCRYPT-S1).
+        std::fs::write(&path, &identity).expect("write plaintext");
+
+        let got = load_or_create_sealed_noise_key(&path, &master, || {
+            panic!("must not regenerate — legacy key must be migrated in place")
+        })
+        .expect("load migrates legacy key");
+        assert_eq!(got, identity, "identity preserved across re-seal");
+
+        // File is now sealed, and decrypts back to the same identity.
+        let on_disk = std::fs::read(&path).expect("read");
+        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "migrated to sealed");
+        assert_eq!(open_noise_key(&master, &on_disk).expect("open"), identity);
     }
 }
 
