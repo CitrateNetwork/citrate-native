@@ -117,6 +117,17 @@ pub struct AppConfig {
     /// them to the OS credential store and rewrites this map with markers.
     #[serde(default)]
     pub integration_tokens: HashMap<String, String>,
+    /// ENCRYPT-S1 WP-1: encrypt the embedded node's RocksDB at rest
+    /// (AES-256-GCM via `citrate_storage`, key held in the OS keyring).
+    /// Default `true` — this is the citrate-native beta gate. Inspectable
+    /// and toggleable; threaded into `node_service`. Onboarding / storage
+    /// copy may state "local data encrypted at rest" ONLY when this is true.
+    #[serde(default = "default_true")]
+    pub encryption_at_rest: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl fmt::Debug for AppConfig {
@@ -140,6 +151,7 @@ impl fmt::Debug for AppConfig {
                 "integration_tokens",
                 &redacted_secret_keys(&self.integration_tokens),
             )
+            .field("encryption_at_rest", &self.encryption_at_rest)
             .finish()
     }
 }
@@ -181,6 +193,7 @@ impl Default for AppConfig {
             auto_journal: false,
             on_chain_anchoring: false,
             integration_tokens: HashMap::new(),
+            encryption_at_rest: true,
         }
     }
 }
