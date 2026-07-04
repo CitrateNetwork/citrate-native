@@ -1606,6 +1606,7 @@ dependencies = [
 name = "citrate-desktop-app"
 version = "0.4.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
  "axum",
@@ -1833,6 +1834,7 @@ version = "0.4.0"
 dependencies = [
  "arboard",
  "async-trait",
+ "chacha20poly1305",
  "chrono",
  "citrate-agent-legacy",
  "citrate-desktop-app",
@@ -1843,14 +1845,17 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "hkdf",
  "image",
  "mime_guess",
  "nvml-wrapper",
  "rand 0.8.6",
+ "regex",
  "reqwest",
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "sha3",
  "slint",
  "slint-build",
@@ -1860,6 +1865,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "uuid",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

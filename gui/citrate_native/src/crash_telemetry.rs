@@ -27,13 +27,22 @@
 //!    logs that survive the terminal. Dependency-free (no
 //!    tracing-appender).
 //!
+//! 4. **Disk redaction** (ENCRYPT-S1 WP-4, inventory A7/A8) —
+//!    `redact_for_disk` scrubs everything this module writes to disk
+//!    (crash records, session.marker, the rotating file log): 0x-hex
+//!    addresses and 64-hex hashes are truncated to first-6…last-4, and
+//!    balance/amount-adjacent numbers become `<redacted>`. Backtraces
+//!    keep their symbols (needed for forensics — frame addresses are
+//!    short code pointers, not user data). stderr stays UNREDACTED —
+//!    the local terminal is inside the trust boundary; disk is not.
+//!
 //! Data source (Rule 11): the crash-record files themselves + the
 //! injected-panic child-process test in this module's test suite.
 
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// App version baked into every crash record.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -88,6 +97,58 @@ fn marker_path_in(crash_dir: &Path) -> PathBuf {
 }
 
 // =========================================================================
+// Disk redaction (ENCRYPT-S1 WP-4, inventory A7/A8)
+// =========================================================================
+
+/// `balance`/`amount`-adjacent values: `balance=1234`, `"amount": 5.5`,
+/// `total_amount = 0xdead…`. The key (group 1) is kept; the value is
+/// replaced with `<redacted>`. Case-insensitive; tolerates `:`/`=`/
+/// quotes/whitespace between key and value; catches hex values too so
+/// the truncating hex pass (which runs second) never sees them.
+fn balance_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)([a-z0-9_]*(?:balance|amount)[a-z0-9_]*\s*"?\s*[:=]?\s*"?\s*)(-?(?:0x[0-9a-fA-F]+|[0-9][0-9_.,]*))"#,
+        )
+        .expect("balance redaction regex is valid")
+    })
+}
+
+/// Long hex material: 0x-prefixed runs of ≥40 hex chars (EVM addresses
+/// and anything bigger — hashes, signatures) and bare runs of ≥64 hex
+/// chars (tx/state hashes without the 0x). Truncated, not dropped —
+/// first 6 + last 4 chars keep records correlatable across a crash
+/// report without exposing the full identifier.
+fn hex_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\b0x[0-9a-fA-F]{40,}\b|\b[0-9a-fA-F]{64,}\b")
+            .expect("hex redaction regex is valid")
+    })
+}
+
+/// Redaction pass applied to everything written to DISK by this module
+/// (crash-record message/last_state, session.marker last_state, and
+/// every file-log line). stderr output is deliberately not routed
+/// through this — the local terminal is the operator's own screen.
+///
+/// Applied to field values BEFORE serialization, so redacted crash
+/// records and markers remain valid JSON.
+pub fn redact_for_disk(text: &str) -> String {
+    // Pass 1: balance/amount values (including hex values) → <redacted>.
+    let pass1 = balance_re().replace_all(text, "${1}<redacted>");
+    // Pass 2: remaining long hex identifiers → first-6…last-4.
+    hex_re()
+        .replace_all(&pass1, |caps: &regex::Captures<'_>| {
+            let m = caps.get(0).expect("whole match").as_str();
+            // Matches are pure ASCII, so byte slicing is char-safe.
+            format!("{}…{}", &m[..6], &m[m.len() - 4..])
+        })
+        .into_owned()
+}
+
+// =========================================================================
 // Crash records
 // =========================================================================
 
@@ -111,6 +172,12 @@ pub struct CrashRecord {
 
 /// Write a crash record as pretty JSON into `dir`, returning the path.
 /// Must never panic — it runs inside the panic hook.
+///
+/// ENCRYPT-S1 WP-4: `message` and `last_state` are passed through
+/// [`redact_for_disk`] before serialization — panic messages and
+/// breadcrumbs can embed addresses/balances/state. `backtrace` is
+/// written verbatim: symbols are the forensic payload and frame
+/// addresses are code pointers, not user data.
 pub fn write_crash_record(dir: &Path, record: &CrashRecord) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let millis = std::time::SystemTime::now()
@@ -119,7 +186,17 @@ pub fn write_crash_record(dir: &Path, record: &CrashRecord) -> io::Result<PathBu
         .unwrap_or(0);
     let seq = RECORD_SEQ.fetch_add(1, Ordering::Relaxed);
     let path = dir.join(format!("crash-{millis}-{seq}.json"));
-    let json = serde_json::to_vec_pretty(record)
+    let sanitized = CrashRecord {
+        timestamp: record.timestamp.clone(),
+        app_version: record.app_version.clone(),
+        kind: record.kind.clone(),
+        thread: record.thread.clone(),
+        message: redact_for_disk(&record.message),
+        location: record.location.clone(),
+        backtrace: record.backtrace.clone(),
+        last_state: redact_for_disk(&record.last_state),
+    };
+    let json = serde_json::to_vec_pretty(&sanitized)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     std::fs::write(&path, json)?;
     Ok(path)
@@ -220,7 +297,9 @@ fn write_marker_file(path: &Path, state: &str) -> io::Result<()> {
             .and_then(|b| serde_json::from_slice::<SessionMarker>(&b).ok())
             .map(|m| m.started_at)
             .unwrap_or_else(|| now.clone()),
-        last_state: state.to_string(),
+        // ENCRYPT-S1 WP-4: the marker persists the breadcrumb across
+        // SIGKILL — scrub it at the disk boundary.
+        last_state: redact_for_disk(state),
         updated_at: now,
     };
     let json = serde_json::to_vec_pretty(&marker)
@@ -457,14 +536,56 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for FileLogWriter {
     }
 }
 
+/// ENCRYPT-S1 WP-4: redacting wrapper around [`FileLogWriter`]. Every
+/// buffer headed for the on-disk log passes through
+/// [`redact_for_disk`] first. The stdout/stderr tracing layer is NOT
+/// wrapped — terminal output stays verbatim; disk is the boundary.
+///
+/// tracing's fmt layer hands the writer one whole formatted event per
+/// `write` call, so hex/balance tokens are never split across buffers
+/// in practice.
+#[derive(Clone)]
+pub struct RedactingFileLogWriter {
+    inner: FileLogWriter,
+}
+
+impl RedactingFileLogWriter {
+    pub fn new(inner: FileLogWriter) -> Self {
+        Self { inner }
+    }
+}
+
+impl io::Write for RedactingFileLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        let redacted = redact_for_disk(&text);
+        self.inner.write_all(redacted.as_bytes())?;
+        // Report the caller's bytes as consumed — the transformed
+        // length may differ and must not confuse the fmt layer.
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingFileLogWriter {
+    type Writer = RedactingFileLogWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
 /// Build the production rotating file-log writer
-/// (`~/.local/share/citrate-gui/logs/citrate-gui.log`, 5 MB rotation).
-/// `None` (with a stderr note) if the log dir is unusable — file logging
-/// is diagnostics, never a startup blocker.
-pub fn file_log_writer() -> Option<FileLogWriter> {
+/// (`~/.local/share/citrate-gui/logs/citrate-gui.log`, 5 MB rotation),
+/// wrapped in the WP-4 redaction pass. `None` (with a stderr note) if
+/// the log dir is unusable — file logging is diagnostics, never a
+/// startup blocker.
+pub fn file_log_writer() -> Option<RedactingFileLogWriter> {
     let path = logs_dir().join("citrate-gui.log");
     match FileLogWriter::new(path.clone(), MAX_LOG_BYTES) {
-        Ok(w) => Some(w),
+        Ok(w) => Some(RedactingFileLogWriter::new(w)),
         Err(e) => {
             eprintln!(
                 "[crash-telemetry] file log disabled ({} unusable): {e}",
@@ -650,6 +771,129 @@ mod tests {
         assert!(report2.unclean_exit_record.is_none());
         // The earlier unclean-exit record is still surfaced as existing.
         assert_eq!(report2.existing_records, vec![rec_path]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── ENCRYPT-S1 WP-4 (inventory A7/A8): disk redaction ───────────
+
+    /// Synthetic 0x-40-hex address, constructed (not a literal) so the
+    /// marketplace_client "no address literals in src/" tripwire test
+    /// doesn't fire on a redaction fixture. `0xd8dA6BF2…` × 5 → first-6
+    /// is "0xd8dA", last-4 is "6BF2".
+    fn test_addr() -> String {
+        format!("0x{}", "d8dA6BF2".repeat(5))
+    }
+
+    const HASH: &str = "9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7";
+
+    /// Addresses and hashes are truncated to first-6…last-4; the full
+    /// identifier never survives.
+    #[test]
+    fn redaction_truncates_addresses_and_hashes() {
+        let addr = test_addr();
+        let out = redact_for_disk(&format!("sending from {addr} tx {HASH} done"));
+        assert!(out.contains("0xd8dA…6BF2"), "address truncated, got: {out}");
+        assert!(out.contains("9b71d2…3ca7"), "hash truncated, got: {out}");
+        assert!(!out.contains(&addr), "full address must not survive");
+        assert!(!out.contains(HASH), "full hash must not survive");
+        // 0x-prefixed 64-hex (tx hash as usually printed) too.
+        let out2 = redact_for_disk(&format!("tx 0x{HASH} pending"));
+        assert!(out2.contains("0x9b71…3ca7"), "0x-hash truncated, got: {out2}");
+        assert!(!out2.contains(HASH));
+        // Short hex (code pointers like backtrace frame addresses)
+        // is NOT touched.
+        let frames = "at 0x7f3a9c04d123 in start_thread";
+        assert_eq!(redact_for_disk(frames), frames);
+    }
+
+    /// balance/amount-adjacent values become `<redacted>` (decimal,
+    /// separators, JSON-style, and hex values alike); the key survives.
+    #[test]
+    fn redaction_scrubs_balance_and_amount_values() {
+        let out = redact_for_disk("wallet-view balance=1234.56 SALT");
+        assert_eq!(out, "wallet-view balance=<redacted> SALT");
+        let out = redact_for_disk(r#"{"amount": 3_000_000}"#);
+        assert!(out.contains(r#""amount": <redacted>"#), "got: {out}");
+        assert!(!out.contains("3_000_000"));
+        let out = redact_for_disk("total_amount: 42 pending_balance=7");
+        assert!(out.contains("total_amount: <redacted>"), "got: {out}");
+        assert!(out.contains("pending_balance=<redacted>"), "got: {out}");
+        let out = redact_for_disk(&format!("balance=0x{HASH}"));
+        assert_eq!(out, "balance=<redacted>", "hex balance value fully scrubbed");
+        // Redaction is idempotent — re-scrubbing scrubbed text is a no-op.
+        let addr = test_addr();
+        let once = redact_for_disk(&format!("send {addr} balance=9"));
+        assert_eq!(redact_for_disk(&once), once);
+    }
+
+    /// The session marker is redacted on disk AND still parses as JSON
+    /// (redaction happens on field values before serialization).
+    #[test]
+    fn redacted_marker_survives_json_round_trip() {
+        let dir = temp_dir("redact-marker");
+        let marker = marker_path_in(&dir);
+        let addr = test_addr();
+        let state = format!("send-flow to {addr} balance=555.5");
+        write_marker_file(&marker, &state).unwrap();
+
+        let raw = std::fs::read(&marker).unwrap();
+        assert!(
+            !raw.windows(addr.len()).any(|w| w == addr.as_bytes()),
+            "full address must not reach disk"
+        );
+        let parsed: SessionMarker = serde_json::from_slice(&raw).expect("marker stays valid JSON");
+        assert!(parsed.last_state.contains("0xd8dA…6BF2"), "got: {}", parsed.last_state);
+        assert!(parsed.last_state.contains("balance=<redacted>"), "got: {}", parsed.last_state);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Crash records scrub message + last_state at the disk boundary
+    /// but keep the backtrace verbatim (symbols are the forensics).
+    #[test]
+    fn crash_record_on_disk_is_redacted_but_backtrace_kept() {
+        let dir = temp_dir("redact-record");
+        let addr = test_addr();
+        let backtrace = "0: citrate_native::send_flow::submit\n   at src/main.rs:100";
+        let record = CrashRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            app_version: APP_VERSION.to_string(),
+            kind: "panic".to_string(),
+            thread: "main".to_string(),
+            message: format!("send failed for {addr}: amount=12.5 rejected"),
+            location: "src/main.rs:100:5".to_string(),
+            backtrace: backtrace.to_string(),
+            last_state: format!("send-confirm ({addr}, balance=99)"),
+        };
+        let path = write_crash_record(&dir, &record).unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert!(
+            !raw.windows(addr.len()).any(|w| w == addr.as_bytes()),
+            "full address must not reach disk"
+        );
+        let read: CrashRecord = serde_json::from_slice(&raw).unwrap();
+        assert!(read.message.contains("0xd8dA…6BF2"), "got: {}", read.message);
+        assert!(read.message.contains("amount=<redacted>"), "got: {}", read.message);
+        assert!(read.last_state.contains("balance=<redacted>"), "got: {}", read.last_state);
+        assert_eq!(read.backtrace, backtrace, "backtrace symbols kept verbatim");
+        assert_eq!(read.location, "src/main.rs:100:5");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The redacting MakeWriter scrubs what lands in the file log.
+    #[test]
+    fn redacting_log_writer_scrubs_file_output() {
+        let dir = temp_dir("redact-log");
+        let path = dir.join("citrate-gui.log");
+        let inner = FileLogWriter::new(path.clone(), 4096).unwrap();
+        let mut w = RedactingFileLogWriter::new(inner);
+        let addr = test_addr();
+        let line = format!("INFO wallet balance=42.7 owner {addr}\n");
+        w.write_all(line.as_bytes()).unwrap();
+        w.flush().unwrap();
+        let logged = std::fs::read_to_string(&path).unwrap();
+        assert!(logged.contains("balance=<redacted>"), "got: {logged}");
+        assert!(logged.contains("0xd8dA…6BF2"), "got: {logged}");
+        assert!(!logged.contains(&addr), "full address must not reach the log file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
