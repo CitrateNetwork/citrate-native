@@ -21,7 +21,7 @@ export component AppearanceSection inherits VerticalLayout {
             background: root.theme-mode == mode ? Theme.accent : transparent;
             Text {
                 text: mode == "dark" ? "Dark" : (mode == "light" ? "Light" : "System");
-                color: root.theme-mode == mode ? #000000 : Theme.text-secondary;
+                color: root.theme-mode == mode ? Theme.on-accent : Theme.text-secondary;
                 font-size: 12px; font-weight: 500;
                 horizontal-alignment: center; vertical-alignment: center;
             }

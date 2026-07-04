@@ -39,7 +39,7 @@ component IntegrationRow inherits Rectangle {
                 background: root.connected ? Theme.success : transparent;
                 Text {
                     text: root.connected ? "Connected" : (root.show-config ? "Get Token" : "Connect");
-                    color: root.connected ? #000000 : Theme.accent;
+                    color: root.connected ? Theme.on-solid : Theme.accent;
                     font-size: 10px; font-weight: 500;
                     horizontal-alignment: center; vertical-alignment: center;
                 }

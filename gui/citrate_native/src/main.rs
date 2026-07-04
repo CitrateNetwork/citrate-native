@@ -1969,6 +1969,11 @@ fn main() {
     {
         let config = rt.block_on(app_core.config.read());
         ui.set_environment(config.network.to_uppercase().into());
+
+        // NATIVE-R1-S1 WP-1: apply the persisted appearance mode at startup.
+        // "dark" → evergreen dark; "light"/"system" → canonical light.
+        ui.global::<Theme>().set_dark_mode(config.theme == "dark");
+        ui.set_settings_theme_mode(config.theme.clone().into());
     }
 
     // Push bootnode and wallet data to UI
@@ -4705,13 +4710,18 @@ fn main() {
     });
 
     // --- Settings: Set Theme ---
+    // NATIVE-R1-S1 WP-1: flips `Theme.dark-mode` live ("dark" → evergreen
+    // dark; "light"/"system" → canonical warm-paper light) and persists the
+    // choice via config.theme.
     let core = app_core.clone();
+    let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
     ui.on_settings_set_theme(move |mode| {
         let mode_str = mode.to_string();
         tracing::info!("Settings: theme = {}", mode_str);
-        if mode_str != "dark" {
-            tracing::warn!("Settings: '{}' theme not yet implemented — only dark mode is available", mode_str);
+        if let Some(ui) = ui_w.upgrade() {
+            ui.global::<Theme>().set_dark_mode(mode_str == "dark");
+            ui.set_settings_theme_mode(mode_str.clone().into());
         }
         let core = core.clone();
         spawn_async(&rt_h, async move {

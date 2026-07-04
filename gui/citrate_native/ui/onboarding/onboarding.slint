@@ -38,7 +38,7 @@ component OnboardingButton inherits Rectangle {
 
     Text {
         text: root.label;
-        color: root.primary ? #000000 : Theme.text;
+        color: root.primary ? Theme.on-accent : Theme.text;
         font-size: Theme.font-size-md;
         font-weight: Theme.font-weight-semibold;
         horizontal-alignment: center;
@@ -85,7 +85,7 @@ component PersonaCard inherits Rectangle {
             Text {
                 text: root.icon-text;
                 font-size: 20px;
-                color: selected ? #000000 : Theme.text-muted;
+                color: selected ? Theme.on-accent : Theme.text-muted;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }

@@ -87,7 +87,7 @@ component FileRow inherits Rectangle {
 
             Text {
                 text: "Copy link";
-                color: link-touch.has-hover ? #000000 : Theme.text-secondary;
+                color: link-touch.has-hover ? Theme.on-accent : Theme.text-secondary;
                 font-size: 10px;
                 font-weight: 600;
                 horizontal-alignment: center;
@@ -270,7 +270,7 @@ export component StorageView inherits Rectangle {
 
                         Text {
                             text: root.uploading ? "Uploading…" : "Upload";
-                            color: #000000;
+                            color: Theme.on-accent;
                             font-size: 12px;
                             font-weight: 600;
                             horizontal-alignment: center;

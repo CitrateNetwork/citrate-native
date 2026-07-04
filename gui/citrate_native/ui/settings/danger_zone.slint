@@ -44,7 +44,7 @@ export component DangerZoneSection inherits VerticalLayout {
                 height: 32px; width: 250px;
                 border-radius: Theme.radius-md;
                 background: Theme.error;
-                Text { text: "Confirm Reset — This cannot be undone"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Confirm Reset — This cannot be undone"; color: Theme.on-solid; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 TouchArea { clicked => { root.factory-reset(); root.show-confirm = false; } }
             }
         }

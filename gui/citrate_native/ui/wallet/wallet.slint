@@ -44,7 +44,7 @@ component AccountRow inherits Rectangle {
             clip: true;
             Text {
                 text: "A";
-                color: root.active ? #000000 : Theme.text-muted;
+                color: root.active ? Theme.on-accent : Theme.text-muted;
                 font-size: 11px; font-weight: 600;
                 horizontal-alignment: center; vertical-alignment: center;
             }
@@ -90,11 +90,13 @@ component TxRow inherits Rectangle {
         // Type badge
         Rectangle {
             width: 50px; height: 22px; border-radius: 4px; y: 13px;
-            background: root.tx-type == "receive" ? Theme.success :
-                        (root.tx-type == "reward" ? Theme.chamois : Theme.info);
+            background: root.tx-type == "receive" ? Theme.success-bg :
+                        (root.tx-type == "reward" ? Theme.warning-bg : Theme.info-bg);
             Text {
                 text: root.tx-type;
-                color: #000000; font-size: 9px; font-weight: 600;
+                color: root.tx-type == "receive" ? Theme.success-text :
+                       (root.tx-type == "reward" ? Theme.warning-text : Theme.info-text);
+                font-size: 9px; font-weight: 600;
                 horizontal-alignment: center; vertical-alignment: center;
             }
         }
@@ -236,7 +238,7 @@ export component WalletView inherits Rectangle {
                         clip: true;
                         Text {
                             text: "W";
-                            color: #000000; font-size: 16px; font-weight: 700;
+                            color: Theme.on-accent; font-size: 16px; font-weight: 700;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
                     }
@@ -346,7 +348,7 @@ export component WalletView inherits Rectangle {
                     background: send-btn.pressed ? Theme.accent-hover.darker(0.15) :
                                 (send-btn.has-hover ? Theme.accent-hover : Theme.accent);
                     animate background { duration: Theme.duration-fast; easing: ease-in-out; }
-                    Text { text: "Send"; color: #000000; font-size: Theme.font-size-md; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: "Send"; color: Theme.on-accent; font-size: Theme.font-size-md; font-weight: Theme.font-weight-semibold; horizontal-alignment: center; vertical-alignment: center; }
                     send-btn := TouchArea { mouse-cursor: pointer; clicked => { root.send-clicked(); } }
                 }
 
@@ -609,7 +611,7 @@ export component WalletView inherits Rectangle {
                             height: 40px; width: 150px;
                             border-radius: Theme.radius-lg;
                             background: Theme.accent;
-                            Text { text: "Create Wallet"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { text: "Create Wallet"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                             TouchArea { clicked => { root.show-create-dialog = true; } }
                         }
 
@@ -642,7 +644,7 @@ export component WalletView inherits Rectangle {
             // Elevation — lifts the dialog off the overlay backdrop
             drop-shadow-offset-y: 8px;
             drop-shadow-blur: 24px;
-            drop-shadow-color: #00000070;
+            drop-shadow-color: Theme.shadow-color-lg;
             TouchArea {} // block click-through
 
             VerticalLayout {
@@ -696,7 +698,7 @@ export component WalletView inherits Rectangle {
                         height: 40px; horizontal-stretch: 1;
                         border-radius: Theme.radius-md;
                         background: Theme.accent;
-                        Text { text: "Create"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Create"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => { root.create-account(create-pwd.text, create-label.text); root.show-create-dialog = false; } }
                     }
                 }
@@ -719,7 +721,7 @@ export component WalletView inherits Rectangle {
             border-width: 1px; border-color: Theme.border;
             drop-shadow-offset-y: 8px;
             drop-shadow-blur: 24px;
-            drop-shadow-color: #00000070;
+            drop-shadow-color: Theme.shadow-color-lg;
             TouchArea {}
 
             VerticalLayout {
@@ -774,7 +776,7 @@ export component WalletView inherits Rectangle {
                         height: 40px; horizontal-stretch: 1;
                         border-radius: Theme.radius-md;
                         background: Theme.accent;
-                        Text { text: "Import"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Import"; color: Theme.on-accent; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => {
                             if import-input.text != "" {
                                 root.import-from-mnemonic(import-input.text, import-pwd.text);
@@ -802,7 +804,7 @@ export component WalletView inherits Rectangle {
             border-width: 1px; border-color: Theme.border;
             drop-shadow-offset-y: 8px;
             drop-shadow-blur: 24px;
-            drop-shadow-color: #00000070;
+            drop-shadow-color: Theme.shadow-color-lg;
             TouchArea {} // block click-through
 
             VerticalLayout {
@@ -872,7 +874,7 @@ export component WalletView inherits Rectangle {
                         height: 40px; horizontal-stretch: 1;
                         border-radius: Theme.radius-md;
                         background: Theme.warning;
-                        Text { text: "Reveal Key"; color: #000000; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "Reveal Key"; color: Theme.on-solid; font-size: 13px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                         TouchArea { clicked => {
                             if export-pwd.text != "" {
                                 root.export-private-key(export-pwd.text);

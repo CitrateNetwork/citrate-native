@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Mutex, Once, OnceLock};
 
+/// Per-page setup fn run before snapshotting that page.
+type PageConfigurator = fn(&App);
+
 thread_local! {
     static WINDOW: Rc<MinimalSoftwareWindow> =
         MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
@@ -407,9 +410,8 @@ fn ui_visual_proof_suite() {
 
     // ── Part 1: Snapshot smoke — all 12 pages at 3 resolutions (36 screenshots) ──
     {
-        #[allow(clippy::type_complexity)]
-        let pages: Vec<(&str, fn(&App))> = vec![
-            ("dashboard", configure_dashboard as fn(&App)),
+        let pages: Vec<(&str, PageConfigurator)> = vec![
+            ("dashboard", configure_dashboard as PageConfigurator),
             ("wallet", configure_wallet),
             ("chat", configure_chat),
             ("models", configure_models),

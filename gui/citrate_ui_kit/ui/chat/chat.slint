@@ -28,7 +28,7 @@ component MessageBubble inherits Rectangle {
         : (root.role == "user" ? Theme.bg-tertiary : Theme.surface);
     border-width: root.is-tool ? 1px
         : (root.role == "assistant" ? 1px : 0px);
-    border-color: root.is-tool ? Theme.chamois : Theme.border-subtle;
+    border-color: root.is-tool ? Theme.warning : Theme.border-subtle;
 
     property <bool> copied: false;
 
@@ -43,7 +43,7 @@ component MessageBubble inherits Rectangle {
             Text {
                 text: root.is-tool ? ("Tool: " + root.tool-name)
                     : (root.role == "user" ? "You" : "Citrate AI");
-                color: root.is-tool ? Theme.chamois
+                color: root.is-tool ? Theme.warning
                     : (root.role == "user" ? Theme.text-muted : Theme.accent);
                 font-size: 10px;
                 font-weight: 600;
@@ -130,7 +130,7 @@ component ToolApprovalCard inherits Rectangle {
             Text { text: "Tool: " + root.tool-name; color: root.risk-color; font-size: 12px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             Rectangle {
                 height: 18px; width: 50px; border-radius: Theme.radius-sm; background: root.risk-color;
-                Text { text: root.risk-level; color: #000000; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
+                Text { text: root.risk-level; color: Theme.on-solid; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; letter-spacing: 0.5px; }
             }
         }
 
@@ -159,7 +159,7 @@ component ToolApprovalCard inherits Rectangle {
                 background: approve-touch.pressed ? Theme.success.darker(0.2) :
                             (approve-touch.has-hover ? Theme.success.brighter(0.15) : Theme.success);
                 animate background { duration: Theme.duration-fast; }
-                Text { text: "Allow Once"; color: #ffffff; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: "Allow Once"; color: Theme.on-solid; font-size: 11px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
                 approve-touch := TouchArea { mouse-cursor: pointer; clicked => { root.approve(); } }
             }
             Rectangle {
@@ -421,7 +421,7 @@ export component ChatView inherits Rectangle {
 
                     Text {
                         text: "↑";
-                        color: root.model-loaded ? #000000 : Theme.text-muted;
+                        color: root.model-loaded ? Theme.on-accent : Theme.text-muted;
                         font-size: 18px;
                         font-weight: 700;
                         horizontal-alignment: center;

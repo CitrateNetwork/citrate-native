@@ -18,7 +18,7 @@ component StatCard inherits Rectangle {
     // Subtle depth — lifts card off the background on hover
     drop-shadow-offset-y: touch.has-hover ? 2px : 0px;
     drop-shadow-blur: touch.has-hover ? 8px : 0px;
-    drop-shadow-color: touch.has-hover ? #00000030 : transparent;
+    drop-shadow-color: touch.has-hover ? Theme.shadow-color-sm : transparent;
 
     touch := TouchArea {}
 
@@ -67,7 +67,7 @@ component BlockRow inherits Rectangle {
         Text { text: root.hash-text; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
         Text {
             text: root.proposer-short;
-            color: Theme.sage;
+            color: Theme.success;
             font-size: 11px;
             font-family: Theme.font-mono;
             vertical-alignment: center;
@@ -126,14 +126,14 @@ export component Dashboard inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.space-md;
                         StatCard { label: "NODE STATUS"; value: root.node-running ? "Running" : "Stopped"; ok: root.node-running; accent-color: Theme.success; horizontal-stretch: 1; }
-                        StatCard { label: "BLOCK HEIGHT"; value: root.block-height > 0 ? root.block-height : "--"; accent-color: Theme.periwinkle; horizontal-stretch: 1; }
-                        StatCard { label: "PEERS"; value: root.peer-count; ok: root.peer-count > 0; accent-color: Theme.periwinkle; horizontal-stretch: 1; }
+                        StatCard { label: "BLOCK HEIGHT"; value: root.block-height > 0 ? root.block-height : "--"; accent-color: Theme.info; horizontal-stretch: 1; }
+                        StatCard { label: "PEERS"; value: root.peer-count; ok: root.peer-count > 0; accent-color: Theme.info; horizontal-stretch: 1; }
                     }
 
                     HorizontalLayout {
                         spacing: Theme.space-md;
-                        StatCard { label: "MEMPOOL"; value: root.mempool-size + " txns"; accent-color: Theme.aquamarine; horizontal-stretch: 1; }
-                        StatCard { label: "NETWORK"; value: root.peer-count > 0 ? "Connected" : "Offline"; ok: root.peer-count > 0; accent-color: Theme.chamois; horizontal-stretch: 1; }
+                        StatCard { label: "MEMPOOL"; value: root.mempool-size + " txns"; accent-color: Theme.accent-deep; horizontal-stretch: 1; }
+                        StatCard { label: "NETWORK"; value: root.peer-count > 0 ? "Connected" : "Offline"; ok: root.peer-count > 0; accent-color: Theme.warning; horizontal-stretch: 1; }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -181,7 +181,7 @@ export component Dashboard inherits Rectangle {
                                 // Show + prefix when we've earned anything (> 0).
                                 // Parse-free check: any non-zero + non-"0.0000" is a delta.
                                 text: (root.earned != "0" && root.earned != "0.0000" ? "+" : "") + root.earned + " SALT";
-                                color: root.earned != "0" && root.earned != "0.0000" ? Theme.chamois : Theme.text-muted;
+                                color: root.earned != "0" && root.earned != "0.0000" ? Theme.warning : Theme.text-muted;
                                 font-size: 24px;
                                 font-weight: 600;
                                 overflow: elide;

@@ -102,7 +102,7 @@ export component LockScreen inherits Rectangle {
                     Text {
                         text: root.unlocking ? "Unlocking..." :
                               root.locked-out ? "Locked Out" : "Unlock";
-                        color: parent.ready ? #000000 : Theme.text-muted;
+                        color: parent.ready ? Theme.on-accent : Theme.text-muted;
                         font-size: Theme.font-size-md;
                         font-weight: Theme.font-weight-semibold;
                         horizontal-alignment: center;
