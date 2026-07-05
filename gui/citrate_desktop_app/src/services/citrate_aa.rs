@@ -23,13 +23,13 @@ use sha3::{Digest, Keccak256};
 /// (CREATE2 deterministic, reroll-stable; commits df62052/6d4f308).
 pub mod addresses {
     pub const CHAIN_ID: u64 = 40204;
-    pub const ENTRY_POINT: &str = "0x4a86659bdab24dc444c72fbbad4cd83491820e40";
-    pub const FACTORY: &str = "0xd951cb15495cb6541f7541b9194b2d311e12fd57";
-    pub const WALLET_IMPL: &str = "0x99b370120e7f0a4ea4f85cfcb86d4b8d41c3239b";
-    pub const PAYMASTER: &str = "0x96bb6ca3b6a3e2e08a3557dfab6c7a29eb048373";
+    pub const ENTRY_POINT: &str = "0x077Fbc3338A9e6BAD90A3A041E6b7425689754Ef";
+    pub const FACTORY: &str = "0x9C0C25D4355FAE68679711ea99b7642BF3E9a68A";
+    pub const WALLET_IMPL: &str = "0xe641A41b02F1ff114481D357D148bE4519830087";
+    pub const PAYMASTER: &str = "0x884c47518a21496D17d4Dae62e96239B06177D28";
     pub const ECDSA_VALIDATOR: &str = "0xd2d35421379ae5b461e216bfcdd1b7e6a64bbc40";
     pub const WEBAUTHN_VALIDATOR: &str = "0x97ff6d1c4d2f4337ec09f2a1c01808016f728def";
-    pub const GUARDIAN_RECOVERY: &str = "0x42f3d7842d382d47199533a6bfcceaf483c6c857";
+    pub const GUARDIAN_RECOVERY: &str = "0x381B5848f3B5d73FF67b745624780a43682456Ce";
 }
 
 /// Selectors verified with `cast sig` against the canonical signatures.

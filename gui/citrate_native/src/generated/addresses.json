@@ -2,10 +2,10 @@
   "$schema": "./schema.json",
   "aaStack": {
     "CitrateECDSAValidator": "0xd2d35421379ae5b461e216bfcdd1b7e6a64bbc40",
-    "CitratePaymaster": "0x7a9adb27578d6837b8b7e4c9ad953bb328f4fd69",
-    "CitrateWallet": "0x21af0fd5b3cb383e20d07c4cf6f3269320c70ef1",
-    "CitrateWalletFactory": "0xdd5f4fcbbee7a744e583d64ade54d085092cf649",
-    "EntryPoint": "0x575d0d85e272eca8784a4D11F4713C698082c807",
+    "CitratePaymaster": "0x884c47518a21496d17d4dae62e96239b06177d28",
+    "CitrateWallet": "0xe641a41b02f1ff114481d357d148be4519830087",
+    "CitrateWalletFactory": "0x9c0c25d4355fae68679711ea99b7642bf3e9a68a",
+    "EntryPoint": "0x077Fbc3338A9e6BAD90A3A041E6b7425689754Ef",
     "GuardianRecoveryModule": "0x381b5848f3b5d73ff67b745624780a43682456ce",
     "WebAuthnP256Validator": "0x97ff6d1c4d2f4337ec09f2a1c01808016f728def"
   },
@@ -21,6 +21,7 @@
     "BudgetAllocation": "0xc26d0d8c0478ea4595348d02fff4536ee7a9eab6",
     "BulkComputeGateway": "0xf96584f9019619a827d170d5fd233fef391cc8ab",
     "CashoutRequest": "0x70782e9ff764c4c00c2ac46126fc4fb9ee622fbe",
+    "CitrateCooperativeFactory": "0x6fe6fd2aa92e9c8b996258671647b5369b366aa4",
     "ClassroomClusterV1": "0xfda1a1e5fc0b08eac91a883b550b69e391b36856",
     "ClassroomRegistry": "0x47ff1d5f980fda1b5faa06f93808f70b6eb3c5b8",
     "ComputeMarketplace": "0xd7a20ba719c96954c2ed8a0b62ba1649cc19d599",
@@ -58,7 +59,7 @@
     "X402Facilitator": "0x81efcb971d7d1f2a277e5c1c6643164c65769abf",
     "X402Paywall": "0x8ed4dce2e9b24bfbfe4c31227bb163de81cd3000"
   },
-  "deployedAt": "2026-06-29T17:48:12Z",
+  "deployedAt": "2026-07-05T06:49:31Z",
   "deployer": "0x4250675F9015E65fC866F3a373F82bb9DFc000c6",
   "explorerUrl": "https://explorer.citrate.ai",
   "genesis": {
