@@ -62,6 +62,52 @@ jobs:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
           submodules: recursive
 
+      # Same 3-deploy-key SSH alias scheme as ci.yml — the cargo git deps
+      # resolve via github-citrate-* host aliases. Without this the build
+      # dies at `cargo metadata` (v0.4.0-beta.1 first-run failure).
+      - name: Setup SSH agent (3 deploy keys via per-host aliases)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.CHAIN_DEPLOY_KEY }}
+            ${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}
+            ${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}
+
+      - name: Configure SSH host aliases
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+          umask 077
+          echo "${{ secrets.CHAIN_DEPLOY_KEY }}" > ~/.ssh/citrate-chain-readonly
+          echo "${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}" > ~/.ssh/citrate-learning-center-readonly
+          echo "${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}" > ~/.ssh/citrate-agent-runtime-readonly
+          chmod 600 ~/.ssh/citrate-*-readonly
+
+          cat > ~/.ssh/config <<'SSHEOF'
+          Host github-citrate-chain
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-chain-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-learning-center
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-learning-center-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-agent-runtime
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-agent-runtime-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          SSHEOF
+          chmod 600 ~/.ssh/config
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -157,6 +203,45 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.release_tag || github.ref }}
+      - name: Setup SSH agent (3 deploy keys via per-host aliases)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.CHAIN_DEPLOY_KEY }}
+            ${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}
+            ${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}
+      - name: Configure SSH host aliases
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          umask 077
+          echo "${{ secrets.CHAIN_DEPLOY_KEY }}" > ~/.ssh/citrate-chain-readonly
+          echo "${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}" > ~/.ssh/citrate-learning-center-readonly
+          echo "${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}" > ~/.ssh/citrate-agent-runtime-readonly
+          chmod 600 ~/.ssh/citrate-*-readonly
+          cat > ~/.ssh/config <<'SSHEOF'
+          Host github-citrate-chain
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-chain-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-learning-center
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-learning-center-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          Host github-citrate-agent-runtime
+              HostName github.com
+              User git
+              IdentityFile ~/.ssh/citrate-agent-runtime-readonly
+              IdentitiesOnly yes
+              StrictHostKeyChecking accept-new
+          SSHEOF
+          chmod 600 ~/.ssh/config
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux deps for SBOM
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libwayland-dev libssl-dev pkg-config cmake
