@@ -404,13 +404,14 @@ mod tests {
         user1.copy_from_slice(&hex::decode("11".repeat(32)).expect("hex"));
         let got = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &user1)
             .expect("prediction");
-        // cast call 0xd951…FD57 'predictAddress(bytes32)' 0x1111…11
-        assert_eq!(got, "0x5ce327300221659b66323dc344c2275a7da756ff");
+        // Recaptured 2026-07-09 after the 2026-07-05 chain-40204 re-roll:
+        // cast call 0x9C0C…a68A 'predictAddress(bytes32)' 0x1111…11
+        assert_eq!(got, "0x4c11070bc93c32f5fdc775ff9dc53dd606ca7a92");
 
         let uuid_id = uuid_to_user_id(UUID).expect("uuid");
         let got2 = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &uuid_id)
             .expect("prediction");
-        assert_eq!(got2, "0x05d25d894e88b288f3f7508ce6523d79dee5de28");
+        assert_eq!(got2, "0x92c44a821c36add01c9499f8be301099d77ef74d");
     }
 
     #[test]
@@ -465,7 +466,8 @@ mod tests {
     #[test]
     fn user_op_hash_matches_the_live_entrypoint() {
         let op = PackedUserOp {
-            sender: "0x5ce327300221659b66323dc344c2275a7da756ff",
+            // The live-factory prediction for user1 (see test above).
+            sender: "0x4c11070bc93c32f5fdc775ff9dc53dd606ca7a92",
             nonce: 0,
             init_code: &[],
             call_data: &hex::decode("deadbeef").expect("hex"),
@@ -476,9 +478,11 @@ mod tests {
         };
         let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID)
             .expect("hash");
+        // Recaptured 2026-07-09 from the live EntryPoint 0x077F…54Ef
+        // (eth_call getUserOpHash) after the 2026-07-05 re-roll.
         assert_eq!(
             expect_hex(&h),
-            "5369c256d308e61a1fe8b15aaaa7709fee6b8edd46b5c452a9bc5ec8965629fd"
+            "0231f34f02cc36591a3d8c52ffb543219a9a4ca86a20ecade7cc8aac5a759728"
         );
     }
 
