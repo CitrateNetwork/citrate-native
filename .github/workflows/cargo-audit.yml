@@ -34,7 +34,17 @@ jobs:
         # REM-16b (arkworks bump needed):
         #   RUSTSEC-2025-0055 — tracing-subscriber ANSI injection
         #   via ark-relations 0.4 transitive. See audit.toml.
+        # 2026-07-09 (post-CI-outage triage): quick-xml 0194/0195 have no
+        # semver-compatible fix here — both parents pin below 0.41:
+        #   - quick-xml 0.31 via calamine 0.25 (citrate-learning-center
+        #     pinned dep; runtime xlsx parsing — the REAL fix is a calamine
+        #     bump in that repo; issue filed there, re-pin lifts this ignore)
+        #   - quick-xml 0.39 via wayland-scanner proc-macro (build-time
+        #     parsing of trusted Wayland protocol XML only; waits on the
+        #     Slint/winit chain)
         run: |
           cargo audit \
             --color always \
-            --ignore RUSTSEC-2025-0055
+            --ignore RUSTSEC-2025-0055 \
+            --ignore RUSTSEC-2026-0194 \
+            --ignore RUSTSEC-2026-0195
