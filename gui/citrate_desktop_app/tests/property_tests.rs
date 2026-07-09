@@ -159,6 +159,7 @@ proptest! {
             auto_journal: false,
             on_chain_anchoring: false,
             integration_tokens: std::collections::HashMap::new(),
+            encryption_at_rest: true,
         };
 
         let json = serde_json::to_string(&config).expect("serialization succeeded");
