@@ -45,7 +45,9 @@ jobs:
             archive: tar.gz
             os: linux
           - target: x86_64-apple-darwin
-            runner: macos-13
+            # macos-13 was retired by GitHub (2025-12) — jobs queue forever.
+            # macos-15-intel is the supported Intel runner label.
+            runner: macos-15-intel
             archive: tar.gz
             os: macos
           - target: aarch64-apple-darwin
