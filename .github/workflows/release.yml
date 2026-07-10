@@ -174,22 +174,49 @@ jobs:
           echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
           echo "Signing as: $IDENTITY"
 
-      - name: Sign macOS binaries
+      # macOS ships a real .app bundle — a Slint GUI is not launchable from
+      # Finder as a bare Mach-O executable ("does not seem to be an app").
+      # The .app is signed deep + hardened runtime; the tar.gz carries the
+      # .app and the DMG adds a drag-to-Applications symlink.
+      - name: Build + sign .app bundle (macOS)
         if: matrix.os == 'macos'
         shell: bash
         run: |
           set -e
-          [[ -z "${SIGN_IDENTITY:-}" ]] && { echo "no identity — skipping"; exit 0; }
-          for entry in target/${{ matrix.target }}/release/*; do
-            name=$(basename "$entry")
-            [[ -f "$entry" && -x "$entry" ]] || continue
-            case "$name" in *.d|*.rlib|*.so|*.dylib|*.dll|*.pdb) continue ;; esac
-            codesign --force --options runtime --timestamp \
-              --sign "$SIGN_IDENTITY" "$entry"
-            codesign -dv "$entry" 2>&1 | head -3
-          done
+          STAGE="citrate-native-${{ matrix.target }}"
+          APP="dist/$STAGE/Citrate Native.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "target/${{ matrix.target }}/release/citrate-native" "$APP/Contents/MacOS/citrate-native"
+          chmod +x "$APP/Contents/MacOS/citrate-native"
+          cp branding/icons/citrate.icns "$APP/Contents/Resources/citrate.icns"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Citrate Native</string>
+            <key>CFBundleDisplayName</key><string>Citrate Native</string>
+            <key>CFBundleIdentifier</key><string>ai.citrate.native</string>
+            <key>CFBundleVersion</key><string>0.4.0</string>
+            <key>CFBundleShortVersionString</key><string>0.4.0</string>
+            <key>CFBundleExecutable</key><string>citrate-native</string>
+            <key>CFBundleIconFile</key><string>citrate.icns</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          cp LICENSE README.md "dist/$STAGE/" 2>/dev/null || true
+          if [[ -n "${SIGN_IDENTITY:-}" ]]; then
+            codesign --force --deep --options runtime --timestamp \
+              --sign "$SIGN_IDENTITY" "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+          else
+            echo "::warning::no identity — .app is UNSIGNED"
+          fi
+          cd dist && tar -czf "$STAGE.tar.gz" "$STAGE/"
 
       - name: Package release archive
+        if: matrix.os != 'macos'
         shell: bash
         run: |
           set -e
@@ -254,7 +281,13 @@ jobs:
             exit 0
           fi
           STAGE="citrate-native-${{ matrix.target }}"
-          hdiutil create -volname "citrate-native" -srcfolder "dist/$STAGE" \
+          # DMG layout: the .app + a drag-to-Applications symlink (standard
+          # install UX). docs stay in the tar.gz, not the DMG.
+          DMGROOT="$RUNNER_TEMP/dmgroot"
+          rm -rf "$DMGROOT"; mkdir -p "$DMGROOT"
+          cp -R "dist/$STAGE/Citrate Native.app" "$DMGROOT/"
+          ln -s /Applications "$DMGROOT/Applications"
+          hdiutil create -volname "Citrate Native" -srcfolder "$DMGROOT" \
             -ov -format UDZO "dist/$STAGE.dmg"
           codesign --force --timestamp --sign "$SIGN_IDENTITY" "dist/$STAGE.dmg"
           xcrun notarytool submit "dist/$STAGE.dmg" "${NOTARY_ARGS[@]}" --wait
