@@ -235,20 +235,30 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # Preferred CI auth: App Store Connect API key (survives Apple ID
+          # password changes; app-specific passwords are revoked by them).
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           set -e
           [[ -z "${SIGN_IDENTITY:-}" ]] && { echo "unsigned build — skipping notarization"; exit 0; }
-          if [[ -z "${APPLE_ID:-}" || -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
-            echo "::warning::notary secrets not set — signed but NOT notarized"
+          NOTARY_ARGS=()
+          if [[ -n "${NOTARY_KEY_P8:-}" ]]; then
+            echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            NOTARY_ARGS=(--key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+          elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]]; then
+            NOTARY_ARGS=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD")
+          else
+            echo "::warning::no notary secrets set — signed but NOT notarized"
             exit 0
           fi
           STAGE="citrate-native-${{ matrix.target }}"
           hdiutil create -volname "citrate-native" -srcfolder "dist/$STAGE" \
             -ov -format UDZO "dist/$STAGE.dmg"
           codesign --force --timestamp --sign "$SIGN_IDENTITY" "dist/$STAGE.dmg"
-          xcrun notarytool submit "dist/$STAGE.dmg" \
-            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          xcrun notarytool submit "dist/$STAGE.dmg" "${NOTARY_ARGS[@]}" --wait
+          rm -f "$RUNNER_TEMP/notary.p8"
           xcrun stapler staple "dist/$STAGE.dmg"
           # Verify: dmg (stapled) + bare binary (online ticket via cdhash)
           spctl -a -t open --context context:primary-signature -vv "dist/$STAGE.dmg" || true
