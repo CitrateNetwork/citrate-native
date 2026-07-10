@@ -339,7 +339,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: citrate-native-sbom
-          path: 'citrate-native-sbom*.json'
+          # cargo-cyclonedx writes per-crate SBOMs into each crate dir,
+          # not the workspace root — glob recursively or the artifact is
+          # silently empty (upload-artifact only warns).
+          path: '**/citrate-native-sbom*.json'
+          if-no-files-found: error
           retention-days: 90
 
   release:
@@ -357,7 +361,7 @@ jobs:
           path: artifacts
       - run: |
           mkdir -p release-files
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' -o -name '*.json' \) -exec cp {} release-files/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.dmg' -o -name '*.sha256' -o -name '*.json' \) -exec cp {} release-files/ \;
       - id: tag
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
