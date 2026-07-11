@@ -30,6 +30,13 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_RELEASE_DEBUG: 0
   CARGO_TERM_COLOR: always
+  # Force lzma-sys / xz2 to build liblzma from source and link it
+  # statically. Otherwise the macOS runner's Homebrew xz gets dynamically
+  # linked into the binary (load path `/opt/homebrew/opt/xz/lib/liblzma.5.dylib`)
+  # and the hardened-runtime + Developer-ID-signed app refuses to load it
+  # on user machines because it's signed by a different Team ID — crashing
+  # at launch with "Library not loaded: …liblzma.5.dylib … different Team IDs".
+  LZMA_API_STATIC: "1"
 
 jobs:
   build:
@@ -141,6 +148,25 @@ jobs:
           set -e
           cargo build --release --locked --target ${{ matrix.target }}
           ls -la "target/${{ matrix.target }}/release" | head -20
+
+      # Guard: the shipped binary must not link dylibs from the runner's
+      # Homebrew / /usr/local prefix. Those libs are signed by a different
+      # Team ID, so the hardened-runtime Developer-ID app dies at launch on
+      # user machines (DYLD "Library missing"). Fails the build instead of
+      # shipping a DMG that crashes on open.
+      - name: Verify no Homebrew dylib links (macOS)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          set -e
+          BIN="target/${{ matrix.target }}/release/citrate-native"
+          otool -L "$BIN"
+          BAD=$(otool -L "$BIN" | tail -n +2 | grep -E '/opt/homebrew|/usr/local' || true)
+          if [[ -n "$BAD" ]]; then
+            echo "::error::binary links non-system dylibs that will not load on user machines:"
+            echo "$BAD"
+            exit 1
+          fi
 
       # macOS signing: Developer ID + hardened runtime. Skips gracefully
       # (unsigned artifact, loud notice) when the cert secrets are absent
