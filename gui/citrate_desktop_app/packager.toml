@@ -22,7 +22,7 @@ identifier   = "ai.citrate.wallet"
 version      = "0.4.0"
 description  = "Citrate desktop wallet — testnet-beta"
 long-description = """
-End-user desktop wallet for the Citrate Network. Manage accounts, send tCTR transactions, view block history, and run an embedded full node. Built on Slint for native performance on macOS, Windows, and Linux.
+End-user desktop wallet and agent client for the Citrate Network. Manage accounts, send tCTR transactions, and view block history — a light client that connects to the Citrate network over P2P and RPC (full-node operation lives in the separate citrate-core app). Built on Slint for native performance on macOS, Windows, and Linux.
 """
 authors  = ["Citrate Labs <support@citrate.ai>"]
 homepage = "https://citrate.ai"
