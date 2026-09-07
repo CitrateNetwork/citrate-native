@@ -38,6 +38,59 @@ use super::wallet_service::WalletService;
 
 const DEFAULT_AUTH_URL: &str = "https://auth.citrate.ai";
 const DEFAULT_BUNDLER_URL: &str = "https://bundler.citrate.ai/rpc";
+
+/// NAT-B-026: an OIDC `id_token` here is decoded WITHOUT verifying its
+/// signature — the stated justification is that it arrives over TLS
+/// directly from the authority. A `CITRATE_AUTH_URL=http://…` override
+/// evaporates that justification (`sub`, `wallet_address`, `kyc_status`
+/// come from an unauthenticated plaintext response, and `sub` selects the
+/// smart wallet), and on Windows the URL is later handed to `cmd /C start`.
+/// Accept only `https://`, or `http://` on an explicit loopback host.
+fn is_acceptable_authority_url(url: &str) -> bool {
+    let u = url.trim();
+    if let Some(rest) = u.strip_prefix("https://") {
+        return !rest.is_empty();
+    }
+    if let Some(rest) = u.strip_prefix("http://") {
+        // Only loopback may use plaintext http.
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+        if authority.contains('@') {
+            return false; // userinfo confused-deputy
+        }
+        let host = if let Some(after) = authority.strip_prefix('[') {
+            after.split_once(']').map(|(h, _)| h).unwrap_or(after)
+        } else {
+            authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority)
+        };
+        return host == "127.0.0.1"
+            || host == "localhost"
+            || host == "::1"
+            || host
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+    }
+    false
+}
+
+/// Resolve an authority URL from an env override, falling back to the
+/// trusted `default` (secure by construction) when the override is absent
+/// or fails the scheme check — an attacker-supplied `http://evil` must
+/// never be honored.
+fn sanitize_authority_url(env_key: &str, default: &str) -> String {
+    match std::env::var(env_key) {
+        Ok(v) if is_acceptable_authority_url(&v) => v,
+        Ok(v) => {
+            tracing::warn!(
+                "ignoring insecure {} override {:?}: only https:// (or http://loopback) is honored",
+                env_key,
+                v
+            );
+            default.to_string()
+        }
+        Err(_) => default.to_string(),
+    }
+}
 const OIDC_CLIENT_ID: &str = "citrate-gui-native";
 
 /// Persisted link state (JSON next to the app config — holds NO secrets).
@@ -142,8 +195,8 @@ impl CitrateLinkService {
         Self {
             wallet,
             http: reqwest::Client::new(),
-            auth_url: std::env::var("CITRATE_AUTH_URL").unwrap_or_else(|_| DEFAULT_AUTH_URL.to_string()),
-            bundler_url: std::env::var("CITRATE_BUNDLER_URL").unwrap_or_else(|_| DEFAULT_BUNDLER_URL.to_string()),
+            auth_url: sanitize_authority_url("CITRATE_AUTH_URL", DEFAULT_AUTH_URL),
+            bundler_url: sanitize_authority_url("CITRATE_BUNDLER_URL", DEFAULT_BUNDLER_URL),
             link_path,
         }
     }
@@ -335,6 +388,22 @@ impl CitrateLinkService {
                 "This device's key is not yet a validator on the smart wallet — finish linking from the auth.citrate.ai dashboard".to_string(),
             ));
         }
+
+        // NAT-B-020: the UserOp signature is bound to a hardcoded
+        // `addresses::CHAIN_ID` (40204) and a hardcoded EntryPoint, but the
+        // wallet's signing chain-id and RPC target are switchable at runtime.
+        // If the user has switched environments, signing a 40204-domain
+        // operation and submitting it against a different chain is the
+        // replay-across-domain class. Refuse the sponsored path whenever the
+        // active chain-id is not the one the AA address book covers.
+        let active_chain = self.wallet.chain_id();
+        if !sponsored_chain_supported(active_chain) {
+            return Err(AppError::Wallet(format!(
+                "sponsored (gasless) sends are only available on chain {} — the wallet is currently set to chain {}. Switch back to the Citrate network to use a sponsored send.",
+                addresses::CHAIN_ID, active_chain
+            )));
+        }
+
         let rpc_url = self.wallet.get_rpc_url();
 
         // Root-validator nonce (key 0) straight from the EntryPoint.
@@ -737,6 +806,12 @@ fn chrono_like_now() -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mth, d, h, m, s)
 }
 
+/// NAT-B-020: sponsored (AA) UserOps are signed against the hardcoded
+/// `addresses::CHAIN_ID` and EntryPoint, so only that chain is supported.
+fn sponsored_chain_supported(active_chain_id: u64) -> bool {
+    active_chain_id == addresses::CHAIN_ID
+}
+
 fn open_in_browser(url: &str) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     let cmd = std::process::Command::new("open").arg(url).spawn();
@@ -751,6 +826,34 @@ fn open_in_browser(url: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // NAT-B-026: only https:// (or http://loopback) authority URLs honored.
+    #[test]
+    fn natb026_authority_url_scheme_check() {
+        assert!(is_acceptable_authority_url("https://auth.citrate.ai"));
+        assert!(is_acceptable_authority_url("https://bundler.citrate.ai/rpc"));
+        assert!(is_acceptable_authority_url("http://127.0.0.1:8080"));
+        assert!(is_acceptable_authority_url("http://localhost:3000/auth"));
+        assert!(is_acceptable_authority_url("http://[::1]:9000"));
+        // Rejected: plaintext to a routable host (id_token would be
+        // unauthenticated), userinfo confused-deputy, and non-http schemes.
+        assert!(!is_acceptable_authority_url("http://evil.example"));
+        assert!(!is_acceptable_authority_url("http://auth.citrate.ai"));
+        assert!(!is_acceptable_authority_url("http://127.0.0.1@evil.example"));
+        assert!(!is_acceptable_authority_url("ftp://127.0.0.1"));
+        assert!(!is_acceptable_authority_url("javascript:alert(1)"));
+        assert!(!is_acceptable_authority_url("https://"));
+    }
+
+    // NAT-B-020: sponsored sends only on the hardcoded AA chain (40204).
+    #[test]
+    fn natb020_sponsored_chain_guard() {
+        assert!(sponsored_chain_supported(addresses::CHAIN_ID));
+        assert!(sponsored_chain_supported(40204));
+        assert!(!sponsored_chain_supported(1)); // mainnet
+        assert!(!sponsored_chain_supported(11155111)); // sepolia
+        assert!(!sponsored_chain_supported(0));
+    }
 
     #[test]
     fn b64url_round_trips_and_matches_known_vectors() {

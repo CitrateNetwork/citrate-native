@@ -35,7 +35,11 @@ pub const NODE_STORAGE_KEYRING_ACCOUNT: &str = "node-storage-master-key";
 fn load_or_create_storage_key_from(
     store: &dyn crate::ports::SecretStore,
 ) -> Result<[u8; 32], String> {
-    if let Some(hex_key) = store.get_secret(NODE_STORAGE_KEYRING_ACCOUNT) {
+    // NAT-B-027: a transient keychain read error must ABORT, not fall
+    // through to key regeneration (which would wipe the encrypted DB and
+    // the node's P2P identity). `try_get_secret` returns Err on a genuine
+    // read failure and Ok(None) only for a genuinely absent entry.
+    if let Some(hex_key) = store.try_get_secret(NODE_STORAGE_KEYRING_ACCOUNT)? {
         let raw = hex::decode(hex_key.trim())
             .map_err(|e| format!("node storage key in keyring is not hex: {e}"))?;
         let bytes: [u8; 32] = raw
@@ -656,8 +660,8 @@ impl NodeBackend for EmbeddedNodeBackend {
             // helper (single resolver federation-wide), performing DNS for
             // hostnames so the baked hostname-based testnet config
             // (boot1.citrate.ai, …) connects out of the box.
-            let addr = match citrate_network::resolve_bootnode(s).await {
-                Some((_identity, addr)) => addr,
+            let (pinned_identity, addr) = match citrate_network::resolve_bootnode(s).await {
+                Some((identity, addr)) => (identity, addr),
                 None => {
                     tracing::warn!("Cannot resolve bootnode address: {}", s);
                     continue;
@@ -665,14 +669,28 @@ impl NodeBackend for EmbeddedNodeBackend {
             };
 
             tracing::info!("=== Connecting to bootnode {} ===", addr);
-            match transport.connect_to(addr).await {
+            // NAT-B-010: when the bootnode spec pins a Noise static identity
+            // (`identity@host:port`), ENFORCE it — pin-mismatch aborts the
+            // handshake. Pre-fix the parsed pin was dropped and any host that
+            // answered on the address completed the handshake as an impostor,
+            // then pushed blocks the app stored unconditionally. Only an
+            // unpinned (bare host:port) bootnode falls back to `connect_to`.
+            let connect_result = match &pinned_identity {
+                Some(expected_id) => transport.connect_to_trusted(addr, expected_id.clone()).await,
+                None => transport.connect_to(addr).await,
+            };
+            match connect_result {
                 Ok(()) => {
                     connected_count += 1;
-                    tracing::info!("=== CONNECTED to bootnode {} (Noise encrypted) ===", addr);
+                    tracing::info!(
+                        "=== CONNECTED to bootnode {} (Noise encrypted{}) ===",
+                        addr,
+                        if pinned_identity.is_some() { ", identity-pinned" } else { "" }
+                    );
                 }
                 Err(e) => {
                     tracing::error!("=== BOOTNODE CONNECTION FAILED: {} ===", e);
-                    tracing::error!("  Bootnode may be offline or running a different chain");
+                    tracing::error!("  Bootnode may be offline, running a different chain, or failed identity-pin verification");
                 }
             }
         }
@@ -1451,6 +1469,47 @@ mod encryption_tests {
         let storage = open_storage_with_key(dir, None)
             .expect("reverse mismatch should wipe-and-resync");
         assert!(!storage.is_encryption_enabled());
+    }
+
+    /// NAT-B-027: a TRANSIENT keychain read error must abort key loading,
+    /// NOT fall through to regenerating (which would wipe the encrypted DB
+    /// + P2P identity). A store that already holds a key but whose read
+    /// transiently fails must return Err and must NOT overwrite the entry.
+    #[test]
+    fn transient_keychain_error_aborts_not_regenerates() {
+        struct FlakySecrets {
+            existing: String,
+            set_calls: Mutex<u32>,
+        }
+        impl SecretStore for FlakySecrets {
+            fn get_secret(&self, _key: &str) -> Option<String> {
+                // Legacy flattening path would look like "no entry".
+                None
+            }
+            fn try_get_secret(&self, _key: &str) -> Result<Option<String>, String> {
+                // Genuine backend error (locked keychain / denied prompt).
+                let _ = &self.existing;
+                Err("OS keychain read failed: keychain is locked".to_string())
+            }
+            fn set_secret(&self, _key: &str, _value: &str) -> Result<(), String> {
+                *self.set_calls.lock().unwrap() += 1;
+                Ok(())
+            }
+            fn delete_secret(&self, _key: &str) -> Result<(), String> { Ok(()) }
+            fn has_secret(&self, _key: &str) -> bool { true }
+        }
+
+        let store = FlakySecrets {
+            existing: "deadbeef".to_string(),
+            set_calls: Mutex::new(0),
+        };
+        let result = load_or_create_storage_key_from(&store);
+        assert!(result.is_err(), "transient read error must abort, not regenerate");
+        assert_eq!(
+            *store.set_calls.lock().unwrap(),
+            0,
+            "must NOT overwrite the existing key on a transient read error"
+        );
     }
 
     #[test]

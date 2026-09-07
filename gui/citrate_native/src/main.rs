@@ -4,6 +4,8 @@
 use citrate_desktop_app::AppCore;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+// NAT-B-016: wipe password buffers held Rust-side in UI callbacks.
+use zeroize::Zeroizing;
 
 slint::include_modules!();
 
@@ -70,6 +72,42 @@ fn eip55_checksum(addr: &str) -> String {
         })
         .collect();
     format!("0x{}", checksummed)
+}
+
+/// NAT-B-012: validate a recipient address at the send dialog — pre-fix
+/// `on_wallet_send` did NO validation (no 0x/length/hex/checksum), so a
+/// single mistyped character in an otherwise well-formed address was
+/// signed and broadcast (irreversible loss). Accepts lower/upper/`0X`,
+/// trims surrounding whitespace, and — when the input is MIXED case —
+/// requires the EIP-55 checksum to verify (the case that catches typos and
+/// clipboard-substitution). Returns the normalized lowercase `0x` address.
+fn validate_recipient_address(input: &str) -> Result<String, String> {
+    let t = input.trim();
+    let hex = t
+        .strip_prefix("0x")
+        .or_else(|| t.strip_prefix("0X"))
+        .unwrap_or(t);
+    if hex.len() != 40 {
+        return Err("Recipient must be a 20-byte address (40 hex characters after 0x).".to_string());
+    }
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Recipient address contains non-hex characters.".to_string());
+    }
+    let has_upper = hex.chars().any(|c| c.is_ascii_uppercase());
+    let has_lower = hex.chars().any(|c| c.is_ascii_lowercase());
+    if has_upper && has_lower {
+        // Mixed case ⇒ the input claims to be EIP-55 checksummed. It must
+        // verify, or a character is mistyped/substituted.
+        let expected = eip55_checksum(hex);
+        if expected != format!("0x{hex}") {
+            return Err(
+                "Address checksum is invalid (EIP-55) — a character may be mistyped. \
+                 Double-check the recipient."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(format!("0x{}", hex.to_lowercase()))
 }
 
 /// Strip markdown formatting for display in plain-text Slint Text elements.
@@ -334,6 +372,136 @@ mod clipboard_autoclear_tests {
         let wallet_slint = include_str!("../ui/wallet/wallet.slint");
         assert!(wallet_slint.contains("callback clear-export-state"));
         assert!(wallet_slint.contains("root.clear-export-state(); root.show-export-dialog = false"));
+    }
+}
+
+/// RM-Q MEDIUM/LOW remediation — GUI-layer findings.
+#[cfg(test)]
+mod rm_q_gui_tests {
+    use super::*;
+
+    // NAT-B-012: recipient address validation before signing.
+    #[test]
+    fn natb012_recipient_validation() {
+        // Valid all-lowercase (no checksum claim) — accepted, normalized.
+        let lower = "0x52908400098527886e0f7030069857d2e4169ee7";
+        assert_eq!(validate_recipient_address(lower).unwrap(), lower);
+        // Same, uppercase-hex + 0X prefix → normalized lowercase.
+        assert_eq!(
+            validate_recipient_address("0X52908400098527886E0F7030069857D2E4169EE7").unwrap(),
+            lower
+        );
+        // Whitespace trimmed.
+        assert_eq!(validate_recipient_address(&format!("  {lower}  ")).unwrap(), lower);
+        // Wrong length → rejected.
+        assert!(validate_recipient_address("0x1234").is_err());
+        // Non-hex → rejected.
+        assert!(validate_recipient_address("0xZZ908400098527886e0f7030069857d2e4169ee7").is_err());
+        // A VALID EIP-55 mixed-case address verifies.
+        let checksummed = eip55_checksum(lower);
+        assert!(validate_recipient_address(&checksummed).is_ok());
+        // One flipped case bit in a mixed-case address → checksum fails.
+        let mut bytes: Vec<char> = checksummed.chars().collect();
+        // Flip the case of the first alphabetic hex nibble after 0x.
+        for c in bytes.iter_mut().skip(2) {
+            if c.is_ascii_alphabetic() {
+                *c = if c.is_ascii_uppercase() {
+                    c.to_ascii_lowercase()
+                } else {
+                    c.to_ascii_uppercase()
+                };
+                break;
+            }
+        }
+        let tampered: String = bytes.into_iter().collect();
+        assert!(
+            validate_recipient_address(&tampered).is_err(),
+            "a mistyped char in a checksummed address must be rejected"
+        );
+    }
+
+    // NAT-B-013 / NAT-B-021: the Slint properties that were declared but
+    // never written from Rust are now driven. Source-level tripwire in the
+    // same spirit as the existing include_str! guards.
+    #[test]
+    fn natb013_021_slint_state_properties_are_written() {
+        let source = include_str!("main.rs");
+        assert!(source.contains("set_send_sending("), "send-sending must be driven (NAT-B-013)");
+        assert!(source.contains("set_lock_unlocking("), "lock-unlocking must be driven (NAT-B-021)");
+        assert!(source.contains("set_lock_locked_out("), "lock-locked-out must be driven (NAT-B-021)");
+        assert!(source.contains("set_lock_lockout_message("), "lock-lockout-message must be driven (NAT-B-021)");
+    }
+
+    // NAT-B-019: the idle-timeout transition raises the lock screen.
+    #[test]
+    fn natb019_idle_timeout_raises_lock_screen() {
+        let source = include_str!("main.rs");
+        // The timeout branch that stores epoch 0 and toasts must also set
+        // the lock screen and dismiss the send dialog.
+        let idx = source
+            .find("Session expired — unlock your wallet to continue")
+            .expect("idle-timeout toast present");
+        let window = &source[idx.saturating_sub(600)..idx];
+        assert!(
+            window.contains("set_show_lock_screen(true)"),
+            "idle timeout must raise the lock screen (NAT-B-019)"
+        );
+    }
+
+    // NAT-B-017: the export handler routes through the WalletService (shared
+    // lockout), not a fresh KeyManager.
+    #[test]
+    fn natb017_export_routes_through_service() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("core.wallet.export_private_key("),
+            "export must route through WalletService (NAT-B-017)"
+        );
+        // The fresh-KeyManager bypass must be gone from the export handler.
+        assert!(
+            !source.contains("KeyManager::new(&keystore_path)"),
+            "export must not build a fresh KeyManager (NAT-B-017)"
+        );
+    }
+
+    // NAT-B-016: the onboarding mnemonic property is cleared on completion.
+    #[test]
+    fn natb016_mnemonic_property_cleared() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("set_onboarding_mnemonic(\"\".into())"),
+            "onboarding mnemonic must be cleared (NAT-B-016)"
+        );
+    }
+
+    // NAT-B-031: the empty-input verification skip is debug-only.
+    #[test]
+    fn natb031_empty_mnemonic_skip_is_debug_only() {
+        let source = include_str!("main.rs");
+        assert!(
+            source.contains("input_str.is_empty() && cfg!(debug_assertions)"),
+            "empty-mnemonic skip must be gated to debug builds (NAT-B-031)"
+        );
+    }
+
+    // NAT-B-015: CMO super-admin cannot be granted from env in release.
+    #[test]
+    fn natb015_cmo_super_admin_env_is_debug_gated() {
+        let source = include_str!("main.rs");
+        let demo_idx = source
+            .find("std::env::var(\"CITRATE_CMO_DEMO\")")
+            .expect("CITRATE_CMO_DEMO read present");
+        assert!(
+            source[demo_idx.saturating_sub(160)..demo_idx].contains("cfg!(debug_assertions)"),
+            "CITRATE_CMO_DEMO super-admin must be debug-gated (NAT-B-015)"
+        );
+        let e2e_idx = source
+            .find("std::env::var(\"CITRATE_CMO_E2E_TREE\")")
+            .expect("CITRATE_CMO_E2E_TREE read present");
+        assert!(
+            source[e2e_idx.saturating_sub(160)..e2e_idx].contains("cfg!(debug_assertions)"),
+            "CITRATE_CMO_E2E_* overrides must be debug-gated (NAT-B-015)"
+        );
     }
 }
 
@@ -1513,9 +1681,15 @@ fn main() {
     // the same env-var pattern as CITRATE_ROLE / CITRATE_DEMO_MODE
     // documented in citrate_v0.01.1/gui/citrate_learning_center/release/INSTALL.md.
     {
-        let cmo_demo = std::env::var("CITRATE_CMO_DEMO")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        // NAT-B-015: CITRATE_CMO_DEMO grants a client-side super-admin view
+        // with no on-chain role check. Honor it ONLY in debug builds so a
+        // release binary cannot be handed super-admin by its environment
+        // (a wrapper script / modified launcher). Release derives the flag
+        // from the on-chain role path below (E6.1.5) — never from env.
+        let cmo_demo = cfg!(debug_assertions)
+            && std::env::var("CITRATE_CMO_DEMO")
+                .map(|v| v == "true")
+                .unwrap_or(false);
         ui.set_is_cmo_super_admin(cmo_demo);
         if cmo_demo {
             // Stub schools — three example schools for visual demo. Replaced
@@ -1804,10 +1978,22 @@ fn main() {
             // Operator-override env vars (used by E6.7 E2E and visual review
             // against a local anvil deployment). Production reads from
             // EduContracts after the deployment ceremony pins the addrs.
-            let env_tree = std::env::var("CITRATE_CMO_E2E_TREE").ok();
-            let env_registry = std::env::var("CITRATE_CMO_E2E_REGISTRY").ok();
-            let env_rpc = std::env::var("CITRATE_CMO_E2E_RPC").ok();
-            let env_cmo_hash = std::env::var("CITRATE_CMO_E2E_CMO_HASH").ok();
+            // NAT-B-015: the CITRATE_CMO_E2E_* overrides repoint the
+            // institution-tree / compliance-registry contracts and the RPC,
+            // and reaching the `else` branch below grants super-admin. An
+            // env-supplied address must NOT be able to self-grant in a
+            // shipped binary, so honor these overrides ONLY in debug builds;
+            // release always reads the pinned config contracts.
+            let (env_tree, env_registry, env_rpc, env_cmo_hash) = if cfg!(debug_assertions) {
+                (
+                    std::env::var("CITRATE_CMO_E2E_TREE").ok(),
+                    std::env::var("CITRATE_CMO_E2E_REGISTRY").ok(),
+                    std::env::var("CITRATE_CMO_E2E_RPC").ok(),
+                    std::env::var("CITRATE_CMO_E2E_CMO_HASH").ok(),
+                )
+            } else {
+                (None, None, None, None)
+            };
 
             let tree_addr = env_tree
                 .clone()
@@ -2342,9 +2528,14 @@ fn main() {
                     tracing::info!("Mnemonic word {} verified correctly", word_num);
                     ui.set_onboarding_error("".into());
                     ui.set_onboarding_step(3);
-                } else if input_str.is_empty() {
-                    // Empty input = skip verification (for development testing)
-                    tracing::info!("Mnemonic verification skipped (empty input)");
+                } else if input_str.is_empty() && cfg!(debug_assertions) {
+                    // NAT-B-031: the empty-input skip is a DEV-ONLY escape
+                    // hatch. In a RELEASE build `cfg!(debug_assertions)` is
+                    // false, so an empty field falls through to the
+                    // "incorrect" branch below and does NOT advance the
+                    // wizard — a user can no longer complete wallet creation
+                    // without ever recording the recovery phrase.
+                    tracing::info!("Mnemonic verification skipped (empty input, debug build only)");
                     ui.set_onboarding_error("".into());
                     ui.set_onboarding_step(3);
                 } else {
@@ -2448,6 +2639,12 @@ fn main() {
         if let Some(ui) = ui_w.upgrade() {
             ui.set_show_onboarding(false);
             ui.set_active_tab("dashboard".into());
+            // NAT-B-016: the full BIP-39 mnemonic lives in a root-scope Slint
+            // property (`onboarding-mnemonic`). Pre-fix it was written once
+            // and never cleared, so the seed survived for the whole process
+            // lifetime (readable by a core dump / debugger / swap). Clear it
+            // now that onboarding is finished.
+            ui.set_onboarding_mnemonic("".into());
             // Auto-start node if not already running
             if !ui.get_node_running() {
                 tracing::info!("Onboarding: auto-starting node");
@@ -2489,7 +2686,8 @@ fn main() {
         let ui_w = ui_w.clone();
         let to_str = to.to_string();
         let amt_str = amount.to_string();
-        let pwd_str = password.to_string();
+        // NAT-B-016: wipe the Rust-side password copy on drop.
+        let pwd_str = Zeroizing::new(password.to_string());
 
         // NAT-B-002: the confirm-screen password is a real authorization
         // factor, not decoration. Reject an empty field on the interactive
@@ -2505,6 +2703,23 @@ fn main() {
             });
             return;
         }
+
+        // NAT-B-012: validate the recipient BEFORE signing. A malformed or
+        // failed-checksum address is rejected at the dialog rather than
+        // surfacing as a confusing "invalid hex" at signing time — or worse,
+        // being broadcast to a mistyped destination.
+        let to_str = match validate_recipient_address(&to_str) {
+            Ok(normalized) => normalized,
+            Err(e) => {
+                let ui_w = ui_w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_send_error(e.into());
+                    }
+                });
+                return;
+            }
+        };
 
         // Read the currently selected account address from UI state
         let from_addr = ui_w.upgrade()
@@ -2528,6 +2743,14 @@ fn main() {
         };
 
         tracing::info!("Sending {} SALT ({} wei) to {} from {}", amt_str, wei_str, to_str, from_addr);
+        // NAT-B-013: flip the dialog into its in-flight state so the
+        // "Confirm & Send" button is disabled while the send is pending.
+        // Pre-fix `send-sending` was never written from Rust, so the button
+        // stayed enabled and a double-click launched two concurrent sends
+        // that fetched the same nonce.
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_send_sending(true);
+        }
         spawn_async(&rt_h, async move {
             match core.wallet.send_transaction(&from_addr, &to_str, &wei_str, &pwd_str).await {
                 Ok(hash) => {
@@ -2537,6 +2760,9 @@ fn main() {
                         let hash = hash.clone();
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
+                                // NAT-B-013: broadcast done (nonce consumed) —
+                                // re-enable the button.
+                                ui.set_send_sending(false);
                                 ui.set_send_tx_hash(hash.into());
                                 ui.set_send_error("".into());
                                 ui.set_send_receipt_status("Submitted — waiting for receipt…".into());
@@ -2570,6 +2796,8 @@ fn main() {
                     tracing::error!("Send failed: {}", err);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
+                            // NAT-B-013: send failed — re-enable the button.
+                            ui.set_send_sending(false);
                             ui.set_send_error(err.into());
                             ui.set_send_receipt_status("".into());
                         }
@@ -2586,6 +2814,8 @@ fn main() {
             ui.set_send_tx_hash("".into());
             ui.set_send_error("".into());
             ui.set_send_receipt_status("".into());
+            // NAT-B-013: clear the in-flight flag on close.
+            ui.set_send_sending(false);
         }
     });
 
@@ -2596,7 +2826,8 @@ fn main() {
     ui.on_unlock_wallet(move |password| {
         let core = core.clone();
         let ui_w = ui_w.clone();
-        let pwd = password.to_string();
+        // NAT-B-016: wipe the Rust-side password copy on drop.
+        let pwd = Zeroizing::new(password.to_string());
 
         // Use the selected account address (or first account if none selected)
         let selected_addr = ui_w.upgrade()
@@ -2605,6 +2836,17 @@ fn main() {
         let addr = if selected_addr.is_empty() { "primary".to_string() } else { selected_addr };
 
         tracing::info!("Unlocking wallet for {}", addr);
+        // NAT-B-021: drive the lock-screen's "unlocking" state (runs on the
+        // UI thread inside this callback). Pre-fix `lock-unlocking`,
+        // `lock-locked-out`, and `lock-lockout-message` were declared and
+        // rendered but never written from Rust, so a user in the 5-minute
+        // cooldown got no feedback and the Unlock button was never disabled
+        // mid-attempt.
+        if let Some(ui) = ui_w.upgrade() {
+            ui.set_lock_unlocking(true);
+            ui.set_lock_locked_out(false);
+            ui.set_lock_lockout_message("".into());
+        }
         spawn_async(&rt_h, async move {
             match core.wallet.unlock(&addr, &pwd).await {
                 Ok(_status) => {
@@ -2618,6 +2860,9 @@ fn main() {
                     let session_initial = format_session_remaining(SESSION_TIMEOUT_SECS);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
+                            ui.set_lock_unlocking(false);
+                            ui.set_lock_locked_out(false);
+                            ui.set_lock_lockout_message("".into());
                             ui.set_show_lock_screen(false);
                             ui.set_lock_error("".into());
                             ui.set_wallet_session_active(true);
@@ -2628,8 +2873,26 @@ fn main() {
                 Err(e) => {
                     let err = e.to_string();
                     tracing::error!("Unlock failed: {}", err);
+                    // NAT-B-021: surface the cooldown so a legitimate user
+                    // can tell a lockout from a wrong password.
+                    let status = core.wallet.get_session_status().await;
+                    let locked_out = status.is_locked_out;
+                    let lockout_message = if locked_out {
+                        match status.lockout_remaining_seconds {
+                            Some(s) => format!(
+                                "Too many failed attempts — locked for {}s. Try again later.",
+                                s
+                            ),
+                            None => "Too many failed attempts — temporarily locked.".to_string(),
+                        }
+                    } else {
+                        String::new()
+                    };
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
+                            ui.set_lock_unlocking(false);
+                            ui.set_lock_locked_out(locked_out);
+                            ui.set_lock_lockout_message(lockout_message.into());
                             ui.set_lock_error(err.into());
                         }
                     });
@@ -3211,6 +3474,15 @@ fn main() {
                             let ui_for_toast = ui_handle.clone();
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = ui_for_toast.upgrade() {
+                                    // NAT-B-019: raise the lock screen (and
+                                    // dismiss any open send dialog) on the
+                                    // timeout transition. Pre-fix the backend
+                                    // locked but the UI stayed on the wallet
+                                    // panel — balances, addresses, history and
+                                    // the export dialog remained on screen
+                                    // indefinitely on an unattended machine.
+                                    ui.set_show_send_dialog(false);
+                                    ui.set_show_lock_screen(true);
                                     ui.set_clipboard_toast(
                                         "Session expired — unlock your wallet to continue".into()
                                     );
@@ -3949,9 +4221,12 @@ fn main() {
     // Decrypts the on-disk keystore entry with the provided password and returns hex.
     let ui_w = ui.as_weak();
     let rt_h = rt.handle().clone();
+    let core = app_core.clone();
     ui.on_wallet_export_key(move |password| {
         let ui_w = ui_w.clone();
-        let pwd = password.to_string();
+        let core = core.clone();
+        // NAT-B-016: wipe the Rust-side password copy on drop.
+        let pwd = Zeroizing::new(password.to_string());
 
         // Clear any previously exported key state (security: don't leave keys in memory)
         if let Some(ui) = ui_w.upgrade() {
@@ -3975,24 +4250,12 @@ fn main() {
 
         tracing::info!("Wallet: exporting private key for {} (re-auth required)", selected_addr);
         spawn_async(&rt_h, async move {
-            // Create a fresh KeyManager pointing at the same keystore to read the encrypted entry.
-            // This is safe: export_private_key re-decrypts from disk, independent of unlock state.
-            let config = citrate_wallet_core::WalletConfig::default();
-            let keystore_path = std::path::PathBuf::from(&config.keystore_path);
-            let km = citrate_wallet_core::KeyManager::new(&keystore_path);
-
-            if let Err(e) = km.load() {
-                let err = format!("Failed to load keystore: {}", e);
-                tracing::error!("{}", err);
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_w.upgrade() {
-                        ui.set_wallet_export_error(err.into());
-                    }
-                });
-                return;
-            }
-
-            match km.export_private_key(&selected_addr, &pwd) {
+            // NAT-B-017: route the export through WalletService so it shares
+            // the SessionManager brute-force lockout (5 attempts / 5-min
+            // cooldown, persisted across restarts). Pre-fix this built a
+            // fresh KeyManager per attempt, bypassing the lockout entirely —
+            // an unthrottled password oracle against the keystore.
+            match core.wallet.export_private_key(&selected_addr, &pwd).await {
                 Ok(hex_key) => {
                     tracing::info!("Private key exported for {} (length: {} hex chars)", selected_addr, hex_key.len());
                     let ui_for_export = ui_w.clone();
@@ -4038,13 +4301,34 @@ fn main() {
         let core = core.clone();
         tracing::info!("Wallet: requesting SALT from faucet");
 
+        // NAT-B-028: fund the SELECTED account, not always the primary.
+        let selected_addr = ui_w.upgrade()
+            .map(|ui| ui.get_wallet_selected_address().to_string())
+            .unwrap_or_default();
+
         if let Some(ui) = ui_w.upgrade() {
             ui.set_wallet_faucet_status("Requesting...".into());
         }
 
         spawn_async(&rt_h, async move {
-            let address = core.wallet.get_primary_address().await
-                .unwrap_or_default();
+            // NAT-B-028: the faucet only exists on testnet, and hitting a
+            // hardcoded third-party endpoint on any other network leaks an
+            // address↔IP correlation to no purpose. Refuse off testnet.
+            let network = core.config.read().await.network.clone();
+            if network != "testnet" {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.set_wallet_faucet_status("Faucet is available on testnet only".into());
+                    }
+                });
+                return;
+            }
+
+            let address = if !selected_addr.is_empty() {
+                selected_addr
+            } else {
+                core.wallet.get_primary_address().await.unwrap_or_default()
+            };
             if address.is_empty() {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {

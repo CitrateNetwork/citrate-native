@@ -43,21 +43,27 @@ jobs:
             ${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}
 
       - name: Configure SSH host aliases
+        # NAT-B-025: pass the deploy keys through `env:` and reference them
+        # as shell variables rather than splicing `${{ secrets.* }}`
+        # directly into the script body — a secret value can no longer break
+        # out of the surrounding shell context, and the key material never
+        # appears in the rendered run: text.
+        env:
+          CHAIN_DEPLOY_KEY: ${{ secrets.CHAIN_DEPLOY_KEY }}
+          LEARNING_CENTER_DEPLOY_KEY: ${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}
+          AGENT_RUNTIME_DEPLOY_KEY: ${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-          # Find the key files webfactory/ssh-agent dropped
-          chain_key=$(ssh-add -L | awk 'NR==1 {print $3}' | xargs -I{} echo "{}")
-
           # webfactory drops the keys in the agent but not on disk.
           # For per-host IdentityFile mapping, write them out from the
-          # secrets directly so SSH config can point at files.
+          # secrets (via env vars) so SSH config can point at files.
           umask 077
-          echo "${{ secrets.CHAIN_DEPLOY_KEY }}" > ~/.ssh/citrate-chain-readonly
-          echo "${{ secrets.LEARNING_CENTER_DEPLOY_KEY }}" > ~/.ssh/citrate-learning-center-readonly
-          echo "${{ secrets.AGENT_RUNTIME_DEPLOY_KEY }}" > ~/.ssh/citrate-agent-runtime-readonly
+          printf '%s\n' "$CHAIN_DEPLOY_KEY" > ~/.ssh/citrate-chain-readonly
+          printf '%s\n' "$LEARNING_CENTER_DEPLOY_KEY" > ~/.ssh/citrate-learning-center-readonly
+          printf '%s\n' "$AGENT_RUNTIME_DEPLOY_KEY" > ~/.ssh/citrate-agent-runtime-readonly
           chmod 600 ~/.ssh/citrate-*-readonly
 
           cat > ~/.ssh/config <<'SSHEOF'
@@ -98,13 +104,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config libfontconfig1-dev libdbus-1-dev xvfb
 
+      # NAT-B-022: these are real merge gates, not advisory. Pre-fix both
+      # carried `continue-on-error: true`, so a fmt/clippy regression
+      # (including clippy lints that catch several bug classes) could not
+      # fail the build — the `-D warnings` was cosmetic.
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
-        continue-on-error: true
 
       - name: cargo clippy
         run: cargo clippy --all-targets --locked -- -D warnings
-        continue-on-error: true
 
       # Linux: wrap in xvfb so any display-probing dep has a virtual X server.
       # (The Slint tests themselves install a headless software-renderer

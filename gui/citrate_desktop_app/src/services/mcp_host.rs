@@ -119,14 +119,40 @@ fn load_master_key_from_keyring() -> Result<[u8; 32], String> {
     }
 }
 
+/// Constant-time byte-slice equality. Differing lengths are not secret
+/// here (token length is fixed), so a length mismatch short-circuits;
+/// equal-length inputs are compared without a data-dependent branch.
+/// NAT-B-023: bearer-credential comparisons should not leak via timing.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Seal a plaintext token-array JSON blob: MAGIC ‖ nonce ‖ ciphertext.
+///
+/// NAT-B-024: the MAGIC is bound as AES-GCM associated data so the format
+/// version cannot be swapped under the same key (downgrade) and a
+/// ciphertext is not portable to a different-magic context. AAD is not
+/// stored — it is re-derived from the same constant on open.
 fn seal_token_blob(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    use aes_gcm::aead::{Aead, AeadCore, OsRng};
+    use aes_gcm::aead::{Aead, AeadCore, OsRng, Payload};
     use aes_gcm::{Aes256Gcm, KeyInit};
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: TOKEN_VAULT_MAGIC.as_slice(),
+            },
+        )
         .map_err(|e| format!("token vault encrypt: {e}"))?;
     let mut out = Vec::with_capacity(TOKEN_VAULT_MAGIC.len() + nonce.len() + ciphertext.len());
     out.extend_from_slice(TOKEN_VAULT_MAGIC);
@@ -137,7 +163,7 @@ fn seal_token_blob(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> 
 
 /// Open a sealed tokens file back to the plaintext JSON blob.
 fn open_token_blob(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
-    use aes_gcm::aead::Aead;
+    use aes_gcm::aead::{Aead, Payload};
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
     let body = bytes
         .strip_prefix(TOKEN_VAULT_MAGIC.as_slice())
@@ -148,7 +174,13 @@ fn open_token_blob(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, String> {
     let (nonce, ciphertext) = body.split_at(TOKEN_VAULT_NONCE_LEN);
     let cipher = Aes256Gcm::new(key.into());
     cipher
-        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad: TOKEN_VAULT_MAGIC.as_slice(),
+            },
+        )
         .map_err(|e| format!("token vault decrypt: {e}"))
 }
 
@@ -192,14 +224,35 @@ fn write_sealed_tokens(path: &Path, key: &[u8; 32], tokens: &HashMap<String, Aut
             return;
         }
     };
-    if let Err(e) = std::fs::write(path, &sealed) {
-        tracing::warn!("MCP host: failed to persist tokens: {}", e);
-        return;
-    }
+    // NAT-B-024: create the file 0600 BEFORE writing so the sealed bytes
+    // never transit a umask-default (0644) window. On Unix, open with the
+    // mode set at creation time; elsewhere fall back to write-then-chmod.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(&sealed) {
+                    tracing::warn!("MCP host: failed to persist tokens: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("MCP host: failed to open token vault for write: {}", e);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = std::fs::write(path, &sealed) {
+            tracing::warn!("MCP host: failed to persist tokens: {}", e);
+        }
     }
 }
 
@@ -386,11 +439,25 @@ impl McpHostService {
 
     /// Revoke a token by prefix or full string. Returns true when a
     /// token was removed.
+    ///
+    /// NAT-B-023: a prefix match on an empty or ultra-short argument used to
+    /// revoke an arbitrary token — `"".starts_with("")` is true for the first
+    /// HashMap-ordered key, so `revoke_token("")` from the Operations panel
+    /// silently revoked *some* token. Require the argument to be at least as
+    /// long as the 8-char prefix the UI surfaces, prefer a constant-time full
+    /// match, and only fall back to a prefix match at or above that length.
     pub async fn revoke_token(&self, token_or_prefix: &str) -> bool {
+        const MIN_REVOKE_LEN: usize = 8;
+        if token_or_prefix.len() < MIN_REVOKE_LEN {
+            return false;
+        }
         let mut tokens = self.tokens.write().await;
         let target_key = tokens
             .keys()
-            .find(|k| k.as_str() == token_or_prefix || k.starts_with(token_or_prefix))
+            .find(|k| {
+                ct_eq(k.as_bytes(), token_or_prefix.as_bytes())
+                    || (token_or_prefix.len() < k.len() && k.starts_with(token_or_prefix))
+            })
             .cloned();
         if let Some(key) = target_key {
             if let Some(t) = tokens.get_mut(&key) {
@@ -619,6 +686,62 @@ impl JsonRpcResponse {
     }
 }
 
+/// NAT-B-011: DNS-rebinding / cross-origin guard for the loopback MCP
+/// host. The server binds `127.0.0.1` only, but a browser page can rebind
+/// a hostname to `127.0.0.1` and become same-origin, then drive the JSON-
+/// RPC surface. A native MCP client (Hermes / Claude Desktop) never sends
+/// an `Origin`, and its `Host` is loopback; a rebinding page fails both.
+/// Pure so it is unit-tested directly.
+fn is_local_request(origin: Option<&str>, host: Option<&str>) -> bool {
+    // Any Origin header at all means a web context — refuse it.
+    if origin.is_some() {
+        return false;
+    }
+    // If a Host header is present it must name loopback. (Absent Host is
+    // allowed — HTTP/1.0 / direct socket clients.)
+    match host {
+        None => true,
+        Some(h) => {
+            let h = h.trim();
+            let hostname = if let Some(rest) = h.strip_prefix('[') {
+                // `[::1]` or `[::1]:port`
+                rest.split_once(']').map(|(inner, _)| inner).unwrap_or(rest)
+            } else {
+                h.rsplit_once(':').map(|(hn, _)| hn).unwrap_or(h)
+            };
+            hostname == "127.0.0.1"
+                || hostname == "localhost"
+                || hostname == "::1"
+                || hostname
+                    .parse::<std::net::IpAddr>()
+                    .map(|ip| ip.is_loopback())
+                    .unwrap_or(false)
+        }
+    }
+}
+
+/// NAT-B-011: `tools/list` must not serve a grant past its expiry. The
+/// grant carries `expires_at` as an RFC-3339 string; compare it to `now`.
+/// A grant with an unparseable timestamp is treated as expired (fail
+/// closed). Pure so it is unit-tested directly.
+fn grant_is_expired(expires_at_rfc3339: &str, now_secs: u64) -> bool {
+    // Empty string means "never expires" per the CapabilityGrant contract.
+    if expires_at_rfc3339.is_empty() {
+        return false;
+    }
+    match chrono::DateTime::parse_from_rfc3339(expires_at_rfc3339) {
+        Ok(dt) => (dt.timestamp().max(0) as u64) <= now_secs,
+        Err(_) => true,
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Single entry point — all JSON-RPC methods dispatch from here.
 ///
 /// RM-B1 / WP-E5.8 (audit AGT-13): the transport-layer
@@ -632,6 +755,21 @@ async fn dispatch(
     headers: axum::http::HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    // NAT-B-011: DNS-rebinding / cross-origin guard before any work.
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok());
+    let host_hdr = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    if !is_local_request(origin, host_hdr) {
+        return Json(JsonRpcResponse::err(
+            req.id,
+            -32600,
+            "cross-origin or non-loopback request refused (DNS-rebinding guard)",
+        ));
+    }
+
     if req.jsonrpc != "2.0" {
         return Json(JsonRpcResponse::err(req.id, -32600, "Expected jsonrpc: 2.0"));
     }
@@ -762,10 +900,21 @@ async fn handle_initialize(
     host.mcp.add_grant(grant).await;
     // GUI_NATIVE-2026-05-31-005: remember which credential minted this grant
     // so `session/end` can require the same one.
-    host.grant_owners
-        .write()
-        .await
-        .insert(grant_id.clone(), auth_token.clone());
+    // NAT-B-011: reap owner entries whose grant no longer exists in the
+    // live set, so a client looping `initialize` cannot grow `grant_owners`
+    // without bound (the external server caps/expires the grants themselves).
+    {
+        let live: std::collections::HashSet<String> = host
+            .mcp
+            .snapshot_grants()
+            .await
+            .into_iter()
+            .map(|g| g.id)
+            .collect();
+        let mut owners = host.grant_owners.write().await;
+        owners.retain(|gid, _| live.contains(gid) || *gid == grant_id);
+        owners.insert(grant_id.clone(), auth_token.clone());
+    }
     tracing::info!("MCP host: grant {} registered", &grant_id[..8]);
 
     Json(JsonRpcResponse::ok(id, serde_json::json!({
@@ -790,6 +939,11 @@ async fn handle_tools_list(
     let Some(grant) = grants.iter().find(|g| g.id == grant_id && !g.revoked) else {
         return Json(JsonRpcResponse::err(id, -32001, "Unknown or revoked grant_id"));
     };
+    // NAT-B-011: enforce grant expiry here — `initialize` sets `expires_at`
+    // but `tools/list` used to serve the tool inventory indefinitely.
+    if grant_is_expired(&grant.expires_at, now_unix_secs()) {
+        return Json(JsonRpcResponse::err(id, -32001, "grant_id has expired"));
+    }
     let descriptors = host.mcp.list_tools(&grant.policy).await;
     // Serialize each tool definition; McpToolDefinition is already Serialize
     let tools: Vec<serde_json::Value> = descriptors
@@ -819,7 +973,11 @@ async fn handle_session_end(
     {
         let owners = host.grant_owners.read().await;
         if let Some(Some(owner_token)) = owners.get(&grant_id) {
-            if presented != Some(owner_token.as_str()) {
+            // NAT-B-023: constant-time compare of the bearer credential.
+            let ok = presented
+                .map(|p| ct_eq(p.as_bytes(), owner_token.as_bytes()))
+                .unwrap_or(false);
+            if !ok {
                 return Json(JsonRpcResponse::err(
                     id,
                     -32001,
@@ -1247,5 +1405,113 @@ mod tests {
 
         let wrong = [8u8; 32];
         assert!(open_token_blob(&wrong, &sealed).is_err(), "wrong key must fail");
+    }
+
+    // ── NAT-B-024: AEAD associated data binds the vault magic ────────────
+    #[test]
+    fn test_natb024_vault_aad_binds_magic() {
+        use aes_gcm::aead::{Aead, Payload};
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        let key = [9u8; 32];
+        let sealed = seal_token_blob(&key, b"[]").expect("seal");
+        let body = &sealed[TOKEN_VAULT_MAGIC.len()..];
+        let (nonce, ct) = body.split_at(TOKEN_VAULT_NONCE_LEN);
+        let cipher = Aes256Gcm::new((&key).into());
+        // Pre-fix behavior (empty AAD) must NO LONGER open the blob.
+        assert!(cipher
+            .decrypt(Nonce::from_slice(nonce), Payload { msg: ct, aad: b"" })
+            .is_err());
+        // A swapped magic (downgrade) also fails to authenticate.
+        assert!(cipher
+            .decrypt(Nonce::from_slice(nonce), Payload { msg: ct, aad: b"CITMCPV2" })
+            .is_err());
+        // Only the bound magic authenticates.
+        assert!(cipher
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload { msg: ct, aad: TOKEN_VAULT_MAGIC.as_slice() }
+            )
+            .is_ok());
+    }
+
+    // ── NAT-B-023: constant-time compare + revoke min-length ─────────────
+    #[test]
+    fn test_natb023_ct_eq() {
+        assert!(ct_eq(b"abcd", b"abcd"));
+        assert!(!ct_eq(b"abcd", b"abce"));
+        assert!(!ct_eq(b"abc", b"abcd"));
+        assert!(ct_eq(b"", b""));
+    }
+
+    #[tokio::test]
+    async fn test_natb023_revoke_rejects_empty_and_short_prefix() {
+        let host = test_host();
+        let a = host.create_token("a", PolicyProfile::Operator, None).await;
+        let _b = host.create_token("b", PolicyProfile::Operator, None).await;
+        // Empty / short arguments must NOT revoke an arbitrary token.
+        assert!(!host.revoke_token("").await, "empty must not revoke");
+        assert!(!host.revoke_token("a").await, "1-char must not revoke");
+        assert!(!host.revoke_token("abcdefg").await, "7-char must not revoke");
+        // A full token still revokes exactly itself.
+        assert!(host.revoke_token(&a.token).await, "full token revokes");
+    }
+
+    // ── NAT-B-011: DNS-rebinding guard + tools/list expiry ───────────────
+    #[test]
+    fn test_natb011_is_local_request() {
+        // Native client: no Origin, loopback Host → allowed.
+        assert!(is_local_request(None, Some("127.0.0.1:9600")));
+        assert!(is_local_request(None, Some("localhost:9600")));
+        assert!(is_local_request(None, Some("[::1]:9600")));
+        assert!(is_local_request(None, None));
+        // Any Origin (browser/DNS-rebinding page) → refused.
+        assert!(!is_local_request(Some("http://evil.example"), Some("127.0.0.1:9600")));
+        // Rebound hostname in Host → refused.
+        assert!(!is_local_request(None, Some("evil.example:9600")));
+        assert!(!is_local_request(None, Some("attacker.tld")));
+    }
+
+    #[test]
+    fn test_natb011_grant_is_expired() {
+        // now = 1000; a grant expiring at 500 is expired, at 2000 is live.
+        let past = chrono::DateTime::<chrono::Utc>::from_timestamp(500, 0)
+            .unwrap()
+            .to_rfc3339();
+        let future = chrono::DateTime::<chrono::Utc>::from_timestamp(2000, 0)
+            .unwrap()
+            .to_rfc3339();
+        assert!(grant_is_expired(&past, 1000));
+        assert!(!grant_is_expired(&future, 1000));
+        // Unparseable → fail closed (expired).
+        assert!(grant_is_expired("not-a-date", 1000));
+    }
+
+    #[tokio::test]
+    async fn test_natb011_tools_list_refuses_expired_grant() {
+        let host = test_host();
+        // Mint a grant via initialize, then forge an expired grant_id by
+        // driving tools/list against a grant whose expiry is in the past.
+        // Prove an EXPIRED but present grant is refused by tools/list by
+        // pushing one directly (CapabilityGrant is in scope via super::*).
+        let expired = CapabilityGrant {
+            id: "expired-grant".to_string(),
+            issuer: "citrate-gui".to_string(),
+            recipient: "t".to_string(),
+            allowed_tools: vec![],
+            max_value_per_tx: None,
+            allowed_paths: vec![],
+            expires_at: chrono::DateTime::<chrono::Utc>::from_timestamp(1, 0)
+                .unwrap()
+                .to_rfc3339(),
+            policy: PolicyProfile::ReadOnly,
+            revoked: false,
+            connected_since: 0,
+            issuer_pubkey: vec![],
+            signature: vec![],
+        };
+        host.mcp.add_grant(expired).await;
+        let params = serde_json::json!({ "grant_id": "expired-grant" });
+        let resp = handle_tools_list(&host, serde_json::json!(1), params).await;
+        assert!(resp.0.error.is_some(), "expired grant must be refused by tools/list");
     }
 }
