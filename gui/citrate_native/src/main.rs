@@ -1161,6 +1161,57 @@ impl citrate_desktop_app::services::relay_service::ConfirmationGate for RelayApp
     }
 }
 
+/// NAT-B-007: user-initiated contract writes (Learning join/leave/create pool,
+/// provider registration, reward claims, model publish) build calldata and, before
+/// this gate, broadcast on a single button click showing the user no target, no
+/// decoded method, and no amount. Every such write is now submitted to the SAME
+/// `PendingApprovalStore` the signing relay and chat tools use, rendering the
+/// decoded intent on the Operations pending-approvals panel with Approve/Deny.
+///
+/// The call FAILS CLOSED: a declined request, a store timeout, or a dropped
+/// resolution channel all resolve to `false`, and the caller skips the broadcast.
+/// This mirrors the relay's `RelayApprovalGate` (which is the counter-example
+/// the audit flagged these six paths against).
+pub(crate) async fn confirm_tx_intent(
+    approvals: &citrate_agent_core::delegation::PendingApprovalStore,
+    action: &str,
+    to: &str,
+    value_wei: &str,
+    data: &[u8],
+) -> bool {
+    // Decode the 4-byte selector so the confirmation surface names the method
+    // the user is authorizing, not just an opaque address.
+    let method = calldata_decoder::decode_selector(&format!("0x{}", hex::encode(data))).label();
+    let request = citrate_agent_core::canonical::ApprovalRequest {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        session_id: "user-write".to_string(),
+        tool_name: format!("wallet_write:{}", action),
+        params: serde_json::json!({
+            "action": action,
+            "to": to,
+            "value_wei": value_wei,
+            "method": method,
+            "calldata": format!("0x{}", hex::encode(data)),
+        }),
+        risk_level: "high".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        timeout_seconds: 60,
+        resolved: None,
+        resolved_at: None,
+    };
+    tracing::info!(
+        "wallet write: confirmation required — {} → {} ({}), value {} wei",
+        action, method, to, value_wei
+    );
+    let rx = approvals.submit(request).await;
+    // Fail closed: dropped sender / timeout / explicit deny all map to `false`.
+    let approved = rx.await.unwrap_or(false);
+    if !approved {
+        tracing::warn!("wallet write: {} NOT confirmed — broadcast skipped", action);
+    }
+    approved
+}
+
 /// Outcome of polling `eth_getTransactionReceipt` for a submitted tx.
 ///
 /// Ok(Confirmed(block_number_hex)) — status 0x1, tx included in a block.
@@ -5954,6 +6005,19 @@ fn main() {
                         }
                     }
                 });
+                // NAT-B-007: surface the decoded intent, target, and 1000-SALT
+                // stake for explicit Approve/Deny before broadcasting.
+                if !confirm_tx_intent(&core.approvals, "Join learning pool", addr, &stake_wei, &data).await {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_learning_pool_status("Cancelled — join not approved".into());
+                            }
+                        }
+                    });
+                    return;
+                }
                 match core.wallet
                     .send_transaction_with_data(&from, addr, &stake_wei, data, "")
                     .await
@@ -6028,6 +6092,18 @@ fn main() {
                     .map(|ui| ui.get_learning_current_pool_id() as u64)
                     .unwrap_or(0);
                 let data = marketplace_client::encode_leave_pool(pool_id);
+                // NAT-B-007: confirm the leavePool write before broadcasting.
+                if !confirm_tx_intent(&core.approvals, "Leave learning pool", addr, "0", &data).await {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_learning_pool_status("Cancelled — leave not approved".into());
+                            }
+                        }
+                    });
+                    return;
+                }
                 match core.wallet
                     .send_transaction_with_data(&from, addr, "0", data, "")
                     .await
@@ -6101,6 +6177,18 @@ fn main() {
                 let accounts = core.wallet.list_accounts().await;
                 let Some(from) = accounts.first().map(|a| a.address.clone()) else { return; };
                 let data = marketplace_client::encode_claim_rewards();
+                // NAT-B-007: confirm the claimRewards write before broadcasting.
+                if !confirm_tx_intent(&core.approvals, "Claim learning earnings", acc_addr, "0", &data).await {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_clipboard_toast("Cancelled — claim not approved".into());
+                            }
+                        }
+                    });
+                    return;
+                }
                 match core.wallet
                     .send_transaction_with_data(&from, acc_addr, "0", data, "")
                     .await
@@ -6213,6 +6301,18 @@ fn main() {
                         }
                     }
                 });
+                // NAT-B-007: confirm the createPool write (1000-SALT minStake) first.
+                if !confirm_tx_intent(&core.approvals, "Create learning pool", addr, &stake_wei, &data).await {
+                    let _ = slint::invoke_from_event_loop({
+                        let ui_w = ui_w.clone();
+                        move || {
+                            if let Some(ui) = ui_w.upgrade() {
+                                ui.set_create_pool_status("Cancelled — createPool not approved".into());
+                            }
+                        }
+                    });
+                    return;
+                }
                 match core.wallet
                     .send_transaction_with_data(&from, addr, &stake_wei, data, "")
                     .await
@@ -6476,6 +6576,18 @@ fn main() {
                 }
             });
 
+            // NAT-B-007: confirm the registerProvider write (1000-SALT stake) first.
+            if !confirm_tx_intent(&core.approvals, "Register compute provider", market_addr, &stake_wei, &data).await {
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_compute_provider_status("Cancelled — registration not approved".into());
+                        }
+                    }
+                });
+                return;
+            }
             match core
                 .wallet
                 .send_transaction_with_data(&from, market_addr, &stake_wei, data, "")
@@ -6618,6 +6730,18 @@ fn main() {
                 return;
             };
             let data = marketplace_client::encode_claim_rewards();
+            // NAT-B-007: confirm the claimRewards write before broadcasting.
+            if !confirm_tx_intent(&core.approvals, "Claim compute earnings", acc_addr, "0", &data).await {
+                let _ = slint::invoke_from_event_loop({
+                    let ui_w = ui_w.clone();
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_clipboard_toast("Cancelled — claim not approved".into());
+                        }
+                    }
+                });
+                return;
+            }
             match core
                 .wallet
                 .send_transaction_with_data(&from, acc_addr, "0", data, "")
