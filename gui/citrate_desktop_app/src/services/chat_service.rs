@@ -76,6 +76,38 @@ pub trait ChatBackend: Send + Sync {
     async fn list_models(&self) -> Result<Vec<String>, AppError>;
 }
 
+/// The bundled local Ollama-compatible chat endpoint (loopback GPU
+/// server). This is the ONLY endpoint the default chat chain contacts
+/// on a non-devnet install.
+pub const OLLAMA_LOCAL_URL: &str = "http://localhost:11434/v1/chat/completions";
+
+/// True when `rpc_url` targets the local machine (127.0.0.1 / localhost)
+/// rather than a remote sequencer.
+pub fn is_loopback_rpc(rpc_url: &str) -> bool {
+    rpc_url.contains("127.0.0.1") || rpc_url.contains("localhost")
+}
+
+/// The chat endpoints the DEFAULT backend chain will contact for
+/// `rpc_url`, in priority order. **Single source of truth** — `AppCore`
+/// builds its default `ChatService` backend from exactly this list.
+///
+/// SECURITY (NAT-B-001): the remote node-RPC fallback is attached ONLY
+/// when the RPC URL is loopback (an isolated devnet). On testnet/mainnet
+/// the chain is Ollama-only, so a chat prompt — together with the
+/// wallet-address/SALT-balance-bearing system prompt — is NEVER silently
+/// POSTed to the public sequencer (`https://rpc.citrate.ai`) as a
+/// connection-refused fallback. This is what makes the README's "Chat is
+/// local — prompts don't leave the app" true by default. A user who
+/// wants a remote model configures one explicitly (the operator-provided
+/// external provider path), which is honestly opt-in.
+pub fn default_chat_endpoints(rpc_url: &str) -> Vec<String> {
+    let mut endpoints = vec![OLLAMA_LOCAL_URL.to_string()];
+    if is_loopback_rpc(rpc_url) {
+        endpoints.push(rpc_url.to_string());
+    }
+    endpoints
+}
+
 /// Real backend that calls citrate_chatCompletion RPC.
 pub struct RpcChatBackend {
     rpc_url: String,
@@ -945,6 +977,39 @@ mod tests {
             connected: true,
         });
         ChatService::with_backend(events, backend)
+    }
+
+    /// NAT-B-001 tripwire: on the default (testnet) install the resolved
+    /// chat endpoint chain must NOT contain any remote sequencer — the
+    /// only endpoint is the loopback Ollama server. Pre-fix the node-RPC
+    /// fallback (`https://rpc.citrate.ai`) was appended unconditionally,
+    /// so a connection-refused first prompt silently POSTed the prompt +
+    /// wallet-bearing system prompt to the operator. RED at parent.
+    #[test]
+    fn test_natb001_default_chat_chain_is_loopback_only() {
+        // The testnet default RPC (see AppConfig::active_rpc_url).
+        let testnet_rpc = "https://rpc.citrate.ai";
+        let endpoints = default_chat_endpoints(testnet_rpc);
+        for ep in &endpoints {
+            assert!(
+                is_loopback_rpc(ep),
+                "default chat endpoint must be loopback, got remote: {ep}"
+            );
+        }
+        // Ollama-only on testnet — no remote fallback attached.
+        assert_eq!(endpoints, vec![OLLAMA_LOCAL_URL.to_string()]);
+    }
+
+    /// The devnet path (loopback RPC) DOES keep the node-RPC fallback —
+    /// contacting the local embedded node is inside the trust boundary.
+    #[test]
+    fn test_natb001_devnet_keeps_local_node_fallback() {
+        let devnet_rpc = "http://127.0.0.1:8545";
+        let endpoints = default_chat_endpoints(devnet_rpc);
+        assert_eq!(endpoints.len(), 2, "devnet keeps the local node fallback");
+        for ep in &endpoints {
+            assert!(is_loopback_rpc(ep), "devnet fallback stays loopback: {ep}");
+        }
     }
 
     #[tokio::test]

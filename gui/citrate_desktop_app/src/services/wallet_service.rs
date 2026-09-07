@@ -54,6 +54,18 @@ pub trait WalletBackend: Send + Sync {
     }
     /// Verify password and unlock session
     async fn unlock(&self, address: &str, password: &str) -> Result<bool, AppError>;
+    /// Verify a keystore password WITHOUT changing session/view state.
+    ///
+    /// NAT-B-002: signing entry points thread the "Confirm Transaction"
+    /// password through to here so a *wrong* password fails closed instead
+    /// of being silently discarded at the signer. An EMPTY password means
+    /// "session-authorized programmatic send" (the calldata/link paths pass
+    /// `""`) and is accepted — the session-active + re-auth gates still
+    /// apply. The default impl accepts everything; only the production
+    /// backend (which owns a keystore) can actually check a password.
+    async fn verify_password(&self, _password: &str) -> Result<(), AppError> {
+        Ok(())
+    }
     /// Lock the session
     async fn lock(&self) -> Result<(), AppError>;
     /// Sign and send a transaction, return tx hash
@@ -144,6 +156,22 @@ impl Default for WalletCoreBackend {
     }
 }
 
+#[cfg(test)]
+impl WalletCoreBackend {
+    /// Build a backend against an explicit keystore path so NAT-B-002's
+    /// password-verification tripwire can drive the production signer with
+    /// a real (temp) keystore instead of the user's default keystore.
+    pub fn with_keystore_path(keystore_path: &std::path::Path) -> Self {
+        Self {
+            key_manager: Arc::new(citrate_wallet_core::KeyManager::new(keystore_path)),
+            rpc_client: std::sync::RwLock::new(Arc::new(citrate_wallet_core::RpcClient::new(
+                "http://127.0.0.1:1", // unreachable — the password gate must fire first
+            ))),
+            chain_id: std::sync::atomic::AtomicU64::new(40204),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl WalletBackend for WalletCoreBackend {
     async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
@@ -196,7 +224,34 @@ impl WalletBackend for WalletCoreBackend {
         Ok(())
     }
 
-    async fn send_transaction(&self, from: &str, to: &str, value_wei: &str, _password: &str) -> Result<String, AppError> {
+    async fn verify_password(&self, password: &str) -> Result<(), AppError> {
+        // Empty = session-authorized programmatic send (calldata/link
+        // paths). The session-active + re-auth gates in `WalletService`
+        // still govern these; there is no password to check.
+        if password.is_empty() {
+            return Ok(());
+        }
+        // Non-empty: the user typed a password on the confirm screen. It
+        // MUST be correct. `unlock` re-derives keys under `password` and
+        // returns `InvalidPassword` when none decrypt — a pure check that
+        // never *clears* already-unlocked keys (it only inserts on
+        // success), so a wrong guess here cannot lock the wallet.
+        match self.key_manager.unlock(password) {
+            Ok(_) => Ok(()),
+            Err(citrate_wallet_core::WalletError::InvalidPassword) => {
+                Err(AppError::Wallet("Incorrect password".to_string()))
+            }
+            Err(e) => Err(AppError::Wallet(format!("Password verification failed: {}", e))),
+        }
+    }
+
+    async fn send_transaction(&self, from: &str, to: &str, value_wei: &str, password: &str) -> Result<String, AppError> {
+        // NAT-B-002: verify the confirm-screen password BEFORE signing.
+        // A wrong (or, on the interactive path, empty) password must not
+        // produce a signature. Empty is accepted here only for the
+        // session-authorized programmatic callers (see `verify_password`).
+        self.verify_password(password).await?;
+
         // Get the signing key (must be unlocked)
         let unified_key = self.key_manager.get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
@@ -240,7 +295,10 @@ impl WalletBackend for WalletCoreBackend {
         Ok(tx_hash)
     }
 
-    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, data: Vec<u8>, _password: &str) -> Result<String, AppError> {
+    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, data: Vec<u8>, password: &str) -> Result<String, AppError> {
+        // NAT-B-002: same confirm-screen password gate as send_transaction.
+        self.verify_password(password).await?;
+
         let unified_key = self.key_manager.get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
@@ -342,9 +400,31 @@ impl WalletBackend for TestWalletBackend {
     async fn unlock(&self, _address: &str, password: &str) -> Result<bool, AppError> {
         Ok(password.len() >= 8)
     }
+    /// NAT-B-002: mirror the keystore rule (`>= 8` = "correct") so the
+    /// service-level verify/refresh path can be exercised. Empty is the
+    /// session-authorized programmatic path.
+    async fn verify_password(&self, password: &str) -> Result<(), AppError> {
+        if password.is_empty() || password.len() >= 8 {
+            Ok(())
+        } else {
+            Err(AppError::Wallet("Incorrect password".to_string()))
+        }
+    }
     async fn lock(&self) -> Result<(), AppError> { Ok(()) }
     async fn send_transaction(&self, _from: &str, _to: &str, _value: &str, _password: &str) -> Result<String, AppError> {
         Ok("0x0000000000000000000000000000000000000000000000000000000000000000".to_string())
+    }
+    /// NAT-B-003: reachable signer so the value-reauth chokepoint in
+    /// `WalletService::sign_digest_recoverable` is what stops a stale-
+    /// session high-value sponsored send — not the default "unsupported"
+    /// error. Returns a dummy 65-byte signature when the gate lets it
+    /// through.
+    async fn sign_digest_recoverable(
+        &self,
+        _address: &str,
+        _digest: [u8; 32],
+    ) -> Result<[u8; 65], AppError> {
+        Ok([0u8; 65])
     }
 }
 
@@ -705,6 +785,20 @@ impl WalletService {
     /// Pre-fix it silently skipped the threshold check (the signing backend
     /// would still reject it later, but a security chokepoint must not rely
     /// on a downstream layer to catch what it let through).
+    /// NAT-B-002: verify the confirm-screen password against the keystore
+    /// and, on success, refresh `last_unlock_at` so the freshly-proved
+    /// password satisfies the high-value re-auth window. A wrong password
+    /// fails closed (no signature, no refresh). An EMPTY password is the
+    /// session-authorized programmatic path — accepted, but it does NOT
+    /// refresh the clock (only real password possession does).
+    async fn verify_and_refresh_reauth(&self, password: &str) -> Result<(), AppError> {
+        self.backend.verify_password(password).await?;
+        if !password.is_empty() {
+            *self.last_unlock_at.write().await = Some(Instant::now());
+        }
+        Ok(())
+    }
+
     async fn enforce_value_reauth(&self, value_wei: &str) -> Result<(), AppError> {
         let value = value_wei.parse::<u128>().map_err(|_| {
             AppError::Wallet(format!(
@@ -742,6 +836,14 @@ impl WalletService {
         if !status.is_active {
             return Err(AppError::SessionExpired);
         }
+
+        // NAT-B-002: the confirm-screen password is verified here (fails
+        // closed on a wrong password) and, on success, REFRESHES the
+        // re-auth clock — so typing the correct password is what lets a
+        // high-value send clear `enforce_value_reauth` below. An empty
+        // password is the session-authorized programmatic path (no
+        // refresh; the value threshold still governs).
+        self.verify_and_refresh_reauth(password).await?;
 
         // RM-B1 / WP-E2.5 (audit WAL-07): high-value re-auth threshold.
         self.enforce_value_reauth(value_wei).await?;
@@ -784,6 +886,10 @@ impl WalletService {
             return Err(AppError::SessionExpired);
         }
 
+        // NAT-B-002: verify the confirm-screen password (fail closed) and
+        // refresh the re-auth clock on success.
+        self.verify_and_refresh_reauth(password).await?;
+
         // RM-B / GUI_NATIVE-001 (audit WAL-07 bypass fix): the calldata
         // path honors `value_wei` (staking joinPool/registerProvider send
         // 1000 SALT), so it must enforce the SAME high-value re-auth
@@ -813,14 +919,29 @@ impl WalletService {
 
     /// Recoverable secp256k1 over a pre-hashed digest (EW-S1 WP-8:
     /// the sponsored-UserOp signature). Session must be active.
+    ///
+    /// NAT-B-003: this is a full signing entry point, so it enforces the
+    /// SAME high-value re-auth threshold as `send_transaction`. The
+    /// sponsored (ERC-4337) send path moves `value_wei` out of the smart
+    /// wallet; before this fix it reached the signer on a session-active
+    /// check alone, letting an unlimited-value sponsored send succeed on a
+    /// session whose password was entered up to an hour ago. `value_wei`
+    /// is now REQUIRED so the re-auth chokepoint cannot be skipped — the
+    /// invariant documented at `enforce_value_reauth` holds for every
+    /// signer.
     pub async fn sign_digest_recoverable(
         &self,
         address: &str,
         digest: [u8; 32],
+        value_wei: &str,
     ) -> Result<[u8; 65], AppError> {
         let status = self.current_status().await;
         if !status.is_active {
             return Err(AppError::SessionExpired);
+        }
+        self.enforce_value_reauth(value_wei).await?;
+        if let Some(addr) = self.active_address.read().await.clone() {
+            self.session_mgr.write().await.touch_session(&addr);
         }
         self.backend.sign_digest_recoverable(address, digest).await
     }
@@ -973,7 +1094,7 @@ mod tests {
         let svc = WalletService::with_backend(events, Arc::new(TestWalletBackend));
 
         svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-        svc.send_transaction("0xfrom", "0xto", "1000", "pass").await.expect("async operation succeeded");
+        svc.send_transaction("0xfrom", "0xto", "1000", "password123").await.expect("async operation succeeded");
 
         let event = rx.recv().await.expect("event received");
         match event {
@@ -1184,24 +1305,29 @@ mod tests {
             );
         }
 
-        // Above-threshold send must require re-auth.
+        // NAT-B-002 (RC-8 inversion): pre-fix this asserted that a stale
+        // session with the CORRECT password still failed re-auth — because
+        // the confirm-screen password was discarded and could not refresh
+        // the clock. That pinned the very bug NAT-B-002 fixes. The
+        // stale-session-must-fail case is now the EMPTY (programmatic, no
+        // password) path: no fresh password means no re-auth.
         let big_value = RE_AUTH_THRESHOLD_WEI.to_string();
         let r = svc
-            .send_transaction("0xabc", "0xto", &big_value, "password123")
+            .send_transaction("0xabc", "0xto", &big_value, "")
             .await;
         match r {
             Err(AppError::Wallet(msg)) => {
                 assert!(msg.contains("Re-authentication"), "msg = {}", msg);
             }
-            other => panic!("expected re-auth error, got {:?}", other),
+            other => panic!("expected re-auth error on empty-password stale send, got {:?}", other),
         }
 
-        // Re-unlock refreshes the timestamp; high-value send works.
-        svc.unlock("0xabc", "password123").await.expect("re-unlock");
+        // Typing the CORRECT password IS the re-auth: it refreshes the
+        // clock and the high-value send goes through on the same session.
         let r = svc
             .send_transaction("0xabc", "0xto", &big_value, "password123")
             .await;
-        assert!(r.is_ok(), "high-value send works after fresh unlock");
+        assert!(r.is_ok(), "correct confirm-screen password authorizes the high-value send");
     }
 
     /// RM-B / GUI_NATIVE-001 (audit WAL-07 bypass): the calldata-bearing
@@ -1230,10 +1356,13 @@ mod tests {
         }
 
         // 1000-SALT (100x threshold) staking call via the calldata path
-        // must now require re-auth (this is the bug being closed).
+        // on a stale session with NO fresh password (the programmatic
+        // "" path) must require re-auth. NAT-B-002 RC-8 inversion: the
+        // stale-fail case is the empty-password path, not a discarded
+        // valid password.
         let big_value = (RE_AUTH_THRESHOLD_WEI * 100).to_string();
         let r = svc
-            .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "password123")
+            .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "")
             .await;
         match r {
             Err(AppError::Wallet(msg)) => {
@@ -1242,12 +1371,133 @@ mod tests {
             other => panic!("expected re-auth error on calldata path, got {:?}", other),
         }
 
-        // Fresh unlock re-enables the high-value calldata send.
-        svc.unlock("0xabc", "password123").await.expect("re-unlock");
+        // Typing the correct password refreshes the clock and re-enables
+        // the high-value calldata send on the same session.
         let r = svc
             .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "password123")
             .await;
-        assert!(r.is_ok(), "high-value calldata send works after fresh unlock");
+        assert!(r.is_ok(), "correct password authorizes the high-value calldata send");
+    }
+
+    /// NAT-B-002: the production signer must VERIFY the confirm-screen
+    /// password. A wrong password fails closed BEFORE any signing or
+    /// network call — pre-fix `_password` was discarded and any string
+    /// (wrong or empty) signed and broadcast. RED at parent.
+    #[tokio::test]
+    async fn test_natb002_wrong_password_does_not_sign() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keystore = dir.path().join("keystore.json");
+        let backend = WalletCoreBackend::with_keystore_path(&keystore);
+        let created = backend
+            .create_wallet("correct-horse-battery", "Primary")
+            .await
+            .expect("create wallet");
+        let from = created.address;
+
+        // Wrong password: rejected as an Incorrect-password error, and
+        // NOT a network error — proving the check fires before signing.
+        let err = backend
+            .send_transaction(&from, "0xdead", "1000", "definitely-wrong-password")
+            .await
+            .expect_err("wrong password must not sign");
+        match err {
+            AppError::Wallet(msg) => {
+                assert!(msg.contains("Incorrect password"), "got: {msg}")
+            }
+            other => panic!("wrong password must be an Incorrect-password error, got {other:?}"),
+        }
+
+        // Correct password passes the gate → it unlocks and reaches the
+        // (unreachable) network, i.e. a Network error, not a password one.
+        let err = backend
+            .send_transaction(&from, "0xdead", "1000", "correct-horse-battery")
+            .await
+            .expect_err("network is unreachable in test");
+        assert!(
+            matches!(err, AppError::Network(_)),
+            "correct password must pass the password gate and fail at the network, got {err:?}"
+        );
+
+        // Empty password is the session-authorized programmatic path: the
+        // key is now unlocked (from the correct send above), so it reaches
+        // the signer/network — NOT rejected as a wrong password.
+        let err = backend
+            .send_transaction(&from, "0xdead", "1000", "")
+            .await
+            .expect_err("network is unreachable in test");
+        assert!(
+            matches!(err, AppError::Network(_)),
+            "empty password (programmatic) must reach the signer, got {err:?}"
+        );
+    }
+
+    /// NAT-B-002: at the service layer, the correct confirm-screen
+    /// password REFRESHES the re-auth clock (so it can authorize a
+    /// high-value send on an otherwise-stale session), and a wrong
+    /// password is refused. Complements the backend tripwire above.
+    #[tokio::test]
+    async fn test_natb002_service_verifies_and_refreshes_reauth() {
+        let svc = test_service();
+        svc.unlock("0xabc", "password123").await.expect("unlock");
+
+        // Age the unlock beyond freshness.
+        {
+            let mut last = svc.last_unlock_at.write().await;
+            *last = Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
+        }
+
+        // Wrong password: refused, no refresh, no send.
+        let big = RE_AUTH_THRESHOLD_WEI.to_string();
+        match svc.send_transaction("0xabc", "0xto", &big, "short").await {
+            Err(AppError::Wallet(msg)) => assert!(msg.contains("Incorrect password"), "got {msg}"),
+            other => panic!("wrong password must be refused, got {other:?}"),
+        }
+
+        // Correct password: refreshes the clock, high-value send succeeds.
+        assert!(
+            svc.send_transaction("0xabc", "0xto", &big, "password123").await.is_ok(),
+            "correct password must refresh re-auth and authorize the send"
+        );
+    }
+
+    /// NAT-B-003: `sign_digest_recoverable` (the ERC-4337 sponsored-send
+    /// signer) enforces the SAME high-value re-auth threshold as the plain
+    /// send. Pre-fix it signed an arbitrary digest on a session-active
+    /// check alone, so an unlimited-value sponsored send succeeded on a
+    /// stale session. RED at parent (the method took no value and had no
+    /// re-auth call). RC-8: `test_wal07_*` did not cover this path.
+    #[tokio::test]
+    async fn test_natb003_sign_digest_enforces_value_reauth() {
+        let svc = test_service();
+        svc.unlock("0xabc", "password123").await.expect("unlock");
+
+        // Sub-threshold sponsored signature works.
+        let small = (RE_AUTH_THRESHOLD_WEI / 2).to_string();
+        assert!(
+            svc.sign_digest_recoverable("0xabc", [7u8; 32], &small).await.is_ok(),
+            "sub-threshold sponsored signature must work"
+        );
+
+        // Age the unlock beyond freshness.
+        {
+            let mut last = svc.last_unlock_at.write().await;
+            *last = Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
+        }
+
+        // Unlimited-value (1000x threshold) sponsored send on a stale
+        // session must now require re-auth — the bug being closed.
+        let huge = (RE_AUTH_THRESHOLD_WEI * 1000).to_string();
+        match svc.sign_digest_recoverable("0xabc", [7u8; 32], &huge).await {
+            Err(AppError::Wallet(msg)) => assert!(msg.contains("Re-authentication"), "msg = {msg}"),
+            other => panic!("expected re-auth error on stale high-value sponsored send, got {other:?}"),
+        }
+
+        // Fresh unlock re-enables it.
+        svc.unlock("0xabc", "password123").await.expect("re-unlock");
+        assert!(
+            svc.sign_digest_recoverable("0xabc", [7u8; 32], &huge).await.is_ok(),
+            "high-value sponsored send works after fresh unlock"
+        );
     }
 
     /// RM-B1 / WP-E2.6 (audit WAL-08): per-account session view.
@@ -1345,7 +1595,10 @@ mod tests {
         svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
 
         for amount in ["0", "1", "1000000000000000000", "999999999999999999999"] {
-            let result = svc.send_transaction("0xfrom", "0xto", amount, "pwd").await;
+            // NAT-B-002: filler password must now be a *valid* one — the
+            // signer verifies it. (Was "pwd"; behaviour under test is the
+            // amount handling, not the password.)
+            let result = svc.send_transaction("0xfrom", "0xto", amount, "password123").await;
             assert!(result.is_ok(), "Send should succeed for amount {}", amount);
         }
     }

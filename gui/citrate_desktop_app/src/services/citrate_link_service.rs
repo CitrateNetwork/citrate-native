@@ -371,7 +371,13 @@ impl CitrateLinkService {
         let digest = citrate_aa::get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID)
             .map_err(|e| AppError::Wallet(format!("userOpHash: {}", e)))?;
 
-        let signature = self.wallet.sign_digest_recoverable(&link.eoa, digest).await?;
+        // NAT-B-003: the sponsored send moves `value_wei` out of the smart
+        // wallet, so the signer must clear the high-value re-auth
+        // threshold just like a plain send. Pass the value through.
+        let signature = self
+            .wallet
+            .sign_digest_recoverable(&link.eoa, digest, &value_wei.to_string())
+            .await?;
 
         // Unpacked v0.7 wire shape for eth-infinitism's bundler.
         let wire = serde_json::json!({

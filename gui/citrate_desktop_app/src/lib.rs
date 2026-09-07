@@ -567,16 +567,25 @@ impl AppCore {
             events.clone(),
         ));
         let wallet = Arc::new(services::WalletService::new(events.clone()));
-        // Chat: local-first, private-by-default
-        // Ollama primary (fast local GPU, localhost:11434) → node GGUF RPC fallback (slow CPU)
-        // Never sends data externally unless the user explicitly configures an API key.
+        // Chat: local-first, private-by-default.
+        // NAT-B-001: the endpoint chain is resolved by
+        // `chat_service::default_chat_endpoints`, which appends the remote
+        // node-RPC fallback ONLY on a loopback (devnet) RPC. On
+        // testnet/mainnet the chain is Ollama-only (localhost), so a
+        // prompt + wallet-bearing system prompt is never silently POSTed
+        // to the public sequencer. Never sends data externally unless the
+        // user explicitly configures an API key.
         let chat = {
-            use services::chat_service::{OpenAICompatibleBackend, RpcChatBackend, FallbackChatBackend};
-            let ollama = Arc::new(OpenAICompatibleBackend::new(
-                "http://localhost:11434/v1/chat/completions", ""
-            ));
-            let node_rpc = Arc::new(RpcChatBackend::new(&rpc_url));
-            let backend = Arc::new(FallbackChatBackend::new(ollama).with_fallback(node_rpc));
+            use services::chat_service::{OpenAICompatibleBackend, RpcChatBackend, FallbackChatBackend, default_chat_endpoints};
+            let endpoints = default_chat_endpoints(&rpc_url);
+            // endpoints[0] is always the local Ollama-compatible server;
+            // any further entry (devnet only) is a node-RPC fallback.
+            let ollama = Arc::new(OpenAICompatibleBackend::new(&endpoints[0], ""));
+            let mut fallback = FallbackChatBackend::new(ollama);
+            for ep in &endpoints[1..] {
+                fallback = fallback.with_fallback(Arc::new(RpcChatBackend::new(ep)));
+            }
+            let backend = Arc::new(fallback);
             // Model name will be updated by detect_local_backend() in the GUI layer.
             // Default to a safe placeholder; the real model is set after async detection.
             Arc::new(services::ChatService::with_backend_and_model(

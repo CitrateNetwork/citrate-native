@@ -115,6 +115,20 @@ citrate-network     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/cit
 citrate-economics   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "385e82e11cb1bc21a9bf38813a1dc94a924ed8be" }
 citrate-api         = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "385e82e11cb1bc21a9bf38813a1dc94a924ed8be" }
 citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", rev = "7b7eb9fa9f0855b468dcd12ec4dd856fe196f7e2" }
+#
+# NAT-B-006 (HELD — upstream fix required): `citrate-edu-app`
+# (citrate-learning-center) declares its OWN citrate-chain deps by
+# `branch = "main"`. The resolver therefore materializes a SECOND copy of
+# citrate-consensus/-execution/-security/-wallet-core at whatever `main`
+# last pointed at — so the audited key-management rev (385e82e1) is not
+# the only chain code this wallet links. The in-repo `[patch]` that would
+# collapse them is REJECTED by cargo ("patches must point to different
+# sources") because both the branch pin and the audited pin resolve from
+# the same git URL. The real fix is upstream: pin edu-app's chain deps by
+# `rev` (or add a workspace `[patch]` there) in citrate-learning-center.
+# Until then `scripts/ci/check-chain-dep-pins.sh` is the enforcing guard —
+# it fails while any duplicate/branch-tracking chain source remains, and
+# goes green the moment the upstream pin lands.
 
 [profile.release]
 opt-level = 3

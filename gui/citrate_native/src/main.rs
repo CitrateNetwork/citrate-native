@@ -142,6 +142,22 @@ static SESSION_UNLOCK_EPOCH: AtomicI64 = AtomicI64::new(0);
 const SESSION_TIMEOUT_SECS: i64 =
     citrate_desktop_app::services::wallet_service::SESSION_TIMEOUT_SECS as i64;
 
+/// NAT-B-004: the custody teardown shared by the Lock button AND Sign
+/// Out. Clearing the session epoch is what stops the background signing
+/// relay (`SESSION_UNLOCK_EPOCH.load(...) <= 0` gate) and the countdown;
+/// `wallet.lock()` zeroizes the decrypted keys. BOTH must happen before
+/// the view is swapped, or "Sign Out" leaves a fully-unlocked wallet that
+/// keeps signing while the user believes it is closed. A headless test
+/// drives this function directly.
+async fn perform_wallet_lock_teardown(
+    wallet: &citrate_desktop_app::services::WalletService,
+) {
+    SESSION_UNLOCK_EPOCH.store(0, Ordering::Relaxed);
+    if let Err(e) = wallet.lock().await {
+        tracing::error!("wallet lock teardown failed: {}", e);
+    }
+}
+
 /// Push wallet accounts to the Slint UI as a VecModel.
 /// Applies EIP-55 checksum encoding to all addresses for display.
 fn push_accounts_to_ui(ui: &App, accounts: &[citrate_desktop_app::services::wallet_service::Account]) {
@@ -348,6 +364,94 @@ mod session_timeout_tests {
         // What the session pill shows at unlock (the `session_initial`
         // sites all call this with SESSION_TIMEOUT_SECS).
         assert_eq!(format_session_remaining(SESSION_TIMEOUT_SECS), "1h00m");
+    }
+}
+
+/// NAT-B-004: "Sign Out" must be a real custody teardown, not a view
+/// swap. Both Sign Out and the Lock button route through
+/// `perform_wallet_lock_teardown`, which clears the session epoch (the
+/// gate on the background signing relay) AND locks the wallet.
+#[cfg(test)]
+mod sign_out_teardown_tests {
+    use super::*;
+    use citrate_desktop_app::error::AppError;
+    use citrate_desktop_app::event_bus::EventBus;
+    use citrate_desktop_app::services::wallet_service::{
+        Account, CreateAccountResult, WalletBackend, WalletService,
+    };
+    use std::sync::Arc;
+
+    struct MockBackend;
+
+    #[async_trait::async_trait]
+    impl WalletBackend for MockBackend {
+        async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+            Ok(Vec::new())
+        }
+        async fn create_wallet(&self, _p: &str, _l: &str) -> Result<CreateAccountResult, AppError> {
+            Ok(CreateAccountResult {
+                address: "0xabc".to_string(),
+                mnemonic: "test mnemonic".to_string(),
+                public_key: "00".to_string(),
+            })
+        }
+        async fn unlock(&self, _a: &str, _p: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        async fn lock(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn send_transaction(&self, _f: &str, _t: &str, _v: &str, _p: &str) -> Result<String, AppError> {
+            Ok("0x0".to_string())
+        }
+    }
+
+    /// After the teardown, the session epoch is 0 and the wallet reports
+    /// no active session. Pre-fix `on_sign_out` did neither — it only
+    /// swapped the view, leaving keys in memory and the relay signing.
+    #[tokio::test]
+    async fn test_natb004_teardown_clears_epoch_and_locks_wallet() {
+        let events = Arc::new(EventBus::new());
+        let svc = WalletService::with_backend(events, Arc::new(MockBackend));
+
+        // Activate a session (create_wallet unlocks it, like onboarding).
+        svc.create_wallet("password123").await.expect("create wallet");
+        assert!(
+            svc.get_session_status().await.is_active,
+            "precondition: session active after wallet creation"
+        );
+        SESSION_UNLOCK_EPOCH.store(1_700_000_000, Ordering::Relaxed);
+
+        // The shared teardown Sign Out now calls.
+        perform_wallet_lock_teardown(&svc).await;
+
+        assert_eq!(
+            SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed),
+            0,
+            "sign-out/lock must clear the session epoch (relay custody gate)"
+        );
+        assert!(
+            !svc.get_session_status().await.is_active,
+            "sign-out/lock must lock the wallet"
+        );
+    }
+
+    /// Source guard: the `on_sign_out` handler must route through the
+    /// shared teardown, not re-implement a view-only swap. Mirrors the
+    /// house `include_str!` guards (e.g. test_t0_04_*).
+    #[test]
+    fn test_natb004_sign_out_handler_calls_teardown() {
+        let source = include_str!("main.rs");
+        let marker = ["ui.on_sign", "_out(move"].concat();
+        let start = source.find(&marker).expect("on_sign_out handler present");
+        // The handler body runs until the NEXT callback registration.
+        let rest = &source[start + marker.len()..];
+        let end = rest.find("ui.on_").unwrap_or(rest.len());
+        let body = &rest[..end];
+        assert!(
+            body.contains("perform_wallet_lock_teardown"),
+            "on_sign_out must call perform_wallet_lock_teardown to lock the wallet"
+        );
     }
 }
 
@@ -2244,7 +2348,10 @@ fn main() {
                     ui.set_onboarding_error("".into());
                     ui.set_onboarding_step(3);
                 } else {
-                    tracing::warn!("Mnemonic verification failed: expected word #{} '{}', got '{}'", word_num, expected, input_str);
+                    // NAT-B-005: NEVER log the expected word (it is live
+                    // seed material) nor the user's input (which may also
+                    // be a seed word). Log only the position that failed.
+                    tracing::warn!("Mnemonic verification failed for word #{}", word_num);
                     ui.set_onboarding_error(
                         format!("Incorrect. Enter word #{} from your recovery phrase.", word_num).into()
                     );
@@ -2384,6 +2491,21 @@ fn main() {
         let amt_str = amount.to_string();
         let pwd_str = password.to_string();
 
+        // NAT-B-002: the confirm-screen password is a real authorization
+        // factor, not decoration. Reject an empty field on the interactive
+        // path so a spend cannot be confirmed without typing the password
+        // (the backend then verifies it against the keystore). Programmatic
+        // callers use the service directly with "" and are session-gated.
+        if pwd_str.is_empty() {
+            let ui_w = ui_w.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_send_error("Enter your wallet password to confirm this transfer.".into());
+                }
+            });
+            return;
+        }
+
         // Read the currently selected account address from UI state
         let from_addr = ui_w.upgrade()
             .map(|ui| ui.get_wallet_selected_address().to_string())
@@ -2517,13 +2639,30 @@ fn main() {
     });
 
     // --- Sign Out ---
+    // NAT-B-004: "Sign Out" must actually CLOSE the wallet, not just swap
+    // the view. It clears the session epoch (which gates the background
+    // signing relay) and locks the wallet (zeroizing decrypted keys) —
+    // the same custody teardown as the explicit Lock button — BEFORE
+    // showing onboarding. Otherwise a user who signs out in a shared space
+    // leaves a fully-unlocked wallet that keeps signing.
+    let core = app_core.clone();
     let ui_w = ui.as_weak();
+    let rt_h = rt.handle().clone();
     ui.on_sign_out(move || {
-        tracing::info!("Signed out — showing onboarding");
-        if let Some(ui) = ui_w.upgrade() {
-            ui.set_show_lock_screen(false);
-            ui.set_show_onboarding(true);
-        }
+        tracing::info!("Signed out — locking wallet and showing onboarding");
+        let core = core.clone();
+        let ui_w = ui_w.clone();
+        spawn_async(&rt_h, async move {
+            perform_wallet_lock_teardown(&core.wallet).await;
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_w.upgrade() {
+                    ui.set_wallet_session_active(false);
+                    ui.set_wallet_session_remaining("".into());
+                    ui.set_show_lock_screen(false);
+                    ui.set_show_onboarding(true);
+                }
+            });
+        });
     });
 
     // --- Generic copy-to-clipboard ---
@@ -4945,11 +5084,8 @@ fn main() {
         tracing::info!("Wallet: locking");
         let core = core.clone();
         let ui_w = ui_w.clone();
-        SESSION_UNLOCK_EPOCH.store(0, Ordering::Relaxed);
         spawn_async(&rt_h, async move {
-            if let Err(e) = core.wallet.lock().await {
-                tracing::error!("Wallet lock failed: {}", e);
-            }
+            perform_wallet_lock_teardown(&core.wallet).await;
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_w.upgrade() {
                     ui.set_wallet_session_active(false);
