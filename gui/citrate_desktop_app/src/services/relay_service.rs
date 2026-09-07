@@ -132,14 +132,43 @@ pub fn validate_node_agent_url(base_url: &str) -> Result<(), RelayError> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| RelayError::Http(format!("node-agent url must be http://loopback: {url:?}")))?;
-    // Host is everything up to the first `/` or `:` (strip an optional port).
-    let host_port = rest.split('/').next().unwrap_or(rest);
-    let host = host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port);
+    // The authority is everything up to the first path/query/fragment
+    // delimiter. NAT-B-008: a hand-rolled `rsplit_once(':')` treated
+    // `127.0.0.1:19600@evil.example` as host `127.0.0.1` while reqwest
+    // would resolve `evil.example` — the userinfo `@` is the confused
+    // deputy. Split the authority on EVERY RFC-3986 delimiter and reject
+    // any userinfo component outright.
+    let authority = rest
+        .split(['/', '?', '#', '\\'])
+        .next()
+        .unwrap_or(rest);
+    if authority.contains('@') {
+        return Err(RelayError::Http(format!(
+            "refusing a node-agent url with userinfo (`@`): {url:?}"
+        )));
+    }
+    if authority.is_empty() {
+        return Err(RelayError::Http(format!("node-agent url has no host: {url:?}")));
+    }
+    // Strip an optional `:port`. IPv6 literals are bracketed (`[::1]:port`),
+    // so only split on the LAST colon that follows a `]` or when there are
+    // no brackets at all.
+    let host = if let Some(rest_after_bracket) = authority.strip_prefix('[') {
+        // `[::1]` or `[::1]:port`
+        match rest_after_bracket.split_once(']') {
+            Some((inner, _port)) => inner,
+            None => return Err(RelayError::Http(format!("malformed IPv6 authority: {url:?}"))),
+        }
+    } else {
+        authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority)
+    };
     let is_loopback = host == "127.0.0.1"
         || host == "localhost"
         || host == "::1"
-        || host == "[::1]"
-        || host.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false);
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
     if !is_loopback {
         return Err(RelayError::Http(format!(
             "refusing to poll a non-loopback node-agent: {url:?}"
@@ -170,13 +199,29 @@ impl NodeAgentClient {
     }
 
     /// Production constructor: enforce loopback (FUA-GUI-02) before building.
+    ///
+    /// NAT-B-009: also FAIL CLOSED when no supervision token is present.
+    /// Pre-fix, an absent/empty `~/.citrate/node-agent/supervision.token`
+    /// left `token: None` and `authed` sent every request unauthenticated —
+    /// so any unprivileged local process that bound `127.0.0.1:19600` first
+    /// could serve crafted signature-requests to an enabled relay. The
+    /// bearer token is the only thing binding the queue to the real
+    /// node-agent, so refuse to construct the production client without it.
     pub fn try_new(base_url: impl Into<String>) -> Result<Self, RelayError> {
         let base_url = base_url.into();
         validate_node_agent_url(&base_url)?;
+        let token = load_supervision_token().ok_or_else(|| {
+            RelayError::Http(
+                "refusing to start the relay: no node-agent supervision token \
+                 (~/.citrate/node-agent/supervision.token missing or empty) — \
+                 the relay must not poll an unauthenticated loopback queue"
+                    .to_string(),
+            )
+        })?;
         Ok(Self {
             base_url,
             http: reqwest::Client::new(),
-            token: load_supervision_token(),
+            token: Some(token),
         })
     }
 
@@ -870,6 +915,23 @@ mod tests {
         // Non-http scheme (the loopback queue is plaintext-local).
         assert!(validate_node_agent_url("https://evil.example").is_err());
         assert!(validate_node_agent_url("ftp://127.0.0.1").is_err());
+    }
+
+    // NAT-B-008: the userinfo confused-deputy vectors. A loopback host
+    // followed by `@realhost` MUST be rejected — reqwest resolves the host
+    // AFTER the `@`, so the pre-fix `rsplit_once(':')` waved through a URL
+    // that actually talks to `evil.example`.
+    #[test]
+    fn validate_node_agent_url_rejects_userinfo_bypass() {
+        assert!(validate_node_agent_url("http://127.0.0.1:19600@evil.example/").is_err());
+        assert!(validate_node_agent_url("http://localhost:1@attacker.tld/").is_err());
+        assert!(validate_node_agent_url("http://127.0.0.1@evil.example").is_err());
+        assert!(validate_node_agent_url("http://[::1]@evil.example").is_err());
+        // `#@evil` is a fragment and `\@evil` normalizes to a path under
+        // WHATWG parsing — the resolved host stays 127.0.0.1, so these are
+        // genuinely safe and must NOT be false-rejected.
+        assert!(validate_node_agent_url("http://127.0.0.1#@evil").is_ok());
+        assert!(validate_node_agent_url("http://127.0.0.1\\@evil").is_ok());
     }
 
     #[test]

@@ -14,6 +14,20 @@ pub trait KeyValueStore: Send + Sync {
 /// Port for secure secret storage (API keys, wallet passwords)
 pub trait SecretStore: Send + Sync {
     fn get_secret(&self, key: &str) -> Option<String>;
+    /// Read a secret, DISTINGUISHING a genuine backend error from a
+    /// missing entry.
+    ///
+    /// NAT-B-027: `get_secret` flattens a transient keychain error (locked
+    /// keychain, denied prompt, IPC hiccup) into `None`, indistinguishable
+    /// from "no entry". A caller that treats `None` as first-run then
+    /// regenerates the node storage master key over the real one and wipes
+    /// the encrypted chain DB + P2P identity. Callers that must not
+    /// regenerate on a read failure use this instead. The default delegates
+    /// to `get_secret` (everything looks like Ok) so existing implementors
+    /// keep compiling; the OS-backed store overrides it to surface errors.
+    fn try_get_secret(&self, key: &str) -> Result<Option<String>, String> {
+        Ok(self.get_secret(key))
+    }
     fn set_secret(&self, key: &str, value: &str) -> Result<(), String>;
     fn delete_secret(&self, key: &str) -> Result<(), String>;
     fn has_secret(&self, key: &str) -> bool;
@@ -54,6 +68,25 @@ impl SecretStore for SystemSecretStore {
         {
             let _ = key;
             None
+        }
+    }
+
+    fn try_get_secret(&self, key: &str) -> Result<Option<String>, String> {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        {
+            let entry = keyring_entry(key)?;
+            match entry.get_password() {
+                Ok(secret) => Ok(Some(secret)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                // NAT-B-027: a real read failure is NOT "no entry".
+                Err(e) => Err(format!("OS keychain read failed for {key}: {e}")),
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            let _ = key;
+            Ok(None)
         }
     }
 

@@ -77,6 +77,13 @@ pub trait WalletBackend: Send + Sync {
     }
     /// Update signing chain ID for environment switching
     fn set_chain_id(&self, _chain_id: u64) {}
+    /// The chain id the wallet currently signs for. Default is 40204;
+    /// the production backend tracks the runtime-switchable value.
+    /// NAT-B-020: the sponsored (AA) path reads this to refuse signing
+    /// UserOps for a chain its hardcoded address book does not cover.
+    fn get_chain_id(&self) -> u64 {
+        40204
+    }
     /// Update RPC URL target for environment switching
     fn set_rpc_url(&self, _url: &str) {}
     /// The key algorithm behind an unlocked account ("ed25519" |
@@ -96,6 +103,14 @@ pub trait WalletBackend: Send + Sync {
         _digest: [u8; 32],
     ) -> Result<[u8; 65], AppError> {
         Err(AppError::Wallet("sign_digest_recoverable not supported by this backend".to_string()))
+    }
+    /// Re-decrypt and export a private key as hex, verifying `password`
+    /// against the on-disk keystore. NAT-B-017: exposed on the backend so
+    /// `WalletService` can wrap it in the shared `SessionManager` lockout —
+    /// pre-fix the GUI built a fresh `KeyManager` per attempt, bypassing the
+    /// brute-force lockout entirely (an unthrottled password oracle).
+    async fn export_private_key(&self, _address: &str, _password: &str) -> Result<String, AppError> {
+        Err(AppError::Wallet("export_private_key not supported by this backend".to_string()))
     }
 }
 
@@ -341,6 +356,10 @@ impl WalletBackend for WalletCoreBackend {
         tracing::info!("WalletCoreBackend: chain_id updated to {}", chain_id);
     }
 
+    fn get_chain_id(&self) -> u64 {
+        self.chain_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn set_rpc_url(&self, url: &str) {
         let new_client = Arc::new(citrate_wallet_core::RpcClient::new(url));
         *self.rpc_client_write() = new_client;
@@ -379,6 +398,18 @@ impl WalletBackend for WalletCoreBackend {
                 "This account uses an Ed25519 key; smart-wallet operations need a secp256k1 account".to_string(),
             )),
         }
+    }
+
+    async fn export_private_key(&self, address: &str, password: &str) -> Result<String, AppError> {
+        // Ensure the keystore entries are loaded (idempotent), then
+        // re-decrypt under `password`. A wrong password surfaces as
+        // `InvalidPassword` so `WalletService` records a lockout failure.
+        self.key_manager
+            .load()
+            .map_err(|e| AppError::Wallet(format!("Failed to load keystore: {}", e)))?;
+        self.key_manager
+            .export_private_key(address, password)
+            .map_err(|e| AppError::Wallet(format!("{}", e)))
     }
 }
 
@@ -946,9 +977,58 @@ impl WalletService {
         self.backend.sign_digest_recoverable(address, digest).await
     }
 
+    /// Export a private key as hex, sharing the brute-force lockout that
+    /// guards `unlock`.
+    ///
+    /// NAT-B-017: pre-fix the GUI built a fresh `KeyManager` per attempt and
+    /// called `export_private_key` directly, so the 5-attempt / 5-minute
+    /// `SessionManager` lockout never applied — the dialog was an unthrottled
+    /// password oracle against the keystore. Routing it here means a
+    /// locked-out address is refused, wrong passwords are counted (and
+    /// persisted so a restart cannot launder the counter), and a success
+    /// clears the counter — exactly as `unlock` does.
+    pub async fn export_private_key(&self, address: &str, password: &str) -> Result<String, AppError> {
+        if password.is_empty() {
+            return Err(AppError::Wallet("Password required".to_string()));
+        }
+        // Refuse to even attempt an export on a locked-out address.
+        {
+            let mgr = self.session_mgr.read().await;
+            if mgr.is_locked_out(address) {
+                return Err(AppError::Wallet(format!(
+                    "Account {} is locked out due to too many failed attempts. Try again later.",
+                    address
+                )));
+            }
+        }
+        match self.backend.export_private_key(address, password).await {
+            Ok(hex_key) => {
+                self.session_mgr.write().await.record_success(address);
+                self.persist_lockout_state().await;
+                Ok(hex_key)
+            }
+            Err(e) => {
+                // A wrong password (or any decrypt failure) counts as a
+                // brute-force attempt against the attempted address.
+                {
+                    let mut mgr = self.session_mgr.write().await;
+                    let _ = mgr.record_failure(address);
+                }
+                self.persist_lockout_state().await;
+                Err(e)
+            }
+        }
+    }
+
     /// Update the signing chain ID — called on environment switch.
     pub fn set_chain_id(&self, chain_id: u64) {
         self.backend.set_chain_id(chain_id);
+    }
+
+    /// The chain id the wallet currently signs for (runtime-switchable).
+    /// NAT-B-020: the sponsored AA path guards on this.
+    pub fn chain_id(&self) -> u64 {
+        self.backend.get_chain_id()
     }
 
     /// Update the RPC URL target — called on environment switch.
@@ -1791,5 +1871,89 @@ mod tests {
         let svc = WalletService::with_backend(events, Arc::new(StrictBackend));
         let result = svc.unlock("0xabc", "wrong_password").await;
         assert!(result.is_err());
+    }
+
+    /// NAT-B-017: the export dialog must share the `unlock` lockout — a
+    /// brute-forcer hammering wrong export passwords is locked out after
+    /// `MAX_FAILED_ATTEMPTS`, and the (correct-password) 6th attempt is
+    /// refused with a lockout error rather than exporting the key.
+    #[tokio::test]
+    async fn test_natb017_export_shares_bruteforce_lockout() {
+        struct ExportBackend;
+
+        #[async_trait::async_trait]
+        impl WalletBackend for ExportBackend {
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
+            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
+                Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            }
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
+            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+                Ok("0x".into())
+            }
+            async fn export_private_key(&self, _: &str, password: &str) -> Result<String, AppError> {
+                if password == "correct" {
+                    Ok("00".repeat(32))
+                } else {
+                    Err(AppError::Wallet("Invalid password".into()))
+                }
+            }
+        }
+
+        let events = Arc::new(EventBus::new());
+        let svc = WalletService::with_backend(events, Arc::new(ExportBackend));
+        let addr = "0xexportme";
+
+        // Five wrong attempts against the export dialog.
+        for _ in 0..MAX_FAILED_ATTEMPTS {
+            assert!(svc.export_private_key(addr, "wrong").await.is_err());
+        }
+
+        // Now locked out: even the CORRECT password must be refused, and
+        // the message must be the lockout message (not a decrypt error).
+        let locked = svc
+            .export_private_key(addr, "correct")
+            .await
+            .expect_err("locked-out export must fail");
+        match locked {
+            AppError::Wallet(msg) => assert!(
+                msg.contains("locked out"),
+                "expected lockout error, got: {msg}"
+            ),
+            other => panic!("expected Wallet lockout error, got {other:?}"),
+        }
+    }
+
+    /// NAT-B-017 companion: a single wrong export attempt does NOT lock a
+    /// fresh address, and the correct password exports (counter reset).
+    #[tokio::test]
+    async fn test_natb017_export_succeeds_and_resets_counter() {
+        struct ExportBackend;
+
+        #[async_trait::async_trait]
+        impl WalletBackend for ExportBackend {
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
+            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
+                Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            }
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
+            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+                Ok("0x".into())
+            }
+            async fn export_private_key(&self, _: &str, password: &str) -> Result<String, AppError> {
+                if password == "correct" { Ok("ab".repeat(32)) } else { Err(AppError::Wallet("Invalid password".into())) }
+            }
+        }
+
+        let events = Arc::new(EventBus::new());
+        let svc = WalletService::with_backend(events, Arc::new(ExportBackend));
+        let addr = "0xexportme";
+        assert!(svc.export_private_key(addr, "wrong").await.is_err());
+        // Correct password exports and clears the failure counter.
+        assert!(svc.export_private_key(addr, "correct").await.is_ok());
+        // Empty password is refused outright.
+        assert!(svc.export_private_key(addr, "").await.is_err());
     }
 }
