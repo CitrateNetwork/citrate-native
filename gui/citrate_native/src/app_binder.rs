@@ -104,6 +104,17 @@ pub fn bind_model_publish(
 
             // 7. Send tx to model precompile
             let precompile = "0x0000000000000000000000000000000000001000";
+            // NAT-B-007: surface the decoded registerModel intent + target for
+            // explicit Approve/Deny before broadcasting to the precompile.
+            if !crate::confirm_tx_intent(&core.approvals, "Publish model", precompile, "0", &calldata).await {
+                let ui_w2 = ui_w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_w2.upgrade() {
+                        ui.set_models_publish_state("cancelled".into());
+                    }
+                });
+                return;
+            }
             match core.wallet.send_transaction_with_data(
                 &from, precompile, "0", calldata, ""
             ).await {
