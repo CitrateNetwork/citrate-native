@@ -7,9 +7,15 @@
 # ~/.cargo/audit.toml not project-local.
 
 [advisories]
+# NAT-B-018 / NAT-B-036: this list is the SINGLE source of truth for the
+# advisory ignores and MUST stay byte-identical to the `--ignore` flags in
+# `.github/workflows/cargo-audit.yml`. `scripts/ci/check_audit_ignore_sync.py`
+# (wired into that workflow) fails the build if the two drift. Every ignore
+# carries a justification, an owner, and a re-check date.
 ignore = [
     # ─────────────────────────────────────────────────────────────────
     # REM-16b — tracing-subscriber 0.2.25 via arkworks (deferred)
+    # owner: ZK-engineering · re-check: 2026-12-01
     # ─────────────────────────────────────────────────────────────────
     # RUSTSEC-2025-0055 — tracing-subscriber <0.3.20 ANSI escape
     # injection (CWE-117 log injection).
@@ -25,4 +31,21 @@ ignore = [
     # cryptographic compatibility implications; needs ZK-engineering
     # review. Tracked as REM-16b.
     "RUSTSEC-2025-0055",
+    # ─────────────────────────────────────────────────────────────────
+    # quick-xml 0.31 / 0.39 — no semver-compatible fix at this pin
+    # owner: platform · re-check: 2026-12-01
+    # ─────────────────────────────────────────────────────────────────
+    # RUSTSEC-2026-0194 — quick-xml quadratic run time checking a start
+    # tag for duplicate attributes.
+    # RUSTSEC-2026-0195 — quick-xml unbounded namespace-declaration
+    # allocation in NsReader.
+    # Both parents pin below the fixed 0.41:
+    #   - quick-xml 0.31 via calamine 0.25 (citrate-learning-center
+    #     pinned dep; runtime xlsx parsing — the REAL fix is a calamine
+    #     bump in that repo; issue filed there, re-pin lifts this ignore)
+    #   - quick-xml 0.39 via wayland-scanner proc-macro (build-time
+    #     parsing of trusted Wayland protocol XML only; waits on the
+    #     Slint/winit chain)
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]

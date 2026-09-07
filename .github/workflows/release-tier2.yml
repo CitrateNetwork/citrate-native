@@ -379,16 +379,50 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign installers (keyless OIDC)
+      - name: Sign installers + checksum manifest (keyless OIDC)
+        # NAT-B-014: signing is a HARD gate. Pre-fix every cosign call ended
+        # in `|| true`, so a signing failure was swallowed and the release
+        # published unsigned; and the SHA256SUMS.txt manifest — the file the
+        # README presents as the integrity story — was never signed at all,
+        # so an attacker who could write the release could replace both the
+        # artifact and its checksum. Sign the manifest too, and fail on any
+        # signing error.
         run: |
           cd dist
           shopt -s nullglob
-          for f in *.dmg *.msi *.exe *.deb *.rpm *.AppImage *.app.zip ; do
+          for f in SHA256SUMS.txt *.dmg *.msi *.exe *.deb *.rpm *.AppImage *.app.zip ; do
             [[ -f "$f" ]] || continue
             COSIGN_EXPERIMENTAL=1 cosign sign-blob --yes "$f" \
               --output-signature "$f.sig" \
-              --output-certificate "$f.pem" || true
+              --output-certificate "$f.pem"
           done
+
+      - name: Verify every signature before publishing
+        # NAT-B-014: nothing downstream used to check that signing occurred —
+        # `draft: false` published regardless. Verify each blob against its
+        # own signature+certificate, pinned to this repo's GitHub OIDC
+        # identity, and fail the job (before publish) on the first miss.
+        run: |
+          cd dist
+          shopt -s nullglob
+          rc=0
+          for f in SHA256SUMS.txt *.dmg *.msi *.exe *.deb *.rpm *.AppImage *.app.zip ; do
+            [[ -f "$f" ]] || continue
+            if [[ ! -s "$f.sig" || ! -s "$f.pem" ]]; then
+              echo "::error::missing signature/certificate for $f"
+              rc=1
+              continue
+            fi
+            if ! cosign verify-blob "$f" \
+                --signature "$f.sig" \
+                --certificate "$f.pem" \
+                --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" ; then
+              echo "::error::signature verification FAILED for $f"
+              rc=1
+            fi
+          done
+          exit $rc
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
