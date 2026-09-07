@@ -128,6 +128,48 @@ fn hex_re() -> &'static regex::Regex {
     })
 }
 
+/// NAT-B-005: secret-bearing key/value pairs. Unlike the balance pass
+/// (which keeps a couple of numeric fields readable for forensics), any
+/// value keyed by a secret-bearing identifier is DROPPED wholesale — a
+/// mnemonic, password, passphrase, PIN, token, API key, secret, or
+/// private key must never reach disk even truncated. Case-insensitive;
+/// tolerates `:`/`=`, quotes, and whitespace between key and value; the
+/// value runs to the next quote, comma, or whitespace.
+fn secret_kv_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)([a-z0-9_]*(?:mnemonic|seed(?:_?phrase)?|passphrase|password|pass|api[_-]?key|secret|token|private[_-]?key|priv[_-]?key|pin)[a-z0-9_]*\s*"?\s*[:=]\s*"?\s*)([^\s",}]+)"#,
+        )
+        .expect("secret key/value redaction regex is valid")
+    })
+}
+
+/// NAT-B-005: Argon2 PHC strings (`$argon2id$v=19$m=...$salt$hash`). The
+/// keystore's password-hash encoding must never be written to disk — it
+/// is offline-crackable material.
+fn phc_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\$argon2(?:id|i|d)\$[A-Za-z0-9$=,+/._-]+")
+            .expect("PHC redaction regex is valid")
+    })
+}
+
+/// NAT-B-005: a BIP-39 mnemonic printed bare (no key label) — a run of
+/// 12+ space-separated lowercase words of 3–8 letters, the shape of every
+/// BIP-39 wordlist entry. Redacts the whole run. This is deliberately
+/// broad: on the crash/log disk boundary, over-redacting a rare 12-word
+/// lowercase prose run is strictly preferable to leaking recovery-phrase
+/// words. Backtraces (symbols carry `::`, digits, capitals) never match.
+fn mnemonic_run_re() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"\b[a-z]{3,8}(?: [a-z]{3,8}){11,}\b")
+            .expect("mnemonic-run redaction regex is valid")
+    })
+}
+
 /// Redaction pass applied to everything written to DISK by this module
 /// (crash-record message/last_state, session.marker last_state, and
 /// every file-log line). stderr output is deliberately not routed
@@ -136,8 +178,14 @@ fn hex_re() -> &'static regex::Regex {
 /// Applied to field values BEFORE serialization, so redacted crash
 /// records and markers remain valid JSON.
 pub fn redact_for_disk(text: &str) -> String {
+    // Pass 0 (NAT-B-005): drop key/value secrets, PHC strings, and bare
+    // mnemonic runs BEFORE the hex/balance passes so no secret survives
+    // as a "truncated" identifier.
+    let pass0 = secret_kv_re().replace_all(text, "${1}<redacted>");
+    let pass0 = phc_re().replace_all(&pass0, "<redacted>");
+    let pass0 = mnemonic_run_re().replace_all(&pass0, "<redacted>");
     // Pass 1: balance/amount values (including hex values) → <redacted>.
-    let pass1 = balance_re().replace_all(text, "${1}<redacted>");
+    let pass1 = balance_re().replace_all(&pass0, "${1}<redacted>");
     // Pass 2: remaining long hex identifiers → first-6…last-4.
     hex_re()
         .replace_all(&pass1, |caps: &regex::Captures<'_>| {
@@ -146,6 +194,38 @@ pub fn redact_for_disk(text: &str) -> String {
             format!("{}…{}", &m[..6], &m[m.len() - 4..])
         })
         .into_owned()
+}
+
+// =========================================================================
+// Filesystem permissions (NAT-B-005)
+// =========================================================================
+
+/// Restrict a just-written file to owner-only (0600) on Unix. Crash
+/// records, the session marker, and the rotating log can carry
+/// user-identifying breadcrumbs; a world-readable (0644) copy is readable
+/// by every local user and by any process running as the user (backup
+/// agents, sync clients). No-op on non-Unix. Best-effort — a failure
+/// here must never break telemetry.
+pub fn restrict_file_perms(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// Restrict a just-created directory to owner-only (0700) on Unix so its
+/// contents are not enumerable by other local users. No-op elsewhere.
+fn restrict_dir_perms(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 // =========================================================================
@@ -180,6 +260,7 @@ pub struct CrashRecord {
 /// addresses are code pointers, not user data.
 pub fn write_crash_record(dir: &Path, record: &CrashRecord) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
+    restrict_dir_perms(dir);
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -199,6 +280,7 @@ pub fn write_crash_record(dir: &Path, record: &CrashRecord) -> io::Result<PathBu
     let json = serde_json::to_vec_pretty(&sanitized)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     std::fs::write(&path, json)?;
+    restrict_file_perms(&path);
     Ok(path)
 }
 
@@ -304,7 +386,9 @@ fn write_marker_file(path: &Path, state: &str) -> io::Result<()> {
     };
     let json = serde_json::to_vec_pretty(&marker)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    std::fs::write(path, json)
+    std::fs::write(path, json)?;
+    restrict_file_perms(path);
+    Ok(())
 }
 
 /// Write the "session started" marker. An unclean death (SIGKILL,
@@ -320,6 +404,7 @@ fn init_session_marker_in(dir: &Path) {
         tracing::warn!("crash-telemetry: cannot create {}: {e}", dir.display());
         return;
     }
+    restrict_dir_perms(dir);
     let path = marker_path_in(dir);
     if let Err(e) = write_marker_file(&path, "session-start") {
         tracing::warn!("crash-telemetry: cannot write session marker: {e}");
@@ -473,11 +558,15 @@ impl FileLogWriter {
     pub fn new(path: PathBuf, max_len: u64) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
+            restrict_dir_perms(parent);
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)?;
+        // NAT-B-005: the log can carry user-identifying breadcrumbs — keep
+        // it owner-only, not the 0644 default the umask would leave.
+        restrict_file_perms(&path);
         let len = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             inner: Arc::new(Mutex::new(LogInner {
@@ -500,6 +589,8 @@ impl FileLogWriter {
             .create(true)
             .append(true)
             .open(&inner.path)?;
+        // NAT-B-005: re-created log after rotation stays owner-only.
+        restrict_file_perms(&inner.path);
         inner.len = 0;
         Ok(())
     }
@@ -894,6 +985,81 @@ mod tests {
         assert!(logged.contains("balance=<redacted>"), "got: {logged}");
         assert!(logged.contains("0xd8dA…6BF2"), "got: {logged}");
         assert!(!logged.contains(&addr), "full address must not reach the log file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// NAT-B-005: mnemonics, passwords, bearer tokens, and Argon2 PHC
+    /// strings must NOT survive the disk-redaction boundary — neither
+    /// verbatim nor truncated. Pre-fix the deny-list covered only
+    /// balance/amount and long-hex, so 5 of 6 secret classes were written
+    /// to disk in cleartext. RED at parent.
+    #[test]
+    fn redaction_scrubs_mnemonics_passwords_and_tokens() {
+        // Canonical 12-word BIP-39 phrase (all-zero entropy).
+        let mnemonic =
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let out = redact_for_disk(mnemonic);
+        assert!(!out.contains("abandon"), "bare mnemonic run must not survive: {out}");
+        assert!(!out.contains("about"), "mnemonic tail must not survive: {out}");
+
+        // A labeled mnemonic (the onboarding-verify shape) also goes.
+        let out = redact_for_disk("expected word #7 'shrimp' in mnemonic=\"shrimp legal winner\"");
+        assert!(!out.contains("shrimp legal winner"), "labeled mnemonic must not survive: {out}");
+
+        // Keystore password by key.
+        let out = redact_for_disk("unlock failed password=Hunter2-Sekret!");
+        assert!(!out.contains("Hunter2-Sekret"), "password value must not survive: {out}");
+        assert!(out.contains("password="), "the key label is kept for context: {out}");
+
+        // Bearer / API token.
+        let out = redact_for_disk("auth token: bk_live_0123456789ABCDEFdeadbeef");
+        assert!(!out.contains("bk_live_0123456789ABCDEFdeadbeef"), "token must not survive: {out}");
+
+        // Argon2 PHC string.
+        let phc = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG";
+        let out = redact_for_disk(&format!("keystore hash {phc} loaded"));
+        assert!(!out.contains("c29tZXNhbHQ"), "PHC salt must not survive: {out}");
+        assert!(!out.contains("RdescudvJCsgt3ub"), "PHC hash must not survive: {out}");
+    }
+
+    /// NAT-B-005: files this module writes must be owner-only (0600) on
+    /// Unix — crash record, session marker, and the rotating log. Pre-fix
+    /// every one was created 0644 (world-readable). RED at parent.
+    #[cfg(unix)]
+    #[test]
+    fn disk_artifacts_are_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("perms");
+
+        // Crash record.
+        let record = CrashRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            app_version: APP_VERSION.to_string(),
+            kind: "panic".to_string(),
+            thread: "main".to_string(),
+            message: "boom".to_string(),
+            location: "src/main.rs:1:1".to_string(),
+            backtrace: String::new(),
+            last_state: "state".to_string(),
+        };
+        let rec_path = write_crash_record(&dir, &record).unwrap();
+        let mode = std::fs::metadata(&rec_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "crash record must be 0600, got {mode:o}");
+
+        // Session marker.
+        let marker = marker_path_in(&dir);
+        write_marker_file(&marker, "session-start").unwrap();
+        let mode = std::fs::metadata(&marker).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "session marker must be 0600, got {mode:o}");
+
+        // Rotating log.
+        let log = dir.join("citrate-gui.log");
+        let mut w = FileLogWriter::new(log.clone(), 4096).unwrap();
+        w.write_all(b"line\n").unwrap();
+        w.flush().unwrap();
+        let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "log file must be 0600, got {mode:o}");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
