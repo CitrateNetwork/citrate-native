@@ -1,131 +1,113 @@
----
-created: 2026-05-18T05:50:00Z
-branch: main
-author: monorepo-split
-status: active
-split-from-monorepo-at: b3ccd5c7
-split-from-monorepo-tag: pre-split-v0.4.0
-archived-monorepo: https://github.com/CitrateNetwork/citrate-monorepo-archive
-agentile-archive: https://github.com/CitrateNetwork/citrate-agentile-archive
----
+# citrate-gui-native
 
-# Citrate Native (beta)
+> The all-in-one native desktop app for the Citrate Network — wallet, embedded full node, DAG explorer, local AI chat, storage, and a developer studio in one Rust window.
 
-The Citrate Network desktop app: a wallet, an embedded chain node, a DAG
-explorer, local AI chat, and a developer studio in one native application
-(Rust + Slint — no browser, no Electron).
+## What it is
 
-This is a **public beta on testnet-beta (chain 40204)**. What works is
-listed below; what doesn't yet is honestly listed in
-[KNOWN_ISSUES.md](KNOWN_ISSUES.md). Nothing on screen pretends to work.
+Citrate Native is a single Rust + [Slint](https://slint.dev) desktop application (no browser, no Electron, no WebKit) that bundles a crypto wallet, an **embedded full chain node**, a GhostDAG block explorer, a local AI chat client, an IPFS/Storage tab, and a developer studio/IDE. Keys never leave the machine (OS keychain, RocksDB chain data encrypted at rest), and it runs against the Citrate testnet-beta (chain id **40204**).
 
-## Install
+It connects out to a chain RPC + bootnodes for sync, to [citrate-identity](https://github.com/CitrateNetwork/citrate-identity) for OIDC login, and to an ERC-4337 bundler for account-abstraction transactions. Concept overview: https://docs.citrate.ai/apps. (Public repo: `github.com/CitrateNetwork/citrate-native`.)
 
-Grab the archive for your platform from the
-[latest release](https://github.com/CitrateNetwork/citrate-native/releases):
+## Prerequisites
 
-| Platform | Artifact |
-|---|---|
-| macOS (Apple Silicon) | `citrate-native-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `citrate-native-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `citrate-native-x86_64-unknown-linux-gnu.tar.gz` |
-| Windows (x86_64) | `citrate-native-x86_64-pc-windows-msvc.zip` |
-
-Unpack and run the `citrate-native` binary — there is no installer and no
-dev toolchain needed. Each artifact ships with a `.sha256` checksum.
-
-## First run (what to expect)
-
-1. **Onboarding** walks you through creating (or importing) a wallet and
-   choosing a password. Your keys never leave the machine.
-2. **Unlock** — sessions expire after 1 hour; the countdown you see is
-   the same clock the backend enforces.
-3. **Start the node** (Settings → Node Control, or the dashboard card).
-   The embedded node connects to the four testnet bootnodes over
-   encrypted (Noise) transport and starts syncing. Local chain data is
-   **encrypted at rest by default** under a key in your OS keychain.
-4. **Get test funds** — use the faucet from the wallet screen; the claim
-   shows up in your balance once your node is synced.
-5. **Chat** — talk to the bundled local model. Chat is local — prompts
-   don't leave the app. (File drag-and-drop into chat is queued for the
-   next iteration; the Storage tab accepts dropped files today.)
-6. **Explore the DAG** — watch blocks land as your node syncs.
-
-If the node ever crashes, the app writes a crash record (backtrace, last
-log lines, build hash) to the app data `crash/` directory — attach it when
-filing an issue.
-
-## What this beta is for
-
-Kicking the tires on a real network: run a node, hold and send test
-tokens, chat with a local model, watch the DAG. The Models and Learn tabs
-are visible but mid-rebuild — see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for
-the full honest list and what's scheduled where.
-
----
-
-## Building from source (developers)
+Pure Cargo/Slint build — **no Node.js, no webkit2gtk** (Slint, not Tauri).
 
 ```bash
-# First-time setup: ensure your personal SSH key is on GitHub and you
-# have read access to the three sibling repos (org membership covers this).
+# Rust stable (pinned by rust-toolchain.toml) + rustfmt + clippy
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup component add rustfmt clippy
+
+# Linux system packages:
+sudo apt-get install -y libclang-dev cmake libssl-dev pkg-config \
+  libfontconfig1-dev libdbus-1-dev xvfb   # xvfb only needed for headless tests
+
+# macOS (Intel + Apple Silicon) and Windows (x86_64) build with the system toolchain — no extra packages.
+```
+
+Building pulls a few Citrate crates over SSH (git, not crates.io) from `citrate-chain`, `citrate-learning-center`, and `citrate-agent-runtime`. `.cargo/config.toml` sets `net.git-fetch-with-cli = true`; you need SSH access (or the per-host aliases `github-citrate-chain`, `github-citrate-learning-center`, `github-citrate-agent-runtime`) configured for those repos.
+
+Optional runtime services: an [Ollama](https://ollama.com) daemon for local chat, and an [IPFS/Kubo](https://docs.ipfs.tech/install/command-line/) daemon for the Storage tab.
+
+## Build from source
+
+```bash
+git clone https://github.com/CitrateNetwork/citrate-native citrate-gui-native
+cd citrate-gui-native
 
 cargo build --release
+# Artifact: target/release/citrate-native  (release profile: opt-level 3, LTO, codegen-units 1)
+
+# Tests:
+cargo test --workspace --locked
+```
+
+The workspace has three crates: `citrate-native` (the Slint app, default member), `citrate-desktop-app` (headless service layer — chain client, mempool, IDE, MCP host, keychain), and `citrate-ui-kit` (shared Slint components).
+
+## Run locally
+
+Native desktop app — it opens a window, it does not serve an HTTP port.
+
+```bash
 cargo run --release -p citrate-native
 ```
 
-### Crates
-
-| Path | Crate | Role |
-|---|---|---|
-| `gui/citrate_native` | `citrate-native` | Main Slint desktop application |
-| `gui/citrate_desktop_app` | `citrate-desktop-app` | Backend service layer (chain client, mempool, RPC) |
-| `gui/citrate_ui_kit` | `citrate-ui-kit` | Shared Slint design-system components |
-
-### Cross-repo dependencies
-
-This repo consumes chain + other Tier B repos via SSH git deps using **per-host SSH config aliases**:
-
-| Alias | Source repo | Crates pulled |
-|---|---|---|
-| `github-citrate-chain` | `CitrateNetwork/citrate-chain` | wallet-core, storage, consensus, execution, sequencer, network, economics, api |
-| `github-citrate-learning-center` | `CitrateNetwork/citrate-learning-center` | edu-app |
-| `github-citrate-agent-runtime` | `CitrateNetwork/citrate-agent-runtime` | agent-legacy (imported as `citrate-agent-core`) |
-
-Each alias maps to a separate read-only deploy key on the source repo. Local dev uses your personal GitHub SSH key (org membership grants access); CI uses the 3 deploy keys injected via `webfactory/ssh-agent`.
-
-`.cargo/config.toml` sets `net.git-fetch-with-cli = true` so cargo uses the system git CLI (which honors SSH config aliases — libgit2 does not).
-
-**Known source-build quirk:** the Cargo URLs use aliased hosts
-(`github-citrate-chain` etc.) while some sibling repos use plain
-`github.com` in their own chain deps. Cargo treats these as different
-sources, so a chain crate like `citrate-wallet-core` may be fetched twice.
-This compiles fine (slower first fetch); if you ever hit type-mismatch
-errors at a chain API boundary, this is the first thing to check.
-Normalizing the URL convention across Tier B repos is a planned follow-up.
-
-### CI secrets required
-
-- `CHAIN_DEPLOY_KEY` — private half of the chain deploy key
-- `LEARNING_CENTER_DEPLOY_KEY` — private half of the learning-center deploy key
-- `AGENT_RUNTIME_DEPLOY_KEY` — private half of the agent-runtime deploy key
-
-### Testing
+By default it runs against **testnet-beta** (`rpc.citrate.ai` + public bootnodes). To verify the embedded node against the live bootnodes:
 
 ```bash
-cargo test --workspace --locked          # full suite (CI-equivalent)
 cargo test --test live_bootnode_smoke -- --ignored --nocapture
-                                         # gated live smoke: 4/4 bootnodes + 10-min hold
 ```
 
-## Repository context
+The embedded node's own JSON-RPC listens on `127.0.0.1:8545` when you run in `devnet` mode (see below).
 
-Split from the Citrate monorepo on 2026-05-18 via `git filter-repo`, preserving 293 commits.
+## Connect it locally
 
-- **Monorepo archive**: https://github.com/CitrateNetwork/citrate-monorepo-archive
-- **Agentile archive**: https://github.com/CitrateNetwork/citrate-agentile-archive
-- **Chain**: https://github.com/CitrateNetwork/citrate-chain
+Native ships pointed at the public testnet, so it runs standalone. To wire it to a **local** stack on one machine:
+
+1. **Local chain (chain 40204)** — run a devnet node from [citrate-chain](https://github.com/CitrateNetwork/citrate-chain), then point Native's RPC at it (or use the embedded node in `devnet` mode, which exposes `http://127.0.0.1:8545`):
+
+   ```bash
+   export CITRATE_RPC_URL=http://127.0.0.1:8545     # override the active RPC
+   ```
+
+   In `devnet` network mode Native runs its own embedded node on `DEFAULT_RPC_PORT=8545`; in `testnet` mode it uses `https://rpc.citrate.ai` and the public bootnodes.
+
+2. **Identity / auth** — point OIDC at a locally-running [citrate-identity](https://github.com/CitrateNetwork/citrate-identity):
+
+   ```bash
+   export CITRATE_AUTH_URL=http://localhost:3000    # default: https://auth.citrate.ai (loopback http allowed)
+   ```
+
+3. **Bundler (ERC-4337 / account abstraction)** — point at a local [citrate-bundler](https://github.com/CitrateNetwork/citrate-bundler):
+
+   ```bash
+   export CITRATE_BUNDLER_URL=http://127.0.0.1:3010/rpc   # default: https://bundler.citrate.ai/rpc
+   ```
+
+4. **Local model + storage (optional)** — start Ollama (`http://localhost:11434`) for chat and Kubo (`http://127.0.0.1:5001`) for the Storage tab; both are auto-detected.
+
+For the full multi-repo bring-up see `LOCAL_STACK.md` in [citrate-docs](https://github.com/CitrateNetwork/citrate-docs).
+
+## Configuration
+
+No `.env` file — config lives in a `config.json` under the OS data-local dir, with these env-var overrides:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CITRATE_RPC_URL` | derived (`devnet`→`:8545`, else `rpc.citrate.ai`) | chain JSON-RPC endpoint |
+| `CITRATE_AUTH_URL` | `https://auth.citrate.ai` | identity/OIDC authority (https or loopback http) |
+| `CITRATE_BUNDLER_URL` | `https://bundler.citrate.ai/rpc` | ERC-4337 bundler |
+| `CITRATE_NODE_AGENT_ADDR` | `http://127.0.0.1:19600` | signing-relay node-agent address |
+| `CITRATE_RELAY_ENABLED` | off | enable the signing relay (mirrors the Settings toggle) |
+| `CITRATE_GUI_DATA_DIR` | OS data dir | override the app data directory |
+
+Chain id `40204` is compiled in (`CHAIN_ID: u64 = 40204`). Secrets use the OS keychain (`keyring` crate, service `citrate-desktop`); the 32-byte node-storage master key is keyring-held and chain data / MCP tokens are AES-256-GCM encrypted at rest. Wallet sessions expire after one hour.
+
+## Links
+
+- Docs: https://docs.citrate.ai/apps
+- Depends on: [citrate-chain](https://github.com/CitrateNetwork/citrate-chain) (RPC + node, chain 40204) · [citrate-identity](https://github.com/CitrateNetwork/citrate-identity) (OIDC) · [citrate-bundler](https://github.com/CitrateNetwork/citrate-bundler) (ERC-4337)
+- Contributing (DCO): CONTRIBUTING.md · Security: SECURITY.md · License: LICENSE
 
 ## License
 
-[MIT](LICENSE).
+Source-available (BUSL-1.1) — free for personal/non-commercial use; commercial use requires a Citrate membership. This is **not** an open-source license.
