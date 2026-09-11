@@ -1,5 +1,7 @@
 # citrate-gui-native
 
+*Part of the **[Citrate Network](https://citrate.ai)** — own the means of computation. · [Docs](https://docs.citrate.ai) · [Run a node](https://citrate.ai/download) · [Contribute → free membership](https://github.com/CitrateNetwork/.github/blob/main/CONTRIBUTING.md)*
+
 > The all-in-one native desktop app for the Citrate Network — wallet, embedded full node, DAG explorer, local AI chat, storage, and a developer studio in one Rust window.
 
 ## What it is
