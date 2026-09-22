@@ -72,7 +72,13 @@ impl HardwareProfile {
         let cpu = format!("{} cores", self.cpu_cores);
         let ram = format!("{} GB RAM", self.ram_gb);
         match &self.gpu {
-            Some(g) => format!("{} · {} VRAM · {} · {}", g.name, pretty_gb(g.vram_gb), cpu, ram),
+            Some(g) => format!(
+                "{} · {} VRAM · {} · {}",
+                g.name,
+                pretty_gb(g.vram_gb),
+                cpu,
+                ram
+            ),
             None => format!("No GPU detected · {} · {}", cpu, ram),
         }
     }
@@ -127,7 +133,9 @@ fn detect_nvidia_gpu() -> Option<GpuInfo> {
         Ok(cc) => format!("{}.{}", cc.major, cc.minor),
         Err(_) => "unknown".to_string(),
     };
-    let driver_version = nvml.sys_driver_version().unwrap_or_else(|_| "unknown".to_string());
+    let driver_version = nvml
+        .sys_driver_version()
+        .unwrap_or_else(|_| "unknown".to_string());
     Some(GpuInfo {
         name,
         vram_gb,
@@ -137,7 +145,11 @@ fn detect_nvidia_gpu() -> Option<GpuInfo> {
 }
 
 fn pretty_gb(gb: u32) -> String {
-    if gb == 0 { "< 1 GB".to_string() } else { format!("{} GB", gb) }
+    if gb == 0 {
+        "< 1 GB".to_string()
+    } else {
+        format!("{} GB", gb)
+    }
 }
 
 /// Compute-sharing user preferences. Persisted alongside the GUI
@@ -244,10 +256,8 @@ mod tests {
 
     #[test]
     fn settings_roundtrip() {
-        let tmp = std::env::temp_dir().join(format!(
-            "citrate-compute-test-{}.json",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("citrate-compute-test-{}.json", std::process::id()));
         let s = ComputeSettings {
             enabled: true,
             allocation_percent: 75,

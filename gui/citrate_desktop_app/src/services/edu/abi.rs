@@ -29,7 +29,10 @@ pub fn require_hex(s: &str, hex_len: usize, what: &str) -> Result<String, String
         .unwrap_or(s.trim())
         .to_lowercase();
     if clean.len() != hex_len {
-        return Err(format!("{what}: expected {hex_len} hex chars, got {}", clean.len()));
+        return Err(format!(
+            "{what}: expected {hex_len} hex chars, got {}",
+            clean.len()
+        ));
     }
     if !clean.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("{what}: not valid hex"));
@@ -125,19 +128,30 @@ mod tests {
 
     #[test]
     fn test_decode_uint256() {
-        assert_eq!(decode_uint256("0x0000000000000000000000000000000000000000000000000000000000000002"), Some(2));
-        assert_eq!(decode_uint256("0x0000000000000000000000000000000000000000000000000000000000000000"), Some(0));
+        assert_eq!(
+            decode_uint256("0x0000000000000000000000000000000000000000000000000000000000000002"),
+            Some(2)
+        );
+        assert_eq!(
+            decode_uint256("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            Some(0)
+        );
     }
 
     #[test]
     fn test_decode_bool() {
-        assert!(decode_bool("0x0000000000000000000000000000000000000000000000000000000000000001"));
-        assert!(!decode_bool("0x0000000000000000000000000000000000000000000000000000000000000000"));
+        assert!(decode_bool(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        ));
+        assert!(!decode_bool(
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        ));
     }
 
     #[test]
     fn test_decode_address() {
-        let addr = decode_address("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+        let addr =
+            decode_address("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266");
         assert_eq!(addr, "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
     }
 
@@ -179,21 +193,26 @@ mod tests {
     #[test]
     fn test_encode_call_address_validates_input() {
         // A proper address round-trips.
-        let ok = encode_call_address("isRelayer(address)", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
-            .expect("valid address encodes");
+        let ok = encode_call_address(
+            "isRelayer(address)",
+            "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        )
+        .expect("valid address encodes");
         assert_eq!(ok.len(), 2 + 8 + 64);
         // Too short, non-hex, and over-long inputs are refused.
         assert!(encode_call_address("isRelayer(address)", "0xabcd").is_err());
-        assert!(encode_call_address("isRelayer(address)", &format!("0x{}", "zz".repeat(20))).is_err());
-        assert!(encode_call_address(
-            "isRelayer(address)",
-            &format!("0x{}", "11".repeat(33))
-        )
-        .is_err());
-        assert!(encode_call_uint256_address("f(uint256,address)", 1, "0xabcd").is_err());
         assert!(
-            encode_call_uint256_address("f(uint256,address)", 1, &format!("0x{}", "22".repeat(20)))
-                .is_ok()
+            encode_call_address("isRelayer(address)", &format!("0x{}", "zz".repeat(20))).is_err()
         );
+        assert!(
+            encode_call_address("isRelayer(address)", &format!("0x{}", "11".repeat(33))).is_err()
+        );
+        assert!(encode_call_uint256_address("f(uint256,address)", 1, "0xabcd").is_err());
+        assert!(encode_call_uint256_address(
+            "f(uint256,address)",
+            1,
+            &format!("0x{}", "22".repeat(20))
+        )
+        .is_ok());
     }
 }

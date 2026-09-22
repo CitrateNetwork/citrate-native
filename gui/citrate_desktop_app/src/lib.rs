@@ -170,12 +170,23 @@ impl fmt::Debug for AppConfig {
 }
 
 fn default_ai_priority() -> Vec<String> {
-    vec!["local".to_string(), "openai".to_string(), "anthropic".to_string()]
+    vec![
+        "local".to_string(),
+        "openai".to_string(),
+        "anthropic".to_string(),
+    ]
 }
 
 fn default_logseq_path() -> String {
     dirs::data_local_dir()
-        .map(|d| d.join("citrate").join("logseq").join("graphs").join("default").to_string_lossy().to_string())
+        .map(|d| {
+            d.join("citrate")
+                .join("logseq")
+                .join("graphs")
+                .join("default")
+                .to_string_lossy()
+                .to_string()
+        })
         .unwrap_or_else(|| "~/.citrate/logseq/graphs/default".to_string())
 }
 
@@ -218,7 +229,12 @@ fn redacted_secret_keys(map: &HashMap<String, String>) -> Vec<&str> {
 }
 
 fn secret_marker(kind: &str, name: &str) -> String {
-    format!("{}{}:{}", SECRET_MARKER_PREFIX, kind, hex::encode(name.as_bytes()))
+    format!(
+        "{}{}:{}",
+        SECRET_MARKER_PREFIX,
+        kind,
+        hex::encode(name.as_bytes())
+    )
 }
 
 fn secret_store_key(kind: &str, name: &str) -> String {
@@ -310,7 +326,8 @@ impl AppConfig {
                                 tracing::warn!(
                                     "Config migration: rpc_port {} is the retired dead-port \
                                      default; rewriting to canonical {}.",
-                                    LEGACY_RPC_PORT, DEFAULT_RPC_PORT
+                                    LEGACY_RPC_PORT,
+                                    DEFAULT_RPC_PORT
                                 );
                                 config.rpc_port = DEFAULT_RPC_PORT;
                                 needs_save = true;
@@ -385,8 +402,7 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(&path, json)?;
         tracing::info!("Config saved to {:?}", path);
         Ok(())
@@ -412,8 +428,10 @@ impl AppConfig {
         secret_store
             .set_secret(&store_key, key)
             .map_err(|e| io_secret_error("failed to store AI provider key", e))?;
-        self.ai_keys
-            .insert(provider.to_string(), secret_marker(SECRET_KIND_AI, provider));
+        self.ai_keys.insert(
+            provider.to_string(),
+            secret_marker(SECRET_KIND_AI, provider),
+        );
         Ok(())
     }
 
@@ -430,16 +448,8 @@ impl AppConfig {
         }
     }
 
-    pub fn set_integration_token(
-        &mut self,
-        name: &str,
-        token: &str,
-    ) -> Result<(), std::io::Error> {
-        self.set_integration_token_with_secret_store(
-            name,
-            token,
-            &SystemSecretStore::new(),
-        )
+    pub fn set_integration_token(&mut self, name: &str, token: &str) -> Result<(), std::io::Error> {
+        self.set_integration_token_with_secret_store(name, token, &SystemSecretStore::new())
     }
 
     pub fn set_integration_token_with_secret_store(
@@ -465,8 +475,9 @@ impl AppConfig {
         secret_store: &dyn SecretStore,
     ) -> Option<String> {
         match self.integration_tokens.get(name) {
-            Some(marker) if is_secret_marker(marker) => secret_store
-                .get_secret(&secret_store_key(SECRET_KIND_INTEGRATION, name)),
+            Some(marker) if is_secret_marker(marker) => {
+                secret_store.get_secret(&secret_store_key(SECRET_KIND_INTEGRATION, name))
+            }
             _ => None,
         }
     }
@@ -476,11 +487,7 @@ impl AppConfig {
         secret_store: &dyn SecretStore,
     ) -> Result<bool, String> {
         let mut changed = false;
-        changed |= migrate_plaintext_secret_map(
-            &mut self.ai_keys,
-            SECRET_KIND_AI,
-            secret_store,
-        )?;
+        changed |= migrate_plaintext_secret_map(&mut self.ai_keys, SECRET_KIND_AI, secret_store)?;
         changed |= migrate_plaintext_secret_map(
             &mut self.integration_tokens,
             SECRET_KIND_INTEGRATION,
@@ -562,10 +569,7 @@ impl AppCore {
 
         let config = Arc::new(RwLock::new(loaded));
         let events = Arc::new(event_bus::EventBus::new());
-        let node = Arc::new(services::NodeService::new(
-            config.clone(),
-            events.clone(),
-        ));
+        let node = Arc::new(services::NodeService::new(config.clone(), events.clone()));
         let wallet = Arc::new(services::WalletService::new(events.clone()));
         // Chat: local-first, private-by-default.
         // NAT-B-001: the endpoint chain is resolved by
@@ -576,7 +580,10 @@ impl AppCore {
         // to the public sequencer. Never sends data externally unless the
         // user explicitly configures an API key.
         let chat = {
-            use services::chat_service::{OpenAICompatibleBackend, RpcChatBackend, FallbackChatBackend, default_chat_endpoints};
+            use services::chat_service::{
+                default_chat_endpoints, FallbackChatBackend, OpenAICompatibleBackend,
+                RpcChatBackend,
+            };
             let endpoints = default_chat_endpoints(&rpc_url);
             // endpoints[0] is always the local Ollama-compatible server;
             // any further entry (devnet only) is a node-RPC fallback.
@@ -609,22 +616,27 @@ impl AppCore {
         // Constructed here but NOT bound — AppCore::start() (the
         // async init path) calls mcp_host.start(port) so bind errors
         // surface on startup rather than in the constructor.
-        let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(tool_registry.clone()));
+        let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(
+            tool_registry.clone(),
+        ));
         let mcp_host = Arc::new(services::mcp_host::McpHostService::new(mcp.clone()));
         let session_policy = Arc::new(RwLock::new(
-            citrate_agent_core::canonical::PolicyProfile::Guided
+            citrate_agent_core::canonical::PolicyProfile::Guided,
         ));
 
         // Trail recorder — subscribes to event bus and records canonical TrailEvents.
         // LogSeq path from config (if enabled).
         let logseq_path = {
-            let cfg = config.try_read().map(|c| {
-                if c.logseq_enabled {
-                    Some(c.logseq_graph_path.clone())
-                } else {
-                    None
-                }
-            }).unwrap_or(None);
+            let cfg = config
+                .try_read()
+                .map(|c| {
+                    if c.logseq_enabled {
+                        Some(c.logseq_graph_path.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(None);
             cfg
         };
         let trail = Arc::new(trail::TrailRecorder::new(
@@ -702,7 +714,11 @@ impl AppCore {
             exe_dir.join("..").join("Resources"),
             // macOS .app, nested layout (defensive):
             //   ../Resources/branding/models/*.gguf
-            exe_dir.join("..").join("Resources").join("branding").join("models"),
+            exe_dir
+                .join("..")
+                .join("Resources")
+                .join("branding")
+                .join("models"),
             // Linux .deb / .AppImage convention: alongside the binary
             exe_dir.join("branding").join("models"),
             exe_dir.to_path_buf(),
@@ -710,7 +726,12 @@ impl AppCore {
             std::path::PathBuf::from("/usr/share/citrate-native/branding/models"),
             std::path::PathBuf::from("/usr/share/citrate-wallet/branding/models"),
             // Repo-relative — useful during `cargo run` from a workspace checkout
-            exe_dir.join("..").join("..").join("..").join("branding").join("models"),
+            exe_dir
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("branding")
+                .join("models"),
         ];
 
         for root in &candidates {
@@ -811,7 +832,11 @@ mod tests {
 
     impl SecretStore for TestSecretStore {
         fn get_secret(&self, key: &str) -> Option<String> {
-            self.data.lock().expect("secret store mutex").get(key).cloned()
+            self.data
+                .lock()
+                .expect("secret store mutex")
+                .get(key)
+                .cloned()
         }
 
         fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
@@ -831,7 +856,10 @@ mod tests {
         }
 
         fn has_secret(&self, key: &str) -> bool {
-            self.data.lock().expect("secret store mutex").contains_key(key)
+            self.data
+                .lock()
+                .expect("secret store mutex")
+                .contains_key(key)
         }
     }
 
@@ -897,10 +925,9 @@ mod tests {
         config
             .ai_keys
             .insert("openai".to_string(), "sk-live-test-secret".to_string());
-        config.integration_tokens.insert(
-            "huggingface".to_string(),
-            "hf_live_test_secret".to_string(),
-        );
+        config
+            .integration_tokens
+            .insert("huggingface".to_string(), "hf_live_test_secret".to_string());
 
         config
             .save_to_path_with_secret_store(&path, &store)
@@ -939,8 +966,7 @@ mod tests {
 
         let loaded = AppConfig::load_from_path_with_secret_store(&path, &store);
         assert_eq!(
-            loaded.logseq_graph_path,
-            "/tmp/citrate-test/logseq/graphs/team",
+            loaded.logseq_graph_path, "/tmp/citrate-test/logseq/graphs/team",
             "save-graph-path side effect must persist logseq_graph_path"
         );
     }
@@ -1006,7 +1032,10 @@ mod tests {
         let store = TestSecretStore::default();
 
         let migrated = AppConfig::load_from_path_with_secret_store(&path, &store);
-        assert_eq!(migrated.rpc_port, DEFAULT_RPC_PORT, "legacy dead port migrated in memory");
+        assert_eq!(
+            migrated.rpc_port, DEFAULT_RPC_PORT,
+            "legacy dead port migrated in memory"
+        );
 
         let raw = std::fs::read_to_string(&path).expect("read migrated config");
         assert!(
@@ -1094,7 +1123,11 @@ mod tests {
     #[test]
     fn test_default_data_dir_contains_citrate() {
         let dir = default_data_dir();
-        assert!(dir.contains("citrate"), "Data dir should contain 'citrate': {}", dir);
+        assert!(
+            dir.contains("citrate"),
+            "Data dir should contain 'citrate': {}",
+            dir
+        );
     }
 
     #[tokio::test]
@@ -1161,12 +1194,18 @@ mod tests {
     #[test]
     fn test_config_ports() {
         let config = AppConfig::default();
-        assert_ne!(config.rpc_port, config.p2p_port, "RPC and P2P ports must differ");
+        assert_ne!(
+            config.rpc_port, config.p2p_port,
+            "RPC and P2P ports must differ"
+        );
     }
 
     #[test]
     fn test_config_bootnodes_not_empty() {
         let config = AppConfig::default();
-        assert!(!config.bootnodes.is_empty(), "Default config must include bootnode");
+        assert!(
+            !config.bootnodes.is_empty(),
+            "Default config must include bootnode"
+        );
     }
 }

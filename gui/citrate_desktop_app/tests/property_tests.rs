@@ -6,7 +6,7 @@
 use citrate_desktop_app::error::AppError;
 use citrate_desktop_app::event_bus::{AppEvent, EventBus};
 use citrate_desktop_app::services::wallet_service::{
-    WalletService, WalletBackend, Account, CreateAccountResult,
+    Account, CreateAccountResult, WalletBackend, WalletService,
 };
 use citrate_desktop_app::{AppConfig, AppCore};
 use proptest::prelude::*;
@@ -17,19 +17,34 @@ struct LocalTestWalletBackend;
 
 #[async_trait::async_trait]
 impl WalletBackend for LocalTestWalletBackend {
-    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(Vec::new()) }
-    async fn create_wallet(&self, _password: &str, _label: &str) -> Result<CreateAccountResult, AppError> {
+    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+        Ok(Vec::new())
+    }
+    async fn create_wallet(
+        &self,
+        _password: &str,
+        _label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
         Ok(CreateAccountResult {
             address: "0x0000000000000000000000000000000000000000".to_string(),
             mnemonic: "test words".to_string(),
-            public_key: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            public_key: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
         })
     }
     async fn unlock(&self, _address: &str, password: &str) -> Result<bool, AppError> {
         Ok(password.len() >= 8)
     }
-    async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-    async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+    async fn lock(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn send_transaction(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<String, AppError> {
         Ok("0x0000000000000000000000000000000000000000000000000000000000000000".to_string())
     }
 }

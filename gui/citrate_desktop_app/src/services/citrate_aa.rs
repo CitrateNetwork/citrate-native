@@ -113,7 +113,9 @@ pub fn account_id_to_user_id(account_id: &str) -> Result<[u8; 32], AaError> {
                 out[12..].copy_from_slice(&bytes);
                 Ok(out)
             }
-            n => Err(AaError::Invalid(format!("accountId hex must be 20 or 32 bytes (got {n})"))),
+            n => Err(AaError::Invalid(format!(
+                "accountId hex must be 20 or 32 bytes (got {n})"
+            ))),
         };
     }
     uuid_to_user_id(s)
@@ -176,7 +178,9 @@ fn word_u64(v: u64) -> [u8; 32] {
 fn word_addr(addr: &str) -> Result<[u8; 32], AaError> {
     let b = hex_to_bytes(addr)?;
     if b.len() != 20 {
-        return Err(AaError::Invalid(format!("address must be 20 bytes: {addr}")));
+        return Err(AaError::Invalid(format!(
+            "address must be 20 bytes: {addr}"
+        )));
     }
     let mut w = [0u8; 32];
     w[12..].copy_from_slice(&b);
@@ -416,12 +420,12 @@ mod tests {
 
     #[test]
     fn initialize_calldata_matches_the_sdk_vector() {
-        let install =
-            ecdsa_install_data(OWNER, 2 /* wallet-extension source used in the shared vector */)
-                .expect("install data");
+        let install = ecdsa_install_data(
+            OWNER, 2, /* wallet-extension source used in the shared vector */
+        )
+        .expect("install data");
         assert_eq!(expect_hex(&install), format!("{}02", strip0x(OWNER)));
-        let calldata =
-            encode_initialize(addresses::ECDSA_VALIDATOR, &install).expect("initialize");
+        let calldata = encode_initialize(addresses::ECDSA_VALIDATOR, &install).expect("initialize");
         let expected = "3c3b752b01d2d35421379ae5b461e216bfcdd1b7e6a64bbc400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000158ba1f109551bd432803012645ac136ddd64dba7202000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
         assert_eq!(expect_hex(&calldata), expected);
     }
@@ -433,8 +437,14 @@ mod tests {
         let install = ecdsa_install_data(OWNER, ECDSA_SOURCE_GUI_NATIVE).expect("install");
         let init = encode_initialize(addresses::ECDSA_VALIDATOR, &install).expect("init");
         let sig = vec![0x22u8; 65];
-        let calldata = encode_deploy_for(&user, addresses::ECDSA_VALIDATOR, &init, 1_780_000_000, &sig)
-            .expect("deployFor");
+        let calldata = encode_deploy_for(
+            &user,
+            addresses::ECDSA_VALIDATOR,
+            &init,
+            1_780_000_000,
+            &sig,
+        )
+        .expect("deployFor");
         let h = expect_hex(&calldata);
         assert!(h.starts_with("89ebe13b"));
         assert!(h.contains(&"11".repeat(32)));
@@ -476,8 +486,7 @@ mod tests {
             gas_fees: pack_pair128(1_000_000_000, 2_000_000_000),
             paymaster_and_data: &[],
         };
-        let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID)
-            .expect("hash");
+        let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID).expect("hash");
         // Recaptured 2026-07-09 from the live EntryPoint 0x077F…54Ef
         // (eth_call getUserOpHash) after the 2026-07-05 re-roll.
         assert_eq!(
@@ -496,8 +505,8 @@ mod tests {
 
     #[test]
     fn get_nonce_calldata_targets_root_key() {
-        let data = get_nonce_calldata("0x5ce327300221659b66323dc344c2275a7da756ff")
-            .expect("calldata");
+        let data =
+            get_nonce_calldata("0x5ce327300221659b66323dc344c2275a7da756ff").expect("calldata");
         assert_eq!(hex::encode(&data[..4]), "35567e1a");
         assert_eq!(data.len(), 4 + 64);
     }

@@ -2,8 +2,8 @@
 #![allow(clippy::manual_is_multiple_of)]
 
 use citrate_desktop_app::AppCore;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 // NAT-B-016: wipe password buffers held Rust-side in UI callbacks.
 use zeroize::Zeroizing;
 
@@ -13,11 +13,11 @@ mod app_binder;
 // BFR-INT-4: Boeing surface moved to `citrate-boeing-shell` crate.
 // NATIVE-R1-S2 WP-A1: crash telemetry (panic hook + session marker +
 // rotating file log) — forensics for the silent node-start death.
-mod crash_telemetry;
-mod storage_service;
-mod compute_service;
-mod marketplace_client;
 mod calldata_decoder;
+mod compute_service;
+mod crash_telemetry;
+mod marketplace_client;
+mod storage_service;
 
 #[cfg(test)]
 mod ui_visual_tests;
@@ -62,8 +62,7 @@ fn eip55_checksum(addr: &str) -> String {
         .chars()
         .enumerate()
         .map(|(i, c)| {
-            if c.is_ascii_alphabetic()
-                && u8::from_str_radix(&hash[i..i + 1], 16).unwrap_or(0) >= 8
+            if c.is_ascii_alphabetic() && u8::from_str_radix(&hash[i..i + 1], 16).unwrap_or(0) >= 8
             {
                 c.to_uppercase().next().unwrap_or(c)
             } else {
@@ -88,7 +87,9 @@ fn validate_recipient_address(input: &str) -> Result<String, String> {
         .or_else(|| t.strip_prefix("0X"))
         .unwrap_or(t);
     if hex.len() != 40 {
-        return Err("Recipient must be a 20-byte address (40 hex characters after 0x).".to_string());
+        return Err(
+            "Recipient must be a 20-byte address (40 hex characters after 0x).".to_string(),
+        );
     }
     if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Recipient address contains non-hex characters.".to_string());
@@ -187,9 +188,7 @@ const SESSION_TIMEOUT_SECS: i64 =
 /// the view is swapped, or "Sign Out" leaves a fully-unlocked wallet that
 /// keeps signing while the user believes it is closed. A headless test
 /// drives this function directly.
-async fn perform_wallet_lock_teardown(
-    wallet: &citrate_desktop_app::services::WalletService,
-) {
+async fn perform_wallet_lock_teardown(wallet: &citrate_desktop_app::services::WalletService) {
     SESSION_UNLOCK_EPOCH.store(0, Ordering::Relaxed);
     if let Err(e) = wallet.lock().await {
         tracing::error!("wallet lock teardown failed: {}", e);
@@ -198,7 +197,10 @@ async fn perform_wallet_lock_teardown(
 
 /// Push wallet accounts to the Slint UI as a VecModel.
 /// Applies EIP-55 checksum encoding to all addresses for display.
-fn push_accounts_to_ui(ui: &App, accounts: &[citrate_desktop_app::services::wallet_service::Account]) {
+fn push_accounts_to_ui(
+    ui: &App,
+    accounts: &[citrate_desktop_app::services::wallet_service::Account],
+) {
     let model_data: Vec<AccountData> = accounts
         .iter()
         .map(|a| AccountData {
@@ -348,7 +350,10 @@ mod clipboard_autoclear_tests {
     fn test_t0_04_exported_key_display_clears_only_when_unchanged() {
         let key = "a".repeat(64);
         assert!(exported_key_should_clear(&key, &key));
-        assert!(!exported_key_should_clear(&key, "user replaced visible value"));
+        assert!(!exported_key_should_clear(
+            &key,
+            "user replaced visible value"
+        ));
         assert!(!exported_key_should_clear("", ""));
     }
 
@@ -392,7 +397,10 @@ mod rm_q_gui_tests {
             lower
         );
         // Whitespace trimmed.
-        assert_eq!(validate_recipient_address(&format!("  {lower}  ")).unwrap(), lower);
+        assert_eq!(
+            validate_recipient_address(&format!("  {lower}  ")).unwrap(),
+            lower
+        );
         // Wrong length → rejected.
         assert!(validate_recipient_address("0x1234").is_err());
         // Non-hex → rejected.
@@ -426,10 +434,22 @@ mod rm_q_gui_tests {
     #[test]
     fn natb013_021_slint_state_properties_are_written() {
         let source = include_str!("main.rs");
-        assert!(source.contains("set_send_sending("), "send-sending must be driven (NAT-B-013)");
-        assert!(source.contains("set_lock_unlocking("), "lock-unlocking must be driven (NAT-B-021)");
-        assert!(source.contains("set_lock_locked_out("), "lock-locked-out must be driven (NAT-B-021)");
-        assert!(source.contains("set_lock_lockout_message("), "lock-lockout-message must be driven (NAT-B-021)");
+        assert!(
+            source.contains("set_send_sending("),
+            "send-sending must be driven (NAT-B-013)"
+        );
+        assert!(
+            source.contains("set_lock_unlocking("),
+            "lock-unlocking must be driven (NAT-B-021)"
+        );
+        assert!(
+            source.contains("set_lock_locked_out("),
+            "lock-locked-out must be driven (NAT-B-021)"
+        );
+        assert!(
+            source.contains("set_lock_lockout_message("),
+            "lock-lockout-message must be driven (NAT-B-021)"
+        );
     }
 
     // NAT-B-019: the idle-timeout transition raises the lock screen.
@@ -569,7 +589,13 @@ mod sign_out_teardown_tests {
         async fn lock(&self) -> Result<(), AppError> {
             Ok(())
         }
-        async fn send_transaction(&self, _f: &str, _t: &str, _v: &str, _p: &str) -> Result<String, AppError> {
+        async fn send_transaction(
+            &self,
+            _f: &str,
+            _t: &str,
+            _v: &str,
+            _p: &str,
+        ) -> Result<String, AppError> {
             Ok("0x0".to_string())
         }
     }
@@ -583,7 +609,9 @@ mod sign_out_teardown_tests {
         let svc = WalletService::with_backend(events, Arc::new(MockBackend));
 
         // Activate a session (create_wallet unlocks it, like onboarding).
-        svc.create_wallet("password123").await.expect("create wallet");
+        svc.create_wallet("password123")
+            .await
+            .expect("create wallet");
         assert!(
             svc.get_session_status().await.is_active,
             "precondition: session active after wallet creation"
@@ -679,10 +707,7 @@ async fn ipfs_fetch_stats(client: &reqwest::Client) -> IpfsStats {
     {
         Ok(resp) => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                let bytes = json
-                    .get("RepoSize")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let bytes = json.get("RepoSize").and_then(|v| v.as_u64()).unwrap_or(0);
                 format_bytes(bytes)
             } else {
                 "0 B".to_string()
@@ -730,7 +755,10 @@ async fn upload_paths_to_ipfs(
             Err(e) => {
                 tracing::error!("storage envelope key unavailable: {}", e);
                 let ui_w2 = ui_w.clone();
-                let emsg = format!("Private upload cancelled — encryption key unavailable: {}", e);
+                let emsg = format!(
+                    "Private upload cancelled — encryption key unavailable: {}",
+                    e
+                );
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w2.upgrade() {
                         ui.set_storage_uploading(false);
@@ -747,7 +775,8 @@ async fn upload_paths_to_ipfs(
     let client = reqwest::Client::new();
     let total = paths.len();
     let index_path = storage_service::FilesIndex::default_path();
-    let mut index = index_path.as_ref()
+    let mut index = index_path
+        .as_ref()
         .map(|p| storage_service::FilesIndex::load(p))
         .unwrap_or_default();
     if index.version == 0 {
@@ -830,7 +859,11 @@ async fn upload_paths_to_ipfs(
 
     let entries = build_file_entries(&index);
     let ui_w_final = ui_w.clone();
-    let done_msg = if total == 1 { "Uploaded 1 file".to_string() } else { format!("Uploaded {} files", total) };
+    let done_msg = if total == 1 {
+        "Uploaded 1 file".to_string()
+    } else {
+        format!("Uploaded {} files", total)
+    };
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(ui) = ui_w_final.upgrade() {
             let model = std::rc::Rc::new(slint::VecModel::from(entries));
@@ -855,14 +888,18 @@ fn build_file_entries(index: &storage_service::FilesIndex) -> Vec<FileEntry> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    index.files.iter().map(|f| FileEntry {
-        name: f.name.clone().into(),
-        size: f.size_display().into(),
-        mime_icon: f.mime_icon().into(),
-        uploaded: f.uploaded_display(now_secs).into(),
-        cid: f.cid.clone().into(),
-        encrypted: f.encrypted,
-    }).collect()
+    index
+        .files
+        .iter()
+        .map(|f| FileEntry {
+            name: f.name.clone().into(),
+            size: f.size_display().into(),
+            mime_icon: f.mime_icon().into(),
+            uploaded: f.uploaded_display(now_secs).into(),
+            cid: f.cid.clone().into(),
+            encrypted: f.encrypted,
+        })
+        .collect()
 }
 
 /// P960-A WP-A.4: Pretty-format a tool-result JSON string so it reads
@@ -907,13 +944,20 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
                 let ts = b.get("timestamp").and_then(|x| x.as_u64()).unwrap_or(0);
                 let age = if ts > 0 && now_secs > 0 {
                     let d = (now_secs - ts as i64).max(0);
-                    if d < 60 { format!("{}s ago", d) }
-                    else if d < 3600 { format!("{}m ago", d / 60) }
-                    else { format!("{}h ago", d / 3600) }
+                    if d < 60 {
+                        format!("{}s ago", d)
+                    } else if d < 3600 {
+                        format!("{}m ago", d / 60)
+                    } else {
+                        format!("{}h ago", d / 3600)
+                    }
                 } else {
                     "—".to_string()
                 };
-                lines.push(format!("#{}  {}…  {} txns  {}", height, short_hash, tx_count, age));
+                lines.push(format!(
+                    "#{}  {}…  {} txns  {}",
+                    height, short_hash, tx_count, age
+                ));
             }
             lines.join("\n")
         }
@@ -921,21 +965,37 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
             let h = v.get("height").and_then(|x| x.as_u64()).unwrap_or(0);
             let c = v.get("chain_id").and_then(|x| x.as_u64()).unwrap_or(0);
             let sync = v.get("syncing").and_then(|x| x.as_bool()).unwrap_or(false);
-            format!("Block {} · chain {} · {}", h, c, if sync { "syncing" } else { "synced" })
+            format!(
+                "Block {} · chain {} · {}",
+                h,
+                c,
+                if sync { "syncing" } else { "synced" }
+            )
         }
         "get_peer_count" => {
             let p = v.get("peers").and_then(|x| x.as_u64()).unwrap_or(0);
             let m = v.get("mempool_size").and_then(|x| x.as_u64()).unwrap_or(0);
             let t = v.get("dag_tips").and_then(|x| x.as_u64()).unwrap_or(0);
-            format!("{} peer{} · {} mempool · {} tip{}",
-                p, if p == 1 { "" } else { "s" },
+            format!(
+                "{} peer{} · {} mempool · {} tip{}",
+                p,
+                if p == 1 { "" } else { "s" },
                 m,
-                t, if t == 1 { "" } else { "s" })
+                t,
+                if t == 1 { "" } else { "s" }
+            )
         }
         "check_balance" => {
             let a = v.get("address").and_then(|x| x.as_str()).unwrap_or("—");
-            let s = v.get("balance_salt").and_then(|x| x.as_str()).unwrap_or("0");
-            let short = if a.len() > 14 { format!("{}…{}", &a[..6], &a[a.len()-4..]) } else { a.to_string() };
+            let s = v
+                .get("balance_salt")
+                .and_then(|x| x.as_str())
+                .unwrap_or("0");
+            let short = if a.len() > 14 {
+                format!("{}…{}", &a[..6], &a[a.len() - 4..])
+            } else {
+                a.to_string()
+            };
             format!("{}\n{} SALT", short, s)
         }
         "explain_tx" => {
@@ -957,14 +1017,20 @@ fn format_tool_result(tool_name: &str, raw_content: &str) -> String {
                 None => return raw_content.to_string(),
             };
             if txs.is_empty() {
-                let addr = v.get("address").and_then(|x| x.as_str()).unwrap_or("this address");
+                let addr = v
+                    .get("address")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("this address");
                 return format!("No transactions yet for {}.", addr);
             }
             let mut lines: Vec<String> = Vec::with_capacity(txs.len());
             for t in txs {
                 let ty = t.get("tx_type").and_then(|x| x.as_str()).unwrap_or("tx");
                 let amt = t.get("amount").and_then(|x| x.as_str()).unwrap_or("0");
-                let cp = t.get("counterparty").and_then(|x| x.as_str()).unwrap_or("—");
+                let cp = t
+                    .get("counterparty")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("—");
                 let st = t.get("status").and_then(|x| x.as_str()).unwrap_or("");
                 lines.push(format!("{:<8} {:>10} SALT  {}  [{}]", ty, amt, cp, st));
             }
@@ -1006,7 +1072,9 @@ async fn probe_tcp(host_port: &str) -> HealthState {
     match tokio::time::timeout(
         std::time::Duration::from_secs(2),
         TcpStream::connect(host_port),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(_)) => HealthState::Ok,
         _ => HealthState::Down,
     }
@@ -1062,12 +1130,12 @@ async fn probe_rpc(rpc_url: &str) -> HealthState {
 /// Run all three health probes against the current AppCore config
 /// and push the results back to the UI. Sequential so the spinner
 /// doesn't all flip at once but it's still done in ~6s total worst-case.
-async fn run_health_probes(
-    core: &Arc<AppCore>,
-    ui_w: slint::Weak<App>,
-) {
+async fn run_health_probes(core: &Arc<AppCore>, ui_w: slint::Weak<App>) {
     let config = core.config.read().await;
-    let bootnode = config.bootnodes.first().cloned()
+    let bootnode = config
+        .bootnodes
+        .first()
+        .cloned()
         .unwrap_or_else(|| "<none configured>".to_string());
     let rpc_url = config.active_rpc_url();
     drop(config);
@@ -1087,7 +1155,9 @@ async fn run_health_probes(
     let rpc_state = probe_rpc(&rpc_url).await;
 
     let _ = slint::invoke_from_event_loop(move || {
-        let Some(ui) = ui_w.upgrade() else { return; };
+        let Some(ui) = ui_w.upgrade() else {
+            return;
+        };
         ui.set_health_bootnode_status(bootnode_state.as_str().into());
         ui.set_health_bootnode_detail(bootnode.into());
         ui.set_health_ipfs_status(ipfs_state.as_str().into());
@@ -1146,7 +1216,10 @@ impl citrate_desktop_app::services::relay_service::ConfirmationGate for RelayApp
             resolved: None,
             resolved_at: None,
         };
-        tracing::info!("signing relay: confirmation required — {}", write.describe());
+        tracing::info!(
+            "signing relay: confirmation required — {}",
+            write.describe()
+        );
         let rx = self.approvals.submit(request).await;
         // Fail closed: dropped sender / timeout / explicit deny are all false.
         let approved = rx.await.unwrap_or(false);
@@ -1201,7 +1274,10 @@ pub(crate) async fn confirm_tx_intent(
     };
     tracing::info!(
         "wallet write: confirmation required — {} → {} ({}), value {} wei",
-        action, method, to, value_wei
+        action,
+        method,
+        to,
+        value_wei
     );
     let rx = approvals.submit(request).await;
     // Fail closed: dropped sender / timeout / explicit deny all map to `false`.
@@ -1248,12 +1324,18 @@ async fn poll_tx_receipt(rpc_url: &str, tx_hash: &str) -> Result<ReceiptOutcome,
             Ok(j) => j,
             Err(e) => return Err(format!("rpc decode: {}", e)),
         };
-        let Some(result) = json.get("result") else { continue; };
-        if result.is_null() { continue; }
+        let Some(result) = json.get("result") else {
+            continue;
+        };
+        if result.is_null() {
+            continue;
+        }
         let status = result["status"].as_str().unwrap_or("0x0");
         if status == "0x1" {
             let block = result["blockNumber"].as_str().unwrap_or("0x?").to_string();
-            return Ok(ReceiptOutcome::Confirmed { block_number: block });
+            return Ok(ReceiptOutcome::Confirmed {
+                block_number: block,
+            });
         }
         return Ok(ReceiptOutcome::Reverted);
     }
@@ -1296,12 +1378,15 @@ fn format_session_remaining(total_secs: i64) -> String {
 
 fn wei_str_to_salt(wei: &str) -> String {
     let w = wei.trim();
-    let bytes: Option<u128> = if let Some(hex) = w.strip_prefix("0x").or_else(|| w.strip_prefix("0X")) {
-        u128::from_str_radix(hex, 16).ok()
-    } else {
-        w.parse::<u128>().ok()
+    let bytes: Option<u128> =
+        if let Some(hex) = w.strip_prefix("0x").or_else(|| w.strip_prefix("0X")) {
+            u128::from_str_radix(hex, 16).ok()
+        } else {
+            w.parse::<u128>().ok()
+        };
+    let Some(n) = bytes else {
+        return "0".to_string();
     };
-    let Some(n) = bytes else { return "0".to_string(); };
     // 10^18 wei per SALT.
     let whole = n / 1_000_000_000_000_000_000u128;
     let frac = n % 1_000_000_000_000_000_000u128;
@@ -1393,7 +1478,11 @@ async fn fetch_cmo_portal_data(
 
     // For each school, fetch its node + matrix concurrently within the
     // task. Order is preserved so the UI list matches registration order.
-    let mut school_data: Vec<(String, citrate_edu_app::services::cmo_portal::InstitutionNode, [citrate_edu_app::services::cmo_portal::GateRecord; 9])> = Vec::with_capacity(schools.len());
+    let mut school_data: Vec<(
+        String,
+        citrate_edu_app::services::cmo_portal::InstitutionNode,
+        [citrate_edu_app::services::cmo_portal::GateRecord; 9],
+    )> = Vec::with_capacity(schools.len());
     for sch_hash in &schools {
         match service.get_node(sch_hash).await {
             Ok(node) => match service.get_school_matrix(sch_hash).await {
@@ -1436,9 +1525,9 @@ async fn fetch_cmo_portal_data(
                 student_count: 0, // student count is not on-chain in v1
             })
             .collect();
-        ui.set_cmo_schools(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
-            school_entries,
-        ))));
+        ui.set_cmo_schools(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(school_entries),
+        )));
 
         // ── Dashboard rows ──
         // Compute per-school compliance health: worst applicable cell wins.
@@ -1484,10 +1573,7 @@ async fn fetch_cmo_portal_data(
                     .count() as i32
             })
             .sum::<i32>();
-        let total_issues = dash_rows
-            .iter()
-            .map(|r| r.open_issues)
-            .sum::<i32>();
+        let total_issues = dash_rows.iter().map(|r| r.open_issues).sum::<i32>();
 
         ui.set_cmo_dashboard_stats(CmoDashboardStats {
             total_schools: school_data_clone.len() as i32,
@@ -1514,7 +1600,9 @@ async fn fetch_cmo_portal_data(
                     4 => "CO",
                     _ => "Other",
                 };
-                let labels = ["DPA", "FERPA", "COPPA", "CIPA", "CA", "NY", "IL", "TX", "CO"];
+                let labels = [
+                    "DPA", "FERPA", "COPPA", "CIPA", "CA", "NY", "IL", "TX", "CO",
+                ];
                 let cells: Vec<ComplianceCell> = mx
                     .iter()
                     .enumerate()
@@ -1542,9 +1630,9 @@ async fn fetch_cmo_portal_data(
                 }
             })
             .collect();
-        ui.set_cmo_compliance_rows(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
-            compliance_rows,
-        ))));
+        ui.set_cmo_compliance_rows(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(compliance_rows),
+        )));
 
         // ── Tenancy nodes (CMO root + flat school list) ──
         let mut tenancy: Vec<TenancyNode> = Vec::with_capacity(school_data_clone.len() + 1);
@@ -1568,9 +1656,9 @@ async fn fetch_cmo_portal_data(
                 expanded: false,
             });
         }
-        ui.set_cmo_tenancy_nodes(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(
-            tenancy,
-        ))));
+        ui.set_cmo_tenancy_nodes(slint::ModelRc::from(std::rc::Rc::new(
+            slint::VecModel::from(tenancy),
+        )));
 
         tracing::info!(
             "[E6.1.5-D] CMO portal UI populated with {} schools (live on-chain data)",
@@ -1665,7 +1753,9 @@ fn main() {
         app_core.wallet.set_chain_id(cfg.chain_id);
         tracing::info!(
             "Wallet RPC aligned: network={}, chain_id={}, rpc={}",
-            cfg.network, cfg.chain_id, rpc_url,
+            cfg.network,
+            cfg.chain_id,
+            rpc_url,
         );
     }
     let is_first_run = rt.block_on(app_core.wallet.is_first_run());
@@ -1775,7 +1865,7 @@ fn main() {
             // once E6.1.5 lands.
             ui.set_cmo_dashboard_stats(CmoDashboardStats {
                 total_schools: 3,
-                total_students: 1220, // 412 + 287 + 521
+                total_students: 1220,              // 412 + 287 + 521
                 total_active_compliance_gates: 27, // 9 gates x 3 schools
                 total_open_issues: 2,
             });
@@ -1920,8 +2010,12 @@ fn main() {
             //
             // Real version comes from InstitutionTreeV1.getComplianceMatrix
             // when E6.1.5 wires the on-chain query.
-            let make_cell = |gate_id: &str, gate_label: &str, status: &str,
-                              last_signed: &str, expires_at: &str| -> ComplianceCell {
+            let make_cell = |gate_id: &str,
+                             gate_label: &str,
+                             status: &str,
+                             last_signed: &str,
+                             expires_at: &str|
+             -> ComplianceCell {
                 ComplianceCell {
                     gate_id: gate_id.into(),
                     gate_label: gate_label.into(),
@@ -1938,41 +2032,41 @@ fn main() {
 
             // Newark = all federal Green
             let newark_cells: Vec<ComplianceCell> = vec![
-                make_cell("dpa",   "DPA",   "Green",  "2026-04-01", "2027-04-01"),
-                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("cipa",  "CIPA",  "Green",  "2026-04-01", "2027-04-01"),
-                na_cell("ab1584",   "CA AB1584"),
-                na_cell("nyedlaw",  "NY Ed Law 2-d"),
-                na_cell("ilsoppa",  "IL SOPPA"),
-                na_cell("txtec",    "TX TEC §32.151"),
-                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+                make_cell("dpa", "DPA", "Green", "2026-04-01", "2027-04-01"),
+                make_cell("ferpa", "FERPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("cipa", "CIPA", "Green", "2026-04-01", "2027-04-01"),
+                na_cell("ab1584", "CA AB1584"),
+                na_cell("nyedlaw", "NY Ed Law 2-d"),
+                na_cell("ilsoppa", "IL SOPPA"),
+                na_cell("txtec", "TX TEC §32.151"),
+                na_cell("cocrs", "CO C.R.S. §22-16-104"),
             ];
 
             // Bayonne = DPA Yellow (renewal pending), rest Green/N/A
             let bayonne_cells: Vec<ComplianceCell> = vec![
-                make_cell("dpa",   "DPA",   "Yellow", "2025-04-01", "2026-04-01"),  // expired & pending renewal
-                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("cipa",  "CIPA",  "Green",  "2026-04-01", "2027-04-01"),
-                na_cell("ab1584",   "CA AB1584"),
-                na_cell("nyedlaw",  "NY Ed Law 2-d"),
-                na_cell("ilsoppa",  "IL SOPPA"),
-                na_cell("txtec",    "TX TEC §32.151"),
-                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+                make_cell("dpa", "DPA", "Yellow", "2025-04-01", "2026-04-01"), // expired & pending renewal
+                make_cell("ferpa", "FERPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("cipa", "CIPA", "Green", "2026-04-01", "2027-04-01"),
+                na_cell("ab1584", "CA AB1584"),
+                na_cell("nyedlaw", "NY Ed Law 2-d"),
+                na_cell("ilsoppa", "IL SOPPA"),
+                na_cell("txtec", "TX TEC §32.151"),
+                na_cell("cocrs", "CO C.R.S. §22-16-104"),
             ];
 
             // Jersey City = CIPA Red (expired and not renewed)
             let jersey_cells: Vec<ComplianceCell> = vec![
-                make_cell("dpa",   "DPA",   "Green",  "2026-04-01", "2027-04-01"),
-                make_cell("ferpa", "FERPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("coppa", "COPPA", "Green",  "2026-03-15", "2027-03-15"),
-                make_cell("cipa",  "CIPA",  "Red",    "2024-04-01", "2025-04-01"),  // expired 1+ yr ago
-                na_cell("ab1584",   "CA AB1584"),
-                na_cell("nyedlaw",  "NY Ed Law 2-d"),
-                na_cell("ilsoppa",  "IL SOPPA"),
-                na_cell("txtec",    "TX TEC §32.151"),
-                na_cell("cocrs",    "CO C.R.S. §22-16-104"),
+                make_cell("dpa", "DPA", "Green", "2026-04-01", "2027-04-01"),
+                make_cell("ferpa", "FERPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("coppa", "COPPA", "Green", "2026-03-15", "2027-03-15"),
+                make_cell("cipa", "CIPA", "Red", "2024-04-01", "2025-04-01"), // expired 1+ yr ago
+                na_cell("ab1584", "CA AB1584"),
+                na_cell("nyedlaw", "NY Ed Law 2-d"),
+                na_cell("ilsoppa", "IL SOPPA"),
+                na_cell("txtec", "TX TEC §32.151"),
+                na_cell("cocrs", "CO C.R.S. §22-16-104"),
             ];
 
             let stub_compliance: Vec<ComplianceSchoolMatrixRow> = vec![
@@ -2001,8 +2095,7 @@ fn main() {
                     ))),
                 },
             ];
-            let compliance_model =
-                std::rc::Rc::new(slint::VecModel::from(stub_compliance));
+            let compliance_model = std::rc::Rc::new(slint::VecModel::from(stub_compliance));
             ui.set_cmo_compliance_rows(slint::ModelRc::from(compliance_model));
         } else {
             // WP-E6.1.5 — Real-RPC path. When CITRATE_CMO_DEMO is unset, the
@@ -2104,11 +2197,9 @@ fn main() {
                 let ui_weak_e615 = ui.as_weak();
                 let cmo_hash_owned = cmo_hash.clone();
                 rt.spawn(async move {
-                    if let Err(err) = fetch_cmo_portal_data(
-                        service,
-                        cmo_hash_owned,
-                        ui_weak_e615,
-                    ).await {
+                    if let Err(err) =
+                        fetch_cmo_portal_data(service, cmo_hash_owned, ui_weak_e615).await
+                    {
                         tracing::warn!("[E6.1.5-D] CMO portal fetch failed: {err}");
                     }
                 });
@@ -2157,10 +2248,22 @@ fn main() {
             // Document each service-layer hook. These become real RPC
             // calls when E6.1.5 ships InstitutionTreeV1.getSchoolMetrics
             // etc; for now we log so the propagation chain is observable.
-            tracing::info!("[E6.6] dashboard hook: refresh_for_school({}) [pending E6.1.5]", id);
-            tracing::info!("[E6.6] wallet hook: set_active_account_for_school({}) [pending E6.1.5]", id);
-            tracing::info!("[E6.6] models hook: list_for_school({}) [pending E6.1.5]", id);
-            tracing::info!("[E6.6] operations hook: filter_for_school({}) [pending E6.1.5]", id);
+            tracing::info!(
+                "[E6.6] dashboard hook: refresh_for_school({}) [pending E6.1.5]",
+                id
+            );
+            tracing::info!(
+                "[E6.6] wallet hook: set_active_account_for_school({}) [pending E6.1.5]",
+                id
+            );
+            tracing::info!(
+                "[E6.6] models hook: list_for_school({}) [pending E6.1.5]",
+                id
+            );
+            tracing::info!(
+                "[E6.6] operations hook: filter_for_school({}) [pending E6.1.5]",
+                id
+            );
         }
     });
 
@@ -2169,7 +2272,9 @@ fn main() {
     // operator wants to change schools. v1 logs; a future enhancement
     // could programmatically open the sidebar dropdown.
     ui.on_cmo_banner_switch_clicked(|| {
-        tracing::info!("[E6.6] banner switch button clicked — operator wants to switch school context");
+        tracing::info!(
+            "[E6.6] banner switch button clicked — operator wants to switch school context"
+        );
     });
 
     // WP-E6.3 — CMO dashboard's per-school row click navigates to that
@@ -2595,7 +2700,11 @@ fn main() {
                     // be a seed word). Log only the position that failed.
                     tracing::warn!("Mnemonic verification failed for word #{}", word_num);
                     ui.set_onboarding_error(
-                        format!("Incorrect. Enter word #{} from your recovery phrase.", word_num).into()
+                        format!(
+                            "Incorrect. Enter word #{} from your recovery phrase.",
+                            word_num
+                        )
+                        .into(),
                     );
                 }
             }
@@ -2633,7 +2742,9 @@ fn main() {
                     crash_telemetry::set_last_state("node-running (onboarding bootstrap)");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
-                            ui.set_onboarding_node_status("Node running — connecting to network...".into());
+                            ui.set_onboarding_node_status(
+                                "Node running — connecting to network...".into(),
+                            );
                             ui.set_onboarding_node_progress(1.0);
                             ui.set_onboarding_node_ready(true);
                             ui.set_node_running(true);
@@ -2749,7 +2860,9 @@ fn main() {
             let ui_w = ui_w.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_w.upgrade() {
-                    ui.set_send_error("Enter your wallet password to confirm this transfer.".into());
+                    ui.set_send_error(
+                        "Enter your wallet password to confirm this transfer.".into(),
+                    );
                 }
             });
             return;
@@ -2773,7 +2886,8 @@ fn main() {
         };
 
         // Read the currently selected account address from UI state
-        let from_addr = ui_w.upgrade()
+        let from_addr = ui_w
+            .upgrade()
             .map(|ui| ui.get_wallet_selected_address().to_string())
             .unwrap_or_else(|| "default".to_string());
 
@@ -2793,7 +2907,13 @@ fn main() {
             }
         };
 
-        tracing::info!("Sending {} SALT ({} wei) to {} from {}", amt_str, wei_str, to_str, from_addr);
+        tracing::info!(
+            "Sending {} SALT ({} wei) to {} from {}",
+            amt_str,
+            wei_str,
+            to_str,
+            from_addr
+        );
         // NAT-B-013: flip the dialog into its in-flight state so the
         // "Confirm & Send" button is disabled while the send is pending.
         // Pre-fix `send-sending` was never written from Rust, so the button
@@ -2803,7 +2923,11 @@ fn main() {
             ui.set_send_sending(true);
         }
         spawn_async(&rt_h, async move {
-            match core.wallet.send_transaction(&from_addr, &to_str, &wei_str, &pwd_str).await {
+            match core
+                .wallet
+                .send_transaction(&from_addr, &to_str, &wei_str, &pwd_str)
+                .await
+            {
                 Ok(hash) => {
                     tracing::info!("Transaction sent: {}", hash);
                     let _ = slint::invoke_from_event_loop({
@@ -2816,7 +2940,9 @@ fn main() {
                                 ui.set_send_sending(false);
                                 ui.set_send_tx_hash(hash.into());
                                 ui.set_send_error("".into());
-                                ui.set_send_receipt_status("Submitted — waiting for receipt…".into());
+                                ui.set_send_receipt_status(
+                                    "Submitted — waiting for receipt…".into(),
+                                );
                             }
                         }
                     });
@@ -2881,10 +3007,15 @@ fn main() {
         let pwd = Zeroizing::new(password.to_string());
 
         // Use the selected account address (or first account if none selected)
-        let selected_addr = ui_w.upgrade()
+        let selected_addr = ui_w
+            .upgrade()
             .map(|ui| ui.get_wallet_selected_address().to_string())
             .unwrap_or_default();
-        let addr = if selected_addr.is_empty() { "primary".to_string() } else { selected_addr };
+        let addr = if selected_addr.is_empty() {
+            "primary".to_string()
+        } else {
+            selected_addr
+        };
 
         tracing::info!("Unlocking wallet for {}", addr);
         // NAT-B-021: drive the lock-screen's "unlocking" state (runs on the
@@ -3053,7 +3184,6 @@ fn main() {
         // LOC of conversion).
         // BFR-INT-4: Boeing tab dispatch moved to `citrate-boeing-shell` crate.
 
-
         // Hydrate Operations page on activation
         if tab_str == "operations" {
             let core = core.clone();
@@ -3066,30 +3196,43 @@ fn main() {
                 // Pending approvals
                 let pending = core.approvals.list_pending().await;
                 let pending_count = pending.len() as i32;
-                let pending_entries: Vec<ApprovalEntryData> = pending.iter().map(|req| {
-                    ApprovalEntryData {
+                let pending_entries: Vec<ApprovalEntryData> = pending
+                    .iter()
+                    .map(|req| ApprovalEntryData {
                         request_id: req.request_id.clone().into(),
                         tool_name: req.tool_name.clone().into(),
                         risk_level: req.risk_level.clone().into(),
-                        target: serde_json::to_string(&req.params).unwrap_or_default().into(),
+                        target: serde_json::to_string(&req.params)
+                            .unwrap_or_default()
+                            .into(),
                         created_at: req.created_at.clone().into(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Trail entries for display
-                let trail_entries: Vec<TrailEntryData> = events.iter().map(|e| {
-                    TrailEntryData {
-                        timestamp: e.timestamp.split('T').next_back().unwrap_or(&e.timestamp).into(),
+                let trail_entries: Vec<TrailEntryData> = events
+                    .iter()
+                    .map(|e| TrailEntryData {
+                        timestamp: e
+                            .timestamp
+                            .split('T')
+                            .next_back()
+                            .unwrap_or(&e.timestamp)
+                            .into(),
                         event_type: e.event_type.clone().into(),
                         tool_name: e.tool_name.clone().unwrap_or_default().into(),
                         risk_level: e.risk_level.clone().unwrap_or_default().into(),
                         approved: e.approved.map(|b| b.to_string()).unwrap_or_default().into(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Logseq status — check if path is configured
                 let logseq_path = core.trail.logseq_path().await;
-                let logseq_status = if logseq_path.is_some() { "online" } else { "disabled" };
+                let logseq_status = if logseq_path.is_some() {
+                    "online"
+                } else {
+                    "disabled"
+                };
 
                 // P960-K T1-2: real session policy from AppCore
                 let scope_str = match *core.session_policy.read().await {
@@ -3097,7 +3240,8 @@ fn main() {
                     citrate_agent_core::canonical::PolicyProfile::Guided => "guided",
                     citrate_agent_core::canonical::PolicyProfile::Operator => "operator",
                     citrate_agent_core::canonical::PolicyProfile::Maintainer => "maintainer",
-                }.to_string();
+                }
+                .to_string();
 
                 let ui_for_ops = ui_w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -3115,7 +3259,8 @@ fn main() {
                         // completes and would flash the correct
                         // value back to "offline" for one frame.
 
-                        let pending_model = std::rc::Rc::new(slint::VecModel::from(pending_entries));
+                        let pending_model =
+                            std::rc::Rc::new(slint::VecModel::from(pending_entries));
                         ui.set_ops_pending_approvals(pending_model.into());
                         let trail_model = std::rc::Rc::new(slint::VecModel::from(trail_entries));
                         ui.set_ops_trail_events(trail_model.into());
@@ -3134,8 +3279,12 @@ fn main() {
                 let paused = match client.post(&rpc_url).json(&body).send().await {
                     Ok(resp) => {
                         let json: Option<serde_json::Value> = resp.json().await.ok();
-                        json.and_then(|j| j.get("result").and_then(|r| r.get("paused")).and_then(|p| p.as_bool()))
-                            .unwrap_or(false)
+                        json.and_then(|j| {
+                            j.get("result")
+                                .and_then(|r| r.get("paused"))
+                                .and_then(|p| p.as_bool())
+                        })
+                        .unwrap_or(false)
                     }
                     Err(_) => false,
                 };
@@ -3222,20 +3371,21 @@ fn main() {
                 };
 
                 // Also read isRegistered so the button flips immediately.
-                let is_registered: bool = if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
-                    if let Some(data) = marketplace_client::encode_get_provider(addr) {
-                        match marketplace_client::eth_call(&rpc_url, m, &data).await {
-                            Ok(r) => marketplace_client::decode_provider_profile(&r)
-                                .map(|p| p.is_registered)
-                                .unwrap_or(false),
-                            Err(_) => false,
+                let is_registered: bool =
+                    if let (Some(m), Some(addr)) = (market_addr, self_addr.as_deref()) {
+                        if let Some(data) = marketplace_client::encode_get_provider(addr) {
+                            match marketplace_client::eth_call(&rpc_url, m, &data).await {
+                                Ok(r) => marketplace_client::decode_provider_profile(&r)
+                                    .map(|p| p.is_registered)
+                                    .unwrap_or(false),
+                                Err(_) => false,
+                            }
+                        } else {
+                            false
                         }
                     } else {
                         false
-                    }
-                } else {
-                    false
-                };
+                    };
 
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {
@@ -3258,8 +3408,10 @@ fn main() {
             NodeAgentClient, RelayConfig, RelayService, WalletTxSigner,
         };
         let chain_id = 40204u64;
-        let marketplace = marketplace_client::compute_marketplace_address(chain_id).map(str::to_string);
-        let accounting = marketplace_client::contribution_accounting_address(chain_id).map(str::to_string);
+        let marketplace =
+            marketplace_client::compute_marketplace_address(chain_id).map(str::to_string);
+        let accounting =
+            marketplace_client::contribution_accounting_address(chain_id).map(str::to_string);
         let heartbeat_monitor =
             marketplace_client::known_contract(chain_id, "HeartbeatMonitor").map(str::to_string);
         match (marketplace, accounting, heartbeat_monitor) {
@@ -3279,7 +3431,9 @@ fn main() {
                     Some("1") | Some("true")
                 ) {
                     relay.set_enabled(true);
-                    tracing::info!("signing relay: enabled via CITRATE_RELAY_ENABLED (agent {agent_url})");
+                    tracing::info!(
+                        "signing relay: enabled via CITRATE_RELAY_ENABLED (agent {agent_url})"
+                    );
                 }
                 let ui_handle = ui.as_weak();
                 let core = app_core.clone();
@@ -3287,66 +3441,71 @@ fn main() {
                 // FUA-GUI-02: refuse to start the relay against a non-loopback
                 // node-agent (try_new enforces loopback + loads the bearer token).
                 match NodeAgentClient::try_new(agent_url.clone()) {
-                  Err(e) => {
-                    tracing::error!("signing relay NOT started: {e}");
-                    None
-                  }
-                  Ok(agent) => {
-                let agent = std::sync::Arc::new(agent);
-                let signer = std::sync::Arc::new(WalletTxSigner::new(core.wallet.clone()));
-                // FUA-GUI-01 residual: privileged writes (claimRewards /
-                // value-bearing) require an explicit per-write approval via
-                // the Operations pending-approvals surface; fail closed.
-                let confirm_gate = std::sync::Arc::new(RelayApprovalGate::new(core.approvals.clone()));
-                let relay_loop = relay.clone();
-                std::thread::spawn(move || loop {
-                    std::thread::sleep(relay_loop.poll_interval());
-                    // Custody gate: only sign while enabled AND a GUI session is unlocked.
-                    if !relay_loop.is_enabled() || SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed) <= 0 {
-                        continue;
+                    Err(e) => {
+                        tracing::error!("signing relay NOT started: {e}");
+                        None
                     }
-                    let from = match rt_handle.block_on(core.wallet.get_primary_address()) {
-                        Some(a) if !a.is_empty() => a,
-                        _ => continue,
-                    };
-                    let report = rt_handle.block_on(relay_loop.tick(
-                        signer.as_ref(),
-                        &from,
-                        agent.as_ref(),
-                        true,
-                        confirm_gate.as_ref(),
-                    ));
-                    if let Some(r) = report {
-                        for s in &r.signed {
-                            let short = &s.tx_hash[..s.tx_hash.len().min(12)];
-                            let msg = format!("Auto-signed {} (tx {short}…)", s.intent);
-                            tracing::info!("signing relay: {msg}");
-                            let ui_t = ui_handle.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_t.upgrade() {
-                                    ui.set_clipboard_toast(msg.clone().into());
-                                    let ui_c = ui_t.clone();
-                                    slint::Timer::single_shot(
-                                        std::time::Duration::from_millis(5000),
-                                        move || {
-                                            if let Some(ui) = ui_c.upgrade() {
-                                                ui.set_clipboard_toast("".into());
-                                            }
-                                        },
+                    Ok(agent) => {
+                        let agent = std::sync::Arc::new(agent);
+                        let signer = std::sync::Arc::new(WalletTxSigner::new(core.wallet.clone()));
+                        // FUA-GUI-01 residual: privileged writes (claimRewards /
+                        // value-bearing) require an explicit per-write approval via
+                        // the Operations pending-approvals surface; fail closed.
+                        let confirm_gate =
+                            std::sync::Arc::new(RelayApprovalGate::new(core.approvals.clone()));
+                        let relay_loop = relay.clone();
+                        std::thread::spawn(move || loop {
+                            std::thread::sleep(relay_loop.poll_interval());
+                            // Custody gate: only sign while enabled AND a GUI session is unlocked.
+                            if !relay_loop.is_enabled()
+                                || SESSION_UNLOCK_EPOCH.load(Ordering::Relaxed) <= 0
+                            {
+                                continue;
+                            }
+                            let from = match rt_handle.block_on(core.wallet.get_primary_address()) {
+                                Some(a) if !a.is_empty() => a,
+                                _ => continue,
+                            };
+                            let report = rt_handle.block_on(relay_loop.tick(
+                                signer.as_ref(),
+                                &from,
+                                agent.as_ref(),
+                                true,
+                                confirm_gate.as_ref(),
+                            ));
+                            if let Some(r) = report {
+                                for s in &r.signed {
+                                    let short = &s.tx_hash[..s.tx_hash.len().min(12)];
+                                    let msg = format!("Auto-signed {} (tx {short}…)", s.intent);
+                                    tracing::info!("signing relay: {msg}");
+                                    let ui_t = ui_handle.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(ui) = ui_t.upgrade() {
+                                            ui.set_clipboard_toast(msg.clone().into());
+                                            let ui_c = ui_t.clone();
+                                            slint::Timer::single_shot(
+                                                std::time::Duration::from_millis(5000),
+                                                move || {
+                                                    if let Some(ui) = ui_c.upgrade() {
+                                                        ui.set_clipboard_toast("".into());
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    });
+                                }
+                                for (id, reason) in &r.rejected {
+                                    tracing::warn!(
+                                        "signing relay: refused request {id}: {reason:?}"
                                     );
                                 }
-                            });
-                        }
-                        for (id, reason) in &r.rejected {
-                            tracing::warn!("signing relay: refused request {id}: {reason:?}");
-                        }
-                        for e in &r.errors {
-                            tracing::warn!("signing relay: {e}");
-                        }
+                                for e in &r.errors {
+                                    tracing::warn!("signing relay: {e}");
+                                }
+                            }
+                        });
+                        Some(relay)
                     }
-                });
-                Some(relay)
-                  }
                 }
             }
             _ => {
@@ -3375,7 +3534,8 @@ fn main() {
             // exactly once. We seed this set on the first tick after
             // unlock (treat prior rewards as "already shown") so we
             // don't spam a toast storm for historical rewards.
-            let mut seen_reward_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut seen_reward_hashes: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             let mut reward_seed_done = false;
             let mut last_reward_toast_ms: u128 = 0;
             loop {
@@ -3395,46 +3555,68 @@ fn main() {
 
                 // Get recent blocks from RocksDB for dashboard
                 // Data source: citrate_storage::BlockStore via EmbeddedNodeBackend::get_block_summaries
-                let recent_blocks = rt_handle.block_on(core.node.get_recent_blocks(3))
+                let recent_blocks = rt_handle
+                    .block_on(core.node.get_recent_blocks(3))
                     .unwrap_or_default();
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs()).unwrap_or(0);
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
 
                 // T2-15: tuple gains a 4th element — proposer short-hex
-                let block_data: Vec<(String, String, String, String)> = recent_blocks.iter().map(|b| {
-                    let hash = if b.hash.len() > 18 {
-                        format!("{}...{}", &b.hash[..10], &b.hash[b.hash.len()-4..])
-                    } else {
-                        b.hash.clone()
-                    };
-                    let txcount = format!("{} txn{}", b.tx_count, if b.tx_count == 1 { "" } else { "s" });
-                    let age = if b.timestamp > 0 && now_secs > b.timestamp {
-                        let secs = now_secs - b.timestamp;
-                        if secs < 60 { format!("~{}s ago", secs) }
-                        else if secs < 3600 { format!("~{}m ago", secs / 60) }
-                        else { format!("~{}h ago", secs / 3600) }
-                    } else if b.timestamp == 0 {
-                        String::new()
-                    } else {
-                        "just now".to_string()
-                    };
-                    let proposer = if b.proposer.len() >= 8 {
-                        format!("by {}…", &b.proposer[..8])
-                    } else if !b.proposer.is_empty() {
-                        format!("by {}", b.proposer)
-                    } else {
-                        String::new()
-                    };
-                    (hash, txcount, age, proposer)
-                }).collect();
+                let block_data: Vec<(String, String, String, String)> = recent_blocks
+                    .iter()
+                    .map(|b| {
+                        let hash = if b.hash.len() > 18 {
+                            format!("{}...{}", &b.hash[..10], &b.hash[b.hash.len() - 4..])
+                        } else {
+                            b.hash.clone()
+                        };
+                        let txcount = format!(
+                            "{} txn{}",
+                            b.tx_count,
+                            if b.tx_count == 1 { "" } else { "s" }
+                        );
+                        let age = if b.timestamp > 0 && now_secs > b.timestamp {
+                            let secs = now_secs - b.timestamp;
+                            if secs < 60 {
+                                format!("~{}s ago", secs)
+                            } else if secs < 3600 {
+                                format!("~{}m ago", secs / 60)
+                            } else {
+                                format!("~{}h ago", secs / 3600)
+                            }
+                        } else if b.timestamp == 0 {
+                            String::new()
+                        } else {
+                            "just now".to_string()
+                        };
+                        let proposer = if b.proposer.len() >= 8 {
+                            format!("by {}…", &b.proposer[..8])
+                        } else if !b.proposer.is_empty() {
+                            format!("by {}", b.proposer)
+                        } else {
+                            String::new()
+                        };
+                        (hash, txcount, age, proposer)
+                    })
+                    .collect();
 
                 let hash0 = block_data.first().map(|d| d.0.clone()).unwrap_or_default();
                 let hash1 = block_data.get(1).map(|d| d.0.clone()).unwrap_or_default();
                 let hash2 = block_data.get(2).map(|d| d.0.clone()).unwrap_or_default();
-                let txc0 = block_data.first().map(|d| d.1.clone()).unwrap_or_else(|| "0 txns".into());
-                let txc1 = block_data.get(1).map(|d| d.1.clone()).unwrap_or_else(|| "0 txns".into());
-                let txc2 = block_data.get(2).map(|d| d.1.clone()).unwrap_or_else(|| "0 txns".into());
+                let txc0 = block_data
+                    .first()
+                    .map(|d| d.1.clone())
+                    .unwrap_or_else(|| "0 txns".into());
+                let txc1 = block_data
+                    .get(1)
+                    .map(|d| d.1.clone())
+                    .unwrap_or_else(|| "0 txns".into());
+                let txc2 = block_data
+                    .get(2)
+                    .map(|d| d.1.clone())
+                    .unwrap_or_else(|| "0 txns".into());
                 let time0 = block_data.first().map(|d| d.2.clone()).unwrap_or_default();
                 let time1 = block_data.get(1).map(|d| d.2.clone()).unwrap_or_default();
                 let time2 = block_data.get(2).map(|d| d.2.clone()).unwrap_or_default();
@@ -3451,7 +3633,8 @@ fn main() {
 
                 // H-02 FIX: Read the SELECTED address from UI state, not primary.
                 // This prevents overwriting account #2's balance with account #1's.
-                let selected_addr_for_balance = ui_handle.upgrade()
+                let selected_addr_for_balance = ui_handle
+                    .upgrade()
                     .map(|ui| ui.get_wallet_selected_address().to_string());
 
                 // Get balance for the selected address (or primary as fallback)
@@ -3466,7 +3649,11 @@ fn main() {
                         .or(primary.as_deref());
 
                     let sel_bal = if let Some(addr) = sel_addr {
-                        let wei_str = core.node.get_balance(addr).await.unwrap_or_else(|_| "0".to_string());
+                        let wei_str = core
+                            .node
+                            .get_balance(addr)
+                            .await
+                            .unwrap_or_else(|_| "0".to_string());
                         match wei_str.parse::<u128>() {
                             Ok(wei) => citrate_wallet_core::format::wei_to_salt(wei),
                             Err(_) => wei_str,
@@ -3480,7 +3667,11 @@ fn main() {
                         if Some(addr.as_str()) == sel_addr {
                             sel_bal.clone() // same address, reuse
                         } else {
-                            let wei_str = core.node.get_balance(addr).await.unwrap_or_else(|_| "0".to_string());
+                            let wei_str = core
+                                .node
+                                .get_balance(addr)
+                                .await
+                                .unwrap_or_else(|_| "0".to_string());
                             match wei_str.parse::<u128>() {
                                 Ok(wei) => citrate_wallet_core::format::wei_to_salt(wei),
                                 Err(_) => wei_str,
@@ -3504,8 +3695,8 @@ fn main() {
                         // [0, SESSION_TIMEOUT_SECS] so the display is always
                         // sensible even if the clock jumps.
                         let elapsed = elapsed.max(0);
-                        let remaining = (SESSION_TIMEOUT_SECS - elapsed)
-                            .clamp(0, SESSION_TIMEOUT_SECS);
+                        let remaining =
+                            (SESSION_TIMEOUT_SECS - elapsed).clamp(0, SESSION_TIMEOUT_SECS);
                         if remaining > 0 {
                             (true, format_session_remaining(remaining))
                         } else {
@@ -3535,7 +3726,7 @@ fn main() {
                                     ui.set_show_send_dialog(false);
                                     ui.set_show_lock_screen(true);
                                     ui.set_clipboard_toast(
-                                        "Session expired — unlock your wallet to continue".into()
+                                        "Session expired — unlock your wallet to continue".into(),
                                     );
                                     let ui_clear = ui_for_toast.clone();
                                     slint::Timer::single_shot(
@@ -3559,7 +3750,8 @@ fn main() {
                 // Use the raw wei from the balance query for accurate tracking
                 let pri_addr = rt_handle.block_on(core.wallet.get_primary_address());
                 let raw_wei = if let Some(addr) = &pri_addr {
-                    rt_handle.block_on(core.node.get_balance(addr))
+                    rt_handle
+                        .block_on(core.node.get_balance(addr))
                         .ok()
                         .and_then(|s| s.parse::<u128>().ok())
                 } else {
@@ -3596,59 +3788,63 @@ fn main() {
                 // reward hashes so we don't toast for historical rewards.
                 // Subsequent passes: any reward hash not in the set → new reward
                 // → emit a toast (throttled to 1 per 15s even if multiple land).
-                let reward_toast: Option<String> = if tick_counter % 10 == 0 && !tx_list_raw.is_empty() {
-                    if !reward_seed_done {
-                        for t in &tx_list_raw {
-                            if t.tx_type == "reward" {
-                                seen_reward_hashes.insert(t.hash.clone());
-                            }
-                        }
-                        reward_seed_done = true;
-                        None
-                    } else {
-                        let mut total_reward_salt = 0.0_f64;
-                        let mut count = 0u32;
-                        for t in &tx_list_raw {
-                            if t.tx_type == "reward" && !seen_reward_hashes.contains(&t.hash) {
-                                seen_reward_hashes.insert(t.hash.clone());
-                                // `amount` is already SALT-formatted (e.g. "10.0000").
-                                if let Ok(v) = t.amount.parse::<f64>() {
-                                    total_reward_salt += v;
+                let reward_toast: Option<String> =
+                    if tick_counter % 10 == 0 && !tx_list_raw.is_empty() {
+                        if !reward_seed_done {
+                            for t in &tx_list_raw {
+                                if t.tx_type == "reward" {
+                                    seen_reward_hashes.insert(t.hash.clone());
                                 }
-                                count += 1;
+                            }
+                            reward_seed_done = true;
+                            None
+                        } else {
+                            let mut total_reward_salt = 0.0_f64;
+                            let mut count = 0u32;
+                            for t in &tx_list_raw {
+                                if t.tx_type == "reward" && !seen_reward_hashes.contains(&t.hash) {
+                                    seen_reward_hashes.insert(t.hash.clone());
+                                    // `amount` is already SALT-formatted (e.g. "10.0000").
+                                    if let Ok(v) = t.amount.parse::<f64>() {
+                                        total_reward_salt += v;
+                                    }
+                                    count += 1;
+                                }
+                            }
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            // Throttle: at most one toast per 15 seconds. When a batch
+                            // lands within the throttle window we swallow it — the next
+                            // toast will cover the cumulative delta on the next unthrottled
+                            // tick.
+                            if count > 0 && now_ms.saturating_sub(last_reward_toast_ms) > 15_000 {
+                                last_reward_toast_ms = now_ms;
+                                Some(if count == 1 {
+                                    format!("+{:.2} SALT reward", total_reward_salt)
+                                } else {
+                                    format!("+{:.2} SALT ({} rewards)", total_reward_salt, count)
+                                })
+                            } else {
+                                None
                             }
                         }
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis())
-                            .unwrap_or(0);
-                        // Throttle: at most one toast per 15 seconds. When a batch
-                        // lands within the throttle window we swallow it — the next
-                        // toast will cover the cumulative delta on the next unthrottled
-                        // tick.
-                        if count > 0 && now_ms.saturating_sub(last_reward_toast_ms) > 15_000 {
-                            last_reward_toast_ms = now_ms;
-                            Some(if count == 1 {
-                                format!("+{:.2} SALT reward", total_reward_salt)
-                            } else {
-                                format!("+{:.2} SALT ({} rewards)", total_reward_salt, count)
-                            })
-                        } else {
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
+                    } else {
+                        None
+                    };
 
-                let tx_list: Vec<TxData> = tx_list_raw.into_iter().map(|t| TxData {
-                    hash: t.hash.into(),
-                    tx_type: t.tx_type.into(),
-                    amount: t.amount.into(),
-                    counterparty: t.counterparty.into(),
-                    status: t.status.into(),
-                    timestamp: t.timestamp.into(),
-                }).collect();
+                let tx_list: Vec<TxData> = tx_list_raw
+                    .into_iter()
+                    .map(|t| TxData {
+                        hash: t.hash.into(),
+                        tx_type: t.tx_type.into(),
+                        amount: t.amount.into(),
+                        counterparty: t.counterparty.into(),
+                        status: t.status.into(),
+                        timestamp: t.timestamp.into(),
+                    })
+                    .collect();
                 let has_tx_update = tick_counter % 10 == 0;
 
                 let ui_for_main = ui_handle.clone();
@@ -3675,11 +3871,14 @@ fn main() {
                         if let Some(ref msg) = reward_toast {
                             ui.set_clipboard_toast(msg.clone().into());
                             let ui_for_clear = ui_for_main.clone();
-                            slint::Timer::single_shot(std::time::Duration::from_millis(2500), move || {
-                                if let Some(ui) = ui_for_clear.upgrade() {
-                                    ui.set_clipboard_toast("".into());
-                                }
-                            });
+                            slint::Timer::single_shot(
+                                std::time::Duration::from_millis(2500),
+                                move || {
+                                    if let Some(ui) = ui_for_clear.upgrade() {
+                                        ui.set_clipboard_toast("".into());
+                                    }
+                                },
+                            );
                         }
                         // Session timer
                         ui.set_wallet_session_active(session_active);
@@ -3718,12 +3917,16 @@ fn main() {
                     let claimable_wei: u128 =
                         if let (Some(a), Some(addr)) = (acc_addr, self_addr.as_deref()) {
                             marketplace_client::encode_claimable(addr)
-                                .and_then(|d| rt_handle.block_on(
-                                    marketplace_client::eth_call(&rpc_url, a, &d)
-                                ).ok())
+                                .and_then(|d| {
+                                    rt_handle
+                                        .block_on(marketplace_client::eth_call(&rpc_url, a, &d))
+                                        .ok()
+                                })
                                 .and_then(|r| marketplace_client::decode_uint256_u128(&r))
                                 .unwrap_or(0)
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                     let display = marketplace_client::wei_to_salt_display(claimable_wei);
                     let ui_h = ui_handle.clone();
                     let _ = slint::invoke_from_event_loop(move || {
@@ -3745,7 +3948,8 @@ fn main() {
                 //   - ContributionAccounting.claimable(self) → settled earnings
                 //     ready to claim
                 if tick_counter % 10 == 0 {
-                    let active_tab = ui_handle.upgrade()
+                    let active_tab = ui_handle
+                        .upgrade()
                         .map(|ui| ui.get_active_tab().to_string());
                     if active_tab.as_deref() == Some("compute") {
                         let chain_id = rt_handle.block_on(core.config.read()).chain_id;
@@ -3754,7 +3958,8 @@ fn main() {
                         let self_addr = accounts.first().map(|a| a.address.clone());
 
                         let market_addr = marketplace_client::compute_marketplace_address(chain_id);
-                        let accounting_addr = marketplace_client::contribution_accounting_address(chain_id);
+                        let accounting_addr =
+                            marketplace_client::contribution_accounting_address(chain_id);
 
                         // Fetch provider state
                         let provider: Option<marketplace_client::ProviderProfile> =
@@ -3763,7 +3968,9 @@ fn main() {
                                     rt_handle
                                         .block_on(marketplace_client::eth_call(&rpc_url, m, &data))
                                         .ok()
-                                        .and_then(|r| marketplace_client::decode_provider_profile(&r))
+                                        .and_then(|r| {
+                                            marketplace_client::decode_provider_profile(&r)
+                                        })
                                 } else {
                                     None
                                 }
@@ -3772,19 +3979,20 @@ fn main() {
                             };
 
                         // Fetch claimable earnings
-                        let claimable_wei: Option<u128> =
-                            if let (Some(a), Some(addr)) = (accounting_addr, self_addr.as_deref()) {
-                                if let Some(data) = marketplace_client::encode_claimable(addr) {
-                                    rt_handle
-                                        .block_on(marketplace_client::eth_call(&rpc_url, a, &data))
-                                        .ok()
-                                        .and_then(|r| marketplace_client::decode_uint256_u128(&r))
-                                } else {
-                                    None
-                                }
+                        let claimable_wei: Option<u128> = if let (Some(a), Some(addr)) =
+                            (accounting_addr, self_addr.as_deref())
+                        {
+                            if let Some(data) = marketplace_client::encode_claimable(addr) {
+                                rt_handle
+                                    .block_on(marketplace_client::eth_call(&rpc_url, a, &data))
+                                    .ok()
+                                    .and_then(|r| marketplace_client::decode_uint256_u128(&r))
                             } else {
                                 None
-                            };
+                            }
+                        } else {
+                            None
+                        };
 
                         // CM-01 WP-01.5: recent activity via eth_getLogs.
                         // Only fetched when the provider is registered (query
@@ -3810,9 +4018,13 @@ fn main() {
                         let has_addresses = market_addr.is_some() && accounting_addr.is_some();
                         let ui_h = ui_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
-                            let Some(ui) = ui_h.upgrade() else { return; };
+                            let Some(ui) = ui_h.upgrade() else {
+                                return;
+                            };
                             if !has_addresses {
-                                ui.set_compute_contract_status("Marketplace not deployed on this network".into());
+                                ui.set_compute_contract_status(
+                                    "Marketplace not deployed on this network".into(),
+                                );
                                 ui.set_compute_provider_status("—".into());
                                 ui.set_compute_active_jobs(0);
                                 ui.set_compute_earned("0".into());
@@ -3842,25 +4054,36 @@ fn main() {
                                 // but wasted. Reputation bps → % (one
                                 // decimal); capacity as "a / m" strings.
                                 if p.is_registered {
-                                    let stake_salt = marketplace_client::wei_to_salt_display(p.stake_wei);
+                                    let stake_salt =
+                                        marketplace_client::wei_to_salt_display(p.stake_wei);
                                     ui.set_compute_listing_stake(stake_salt.into());
                                     let rep_pct = (p.reputation_bps as f64) / 100.0;
-                                    ui.set_compute_listing_reputation_pct(format!("{:.1}", rep_pct).into());
+                                    ui.set_compute_listing_reputation_pct(
+                                        format!("{:.1}", rep_pct).into(),
+                                    );
                                     ui.set_compute_listing_capacity(
-                                        format!("{} / {}", p.current_active_jobs, p.max_concurrent_jobs).into()
+                                        format!(
+                                            "{} / {}",
+                                            p.current_active_jobs, p.max_concurrent_jobs
+                                        )
+                                        .into(),
                                     );
                                     // v1 registers a single "any" wildcard
                                     // hash via `any_model_hash()` — future
                                     // sprints resolve the hashes through
                                     // ModelRegistry for rich names.
                                     ui.set_compute_listing_models("any (wildcard)".into());
-                                    ui.set_compute_listing_total_completed(p.total_jobs_completed as i32);
+                                    ui.set_compute_listing_total_completed(
+                                        p.total_jobs_completed as i32,
+                                    );
                                     ui.set_compute_listing_total_failed(p.total_jobs_failed as i32);
                                 }
                                 ui.set_compute_listing_connection_ok(true);
                             } else {
                                 ui.set_compute_is_registered(false);
-                                ui.set_compute_provider_status("Query failed — retry in 30s".into());
+                                ui.set_compute_provider_status(
+                                    "Query failed — retry in 30s".into(),
+                                );
                                 // The listing query failed — signal
                                 // degraded state so the user knows values
                                 // are stale. Card itself is hidden
@@ -3896,7 +4119,8 @@ fn main() {
                 //   - LearningPool.stakes(0, self) → stake amount
                 //   - ContributionAccounting.claimable(self) → earnings
                 if tick_counter % 10 == 0 {
-                    let active_tab = ui_handle.upgrade()
+                    let active_tab = ui_handle
+                        .upgrade()
                         .map(|ui| ui.get_active_tab().to_string());
                     if active_tab.as_deref() == Some("learning") {
                         let chain_id = rt_handle.block_on(core.config.read()).chain_id;
@@ -3904,47 +4128,69 @@ fn main() {
                         let accounts = rt_handle.block_on(core.wallet.list_accounts());
                         let self_addr = accounts.first().map(|a| a.address.clone());
                         let pool_addr = marketplace_client::learning_pool_address(chain_id);
-                        let acc_addr = marketplace_client::contribution_accounting_address(chain_id);
+                        let acc_addr =
+                            marketplace_client::contribution_accounting_address(chain_id);
 
                         // 1. Pool count via nextPoolId
                         let pool_count: u64 = if let Some(p) = pool_addr {
                             let data = marketplace_client::encode_next_pool_id();
-                            rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &data))
+                            rt_handle
+                                .block_on(marketplace_client::eth_call(&rpc_url, p, &data))
                                 .ok()
                                 .and_then(|r| marketplace_client::decode_uint256_u128(&r))
                                 .map(|v| v as u64)
                                 .unwrap_or(0)
-                        } else { 0 };
+                        } else {
+                            0
+                        };
 
                         // 2. Membership + stake for current pool (default 0)
-                        let current_pool_id: u64 = ui_handle.upgrade()
+                        let current_pool_id: u64 = ui_handle
+                            .upgrade()
                             .map(|ui| ui.get_learning_current_pool_id() as u64)
                             .unwrap_or(0);
-                        let (is_member, stake_wei): (bool, u128) =
-                            if let (Some(p), Some(addr)) = (pool_addr, self_addr.as_deref()) {
-                                if pool_count == 0 || current_pool_id >= pool_count {
-                                    (false, 0)
-                                } else {
-                                    let m = marketplace_client::encode_is_member(current_pool_id, addr)
-                                        .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &d)).ok())
-                                        .and_then(|r| marketplace_client::decode_bool(&r))
-                                        .unwrap_or(false);
-                                    let s = marketplace_client::encode_stakes(current_pool_id, addr)
-                                        .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &d)).ok())
-                                        .and_then(|r| marketplace_client::decode_uint256_u128(&r))
-                                        .unwrap_or(0);
-                                    (m, s)
-                                }
-                            } else { (false, 0) };
+                        let (is_member, stake_wei): (bool, u128) = if let (Some(p), Some(addr)) =
+                            (pool_addr, self_addr.as_deref())
+                        {
+                            if pool_count == 0 || current_pool_id >= pool_count {
+                                (false, 0)
+                            } else {
+                                let m = marketplace_client::encode_is_member(current_pool_id, addr)
+                                    .and_then(|d| {
+                                        rt_handle
+                                            .block_on(marketplace_client::eth_call(&rpc_url, p, &d))
+                                            .ok()
+                                    })
+                                    .and_then(|r| marketplace_client::decode_bool(&r))
+                                    .unwrap_or(false);
+                                let s = marketplace_client::encode_stakes(current_pool_id, addr)
+                                    .and_then(|d| {
+                                        rt_handle
+                                            .block_on(marketplace_client::eth_call(&rpc_url, p, &d))
+                                            .ok()
+                                    })
+                                    .and_then(|r| marketplace_client::decode_uint256_u128(&r))
+                                    .unwrap_or(0);
+                                (m, s)
+                            }
+                        } else {
+                            (false, 0)
+                        };
 
                         // 3. Claimable earnings (same accounting contract as compute)
                         let claimable_wei: u128 =
                             if let (Some(a), Some(addr)) = (acc_addr, self_addr.as_deref()) {
                                 marketplace_client::encode_claimable(addr)
-                                    .and_then(|d| rt_handle.block_on(marketplace_client::eth_call(&rpc_url, a, &d)).ok())
+                                    .and_then(|d| {
+                                        rt_handle
+                                            .block_on(marketplace_client::eth_call(&rpc_url, a, &d))
+                                            .ok()
+                                    })
                                     .and_then(|r| marketplace_client::decode_uint256_u128(&r))
                                     .unwrap_or(0)
-                            } else { 0 };
+                            } else {
+                                0
+                            };
 
                         // T2-8: Pool detail — getPool(current_pool_id).
                         // Only fetch when the pool actually exists (pool_count > current).
@@ -3952,7 +4198,8 @@ fn main() {
                             if let Some(p) = pool_addr {
                                 if pool_count > 0 && current_pool_id < pool_count {
                                     let data = marketplace_client::encode_get_pool(current_pool_id);
-                                    rt_handle.block_on(marketplace_client::eth_call(&rpc_url, p, &data))
+                                    rt_handle
+                                        .block_on(marketplace_client::eth_call(&rpc_url, p, &data))
                                         .ok()
                                         .and_then(|r| marketplace_client::decode_pool_info(&r))
                                 } else {
@@ -3966,22 +4213,22 @@ fn main() {
                         let has_acc_addr = acc_addr.is_some();
                         let ui_h = ui_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
-                            let Some(ui) = ui_h.upgrade() else { return; };
-                            ui.set_learning_contract_status(
-                                if has_pool_addr {
-                                    "LearningPool live".into()
-                                } else {
-                                    "LearningPool not deployed on this network".into()
-                                }
-                            );
+                            let Some(ui) = ui_h.upgrade() else {
+                                return;
+                            };
+                            ui.set_learning_contract_status(if has_pool_addr {
+                                "LearningPool live".into()
+                            } else {
+                                "LearningPool not deployed on this network".into()
+                            });
                             ui.set_learning_pool_count(pool_count as i32);
                             ui.set_learning_is_member(is_member);
                             ui.set_learning_staked(
-                                marketplace_client::wei_to_salt_display(stake_wei).into()
+                                marketplace_client::wei_to_salt_display(stake_wei).into(),
                             );
                             if has_acc_addr {
                                 ui.set_learning_earnings(
-                                    marketplace_client::wei_to_salt_display(claimable_wei).into()
+                                    marketplace_client::wei_to_salt_display(claimable_wei).into(),
                                 );
                             }
                             // T2-8: surface pool details if present
@@ -4000,13 +4247,19 @@ fn main() {
                                 };
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs()).unwrap_or(0);
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
                                 let age = if p.created_at > 0 && now > p.created_at {
                                     let secs = now - p.created_at;
-                                    if secs < 60 { format!("{}s ago", secs) }
-                                    else if secs < 3600 { format!("{}m ago", secs / 60) }
-                                    else if secs < 86400 { format!("{}h ago", secs / 3600) }
-                                    else { format!("{}d ago", secs / 86400) }
+                                    if secs < 60 {
+                                        format!("{}s ago", secs)
+                                    } else if secs < 3600 {
+                                        format!("{}m ago", secs / 60)
+                                    } else if secs < 86400 {
+                                        format!("{}h ago", secs / 3600)
+                                    } else {
+                                        format!("{}d ago", secs / 86400)
+                                    }
                                 } else {
                                     "—".to_string()
                                 };
@@ -4016,7 +4269,7 @@ fn main() {
                                 ui.set_learning_pool_state_label(state_label.into());
                                 ui.set_learning_pool_access_label(access_label.into());
                                 ui.set_learning_pool_min_stake(
-                                    marketplace_client::wei_to_salt_display(p.min_stake_wei).into()
+                                    marketplace_client::wei_to_salt_display(p.min_stake_wei).into(),
                                 );
                                 ui.set_learning_pool_member_count(p.member_count as i32);
                                 ui.set_learning_pool_created_ago(age.into());
@@ -4037,7 +4290,11 @@ fn main() {
                             } else if pool_count == 0 {
                                 "No pools created on-chain yet".to_string()
                             } else if is_member {
-                                format!("Pool #{} · staked {}", current_pool_id, marketplace_client::wei_to_salt_display(stake_wei))
+                                format!(
+                                    "Pool #{} · staked {}",
+                                    current_pool_id,
+                                    marketplace_client::wei_to_salt_display(stake_wei)
+                                )
                             } else {
                                 format!("{} pool(s) on-chain · not joined", pool_count)
                             };
@@ -4052,45 +4309,65 @@ fn main() {
                 //    and users were complaining the viz didn't appear for
                 //    up to 30s after opening the tab.
                 //  * stats (getDagStats RPC) — every 30s, unchanged.
-                let dag_active = ui_handle.upgrade()
+                let dag_active = ui_handle
+                    .upgrade()
                     .map(|ui| ui.get_active_tab().to_string())
-                    .as_deref() == Some("dag");
+                    .as_deref()
+                    == Some("dag");
 
                 if dag_active {
                     // T2-13: compute DAG mini-viz dots from recent blocks.
                     // Normalized x ∈ [0,1] by height position, y ∈ [0,1]
                     // by (blue_score - min) / (max - min). Tip highlighted.
-                    let recent = rt_handle.block_on(core.node.get_recent_blocks(30))
+                    let recent = rt_handle
+                        .block_on(core.node.get_recent_blocks(30))
                         .unwrap_or_default();
                     if !recent.is_empty() {
                         let min_h = recent.iter().map(|b| b.height).min().unwrap_or(0);
-                        let max_h = recent.iter().map(|b| b.height).max().unwrap_or(1).max(min_h + 1);
+                        let max_h = recent
+                            .iter()
+                            .map(|b| b.height)
+                            .max()
+                            .unwrap_or(1)
+                            .max(min_h + 1);
                         let min_b = recent.iter().map(|b| b.blue_score).min().unwrap_or(0);
-                        let max_b = recent.iter().map(|b| b.blue_score).max().unwrap_or(1).max(min_b + 1);
+                        let max_b = recent
+                            .iter()
+                            .map(|b| b.blue_score)
+                            .max()
+                            .unwrap_or(1)
+                            .max(min_b + 1);
                         let h_range = (max_h - min_h) as f32;
                         let b_range = (max_b - min_b) as f32;
                         let tip_height = max_h;
-                        let dots: Vec<DagDotData> = recent.iter().map(|b| {
-                            let x = if h_range > 0.0 {
-                                (b.height - min_h) as f32 / h_range
-                            } else { 0.5 };
-                            let y = if b_range > 0.0 {
-                                (b.blue_score - min_b) as f32 / b_range
-                            } else { 0.5 };
-                            let short = if b.hash.len() > 12 {
-                                format!("{}…{}", &b.hash[..6], &b.hash[b.hash.len()-4..])
-                            } else {
-                                b.hash.clone()
-                            };
-                            DagDotData {
-                                height: b.height as i32,
-                                hash_short: short.into(),
-                                x,
-                                y,
-                                tx_count: b.tx_count as i32,
-                                is_tip: b.height == tip_height,
-                            }
-                        }).collect();
+                        let dots: Vec<DagDotData> = recent
+                            .iter()
+                            .map(|b| {
+                                let x = if h_range > 0.0 {
+                                    (b.height - min_h) as f32 / h_range
+                                } else {
+                                    0.5
+                                };
+                                let y = if b_range > 0.0 {
+                                    (b.blue_score - min_b) as f32 / b_range
+                                } else {
+                                    0.5
+                                };
+                                let short = if b.hash.len() > 12 {
+                                    format!("{}…{}", &b.hash[..6], &b.hash[b.hash.len() - 4..])
+                                } else {
+                                    b.hash.clone()
+                                };
+                                DagDotData {
+                                    height: b.height as i32,
+                                    hash_short: short.into(),
+                                    x,
+                                    y,
+                                    tx_count: b.tx_count as i32,
+                                    is_tip: b.height == tip_height,
+                                }
+                            })
+                            .collect();
                         let ui_h = ui_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_h.upgrade() {
@@ -4112,24 +4389,31 @@ fn main() {
                     });
                     let client = reqwest::Client::new();
                     let stats = rt_handle.block_on(async {
-                        client.post(&rpc_url)
+                        client
+                            .post(&rpc_url)
                             .json(&body)
                             .timeout(std::time::Duration::from_secs(2))
-                            .send().await
+                            .send()
+                            .await
                             .ok()?
-                            .json::<serde_json::Value>().await.ok()
+                            .json::<serde_json::Value>()
+                            .await
+                            .ok()
                     });
                     if let Some(stats) = stats {
-                        let tips_count = stats.get("result")
+                        let tips_count = stats
+                            .get("result")
                             .and_then(|r| r.get("tips"))
                             .and_then(|t| t.as_array())
                             .map(|a| a.len() as i32)
                             .unwrap_or(0);
-                        let blue_score = stats.get("result")
+                        let blue_score = stats
+                            .get("result")
                             .and_then(|r| r.get("blue_score"))
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0) as i32;
-                        let height = stats.get("result")
+                        let height = stats
+                            .get("result")
                             .and_then(|r| r.get("height"))
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0) as i32;
@@ -4146,7 +4430,6 @@ fn main() {
             }
         });
     }
-
 
     // --- Wallet: Create Account (from wallet view, not onboarding) ---
     let core = app_core.clone();
@@ -4286,7 +4569,8 @@ fn main() {
         }
 
         // Read the currently selected account address from UI state
-        let selected_addr = ui_w.upgrade()
+        let selected_addr = ui_w
+            .upgrade()
             .map(|ui| ui.get_wallet_selected_address().to_string())
             .unwrap_or_default();
 
@@ -4299,7 +4583,10 @@ fn main() {
             return;
         }
 
-        tracing::info!("Wallet: exporting private key for {} (re-auth required)", selected_addr);
+        tracing::info!(
+            "Wallet: exporting private key for {} (re-auth required)",
+            selected_addr
+        );
         spawn_async(&rt_h, async move {
             // NAT-B-017: route the export through WalletService so it shares
             // the SessionManager brute-force lockout (5 attempts / 5-min
@@ -4308,7 +4595,11 @@ fn main() {
             // an unthrottled password oracle against the keystore.
             match core.wallet.export_private_key(&selected_addr, &pwd).await {
                 Ok(hex_key) => {
-                    tracing::info!("Private key exported for {} (length: {} hex chars)", selected_addr, hex_key.len());
+                    tracing::info!(
+                        "Private key exported for {} (length: {} hex chars)",
+                        selected_addr,
+                        hex_key.len()
+                    );
                     let ui_for_export = ui_w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_for_export.upgrade() {
@@ -4353,7 +4644,8 @@ fn main() {
         tracing::info!("Wallet: requesting SALT from faucet");
 
         // NAT-B-028: fund the SELECTED account, not always the primary.
-        let selected_addr = ui_w.upgrade()
+        let selected_addr = ui_w
+            .upgrade()
             .map(|ui| ui.get_wallet_selected_address().to_string())
             .unwrap_or_default();
 
@@ -4391,10 +4683,12 @@ fn main() {
 
             let client = reqwest::Client::new();
             let body = serde_json::json!({"address": address});
-            match client.post("https://faucet.citrate.ai/faucet")
+            match client
+                .post("https://faucet.citrate.ai/faucet")
                 .json(&body)
                 .timeout(std::time::Duration::from_secs(10))
-                .send().await
+                .send()
+                .await
             {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!("Faucet: SALT requested for {}", address);
@@ -4430,7 +4724,6 @@ fn main() {
             }
         });
     });
-
 
     // --- EW-S1 WP-8: Citrate identity link ---
     // Data sources: auth.citrate.ai OIDC + /aa/enroll-validator;
@@ -4529,7 +4822,11 @@ fn main() {
             }
         };
 
-        tracing::info!("Sponsored send: {} SALT to {} from the smart wallet", amt_str, to_str);
+        tracing::info!(
+            "Sponsored send: {} SALT to {} from the smart wallet",
+            amt_str,
+            to_str
+        );
         spawn_async(&rt_h, async move {
             let result = link_svc.send_sponsored(&to_str, wei, Vec::new()).await;
             let _ = slint::invoke_from_event_loop(move || {
@@ -4539,7 +4836,8 @@ fn main() {
                             ui.set_send_tx_hash(user_op_hash.into());
                             ui.set_send_error("".into());
                             ui.set_send_receipt_status(
-                                "UserOperation accepted by the bundler — gas sponsored by Citrate.".into(),
+                                "UserOperation accepted by the bundler — gas sponsored by Citrate."
+                                    .into(),
                             );
                         }
                         Err(e) => {
@@ -4567,7 +4865,8 @@ fn main() {
 
     // Shared active approval request ID — used to correlate approve/reject
     // UI callbacks with the exact request submitted by the tool executor.
-    let active_approval_request_id: Arc<tokio::sync::RwLock<Option<String>>> = Arc::new(tokio::sync::RwLock::new(None));
+    let active_approval_request_id: Arc<tokio::sync::RwLock<Option<String>>> =
+        Arc::new(tokio::sync::RwLock::new(None));
     let active_req_for_chat = active_approval_request_id.clone();
 
     let core = app_core.clone();
@@ -5077,9 +5376,7 @@ fn main() {
         let core = app_core.clone();
         let ui_w = ui.as_weak();
         let rt_h = rt.handle().clone();
-        let config_network = rt_h.block_on(async {
-            core.config.read().await.network.clone()
-        });
+        let config_network = rt_h.block_on(async { core.config.read().await.network.clone() });
         spawn_async(&rt_h, async move {
             // Set chat context with real wallet state.
             // The chat system prompt formats this as "Balance: {} SALT",
@@ -5087,13 +5384,21 @@ fn main() {
             // BEFORE handing it to the LLM — otherwise the model sees a
             // 25-digit integer and reports it verbatim (the chat-balance
             // "18 trailing zeros" bug).
-            let address = core.wallet.get_primary_address().await
+            let address = core
+                .wallet
+                .get_primary_address()
+                .await
                 .unwrap_or_else(|| "not connected".to_string());
-            let grains = core.node.get_balance(&address).await
+            let grains = core
+                .node
+                .get_balance(&address)
+                .await
                 .unwrap_or_else(|_| "0".to_string());
             let balance = citrate_wallet_core::format::grains_str_to_salt(&grains);
             let height = core.node.get_status().await.block_height;
-            core.chat.set_context(&address, &balance, &config_network, height).await;
+            core.chat
+                .set_context(&address, &balance, &config_network, height)
+                .await;
 
             // P960-A WP-A.3: keep the chat system prompt live. Without
             // this the LLM sees block_height=0 and stale balance forever,
@@ -5110,14 +5415,23 @@ fn main() {
                 ticker.tick().await;
                 loop {
                     ticker.tick().await;
-                    let addr = core_ctx.wallet.get_primary_address().await
+                    let addr = core_ctx
+                        .wallet
+                        .get_primary_address()
+                        .await
                         .unwrap_or_else(|| "not connected".to_string());
-                    let grains = core_ctx.node.get_balance(&addr).await
+                    let grains = core_ctx
+                        .node
+                        .get_balance(&addr)
+                        .await
                         .unwrap_or_else(|_| "0".to_string());
                     // Convert grains → SALT here (same reason as above).
                     let bal = citrate_wallet_core::format::grains_str_to_salt(&grains);
                     let h = core_ctx.node.get_status().await.block_height;
-                    core_ctx.chat.set_context(&addr, &bal, &ctx_network, h).await;
+                    core_ctx
+                        .chat
+                        .set_context(&addr, &bal, &ctx_network, h)
+                        .await;
                 }
             });
 
@@ -5131,7 +5445,11 @@ fn main() {
             let backend_type = detected.backend_type.clone();
 
             if model_loaded {
-                tracing::info!("Auto-detected AI backend: {} ({})", display_name, backend_type);
+                tracing::info!(
+                    "Auto-detected AI backend: {} ({})",
+                    display_name,
+                    backend_type
+                );
                 core.chat.set_model(&model_id).await;
             } else {
                 tracing::info!("No local AI backend detected. User can configure one in Settings.");
@@ -5174,7 +5492,9 @@ fn main() {
                     tracing::info!("Node started via settings");
                     crash_telemetry::set_last_state("node-running (settings)");
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() { ui.set_node_running(true); }
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_node_running(true);
+                        }
                     });
                 }
                 Err(e) => tracing::error!("Node start failed: {}", e),
@@ -5197,7 +5517,9 @@ fn main() {
                     tracing::info!("Node stopped via settings");
                     crash_telemetry::set_last_state("node-stopped (settings)");
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_w.upgrade() { ui.set_node_running(false); }
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_node_running(false);
+                        }
                     });
                 }
                 Err(e) => tracing::error!("Node stop failed: {}", e),
@@ -5457,7 +5779,12 @@ fn main() {
     // can fire `load_block_txs` inline on success (AT-5b-1; replaces
     // the prior 500 ms `slint::Timer` polling pattern).
     let dag_tx_cache: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<String, citrate_desktop_app::services::node_service::BlockTxDetail>>,
+        std::sync::Mutex<
+            std::collections::HashMap<
+                String,
+                citrate_desktop_app::services::node_service::BlockTxDetail,
+            >,
+        >,
     > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     let load_block_txs: std::sync::Arc<dyn Fn(String) + Send + Sync> = {
@@ -5496,9 +5823,9 @@ fn main() {
                 }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w.upgrade() {
-                        ui.set_dag_detail_transactions(slint::ModelRc::from(
-                            std::rc::Rc::new(slint::VecModel::from(rows)),
-                        ));
+                        ui.set_dag_detail_transactions(slint::ModelRc::from(std::rc::Rc::new(
+                            slint::VecModel::from(rows),
+                        )));
                     }
                 });
             });
@@ -5520,8 +5847,7 @@ fn main() {
         if let Ok(height) = query_str.parse::<u64>() {
             // Read block directly from local RocksDB via NodeService
             spawn_async(&rt_h, async move {
-                let summaries = core.node.get_recent_blocks(50).await
-                    .unwrap_or_default();
+                let summaries = core.node.get_recent_blocks(50).await.unwrap_or_default();
                 let block = summaries.iter().find(|b| b.height == height);
                 match block {
                     Some(block) => {
@@ -5570,8 +5896,7 @@ fn main() {
         // Read block detail directly from local RocksDB storage via NodeService
         // (not via HTTP RPC which requires a running JSON-RPC server)
         spawn_async(&rt_h, async move {
-            let all_summaries = core.node.get_recent_blocks(50).await
-                .unwrap_or_default();
+            let all_summaries = core.node.get_recent_blocks(50).await.unwrap_or_default();
             let block = all_summaries.iter().find(|b| b.height == height as u64);
 
             match block {
@@ -5704,7 +6029,11 @@ fn main() {
         let ui_w = ui_w.clone();
         tracing::info!("Models: running inference test");
         spawn_async(&rt_h, async move {
-            match core.chat.send_message("Hello, this is an inference test.").await {
+            match core
+                .chat
+                .send_message("Hello, this is an inference test.")
+                .await
+            {
                 Ok(response) => {
                     let content = clean_markdown(&response.content);
                     let _ = slint::invoke_from_event_loop(move || {
@@ -5746,18 +6075,15 @@ fn main() {
 
         spawn_async(&rt_h, async move {
             // Find the local model file
-            let model_dir = dirs::data_local_dir()
-                .map(|d| d.join("citrate").join("models"));
+            let model_dir = dirs::data_local_dir().map(|d| d.join("citrate").join("models"));
             let model_path = match model_dir {
-                Some(dir) if dir.exists() => {
-                    match std::fs::read_dir(&dir) {
-                        Ok(entries) => entries
-                            .filter_map(|e| e.ok())
-                            .find(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
-                            .map(|e| e.path()),
-                        Err(_) => None,
-                    }
-                }
+                Some(dir) if dir.exists() => match std::fs::read_dir(&dir) {
+                    Ok(entries) => entries
+                        .filter_map(|e| e.ok())
+                        .find(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
+                        .map(|e| e.path()),
+                    Err(_) => None,
+                },
                 _ => None,
             };
 
@@ -5844,7 +6170,11 @@ fn main() {
         let name_str = name.to_string();
         let token_str = token.to_string();
         let core = core.clone();
-        tracing::info!("Settings: saving integration token for {} ({} chars)", name_str, token_str.len());
+        tracing::info!(
+            "Settings: saving integration token for {} ({} chars)",
+            name_str,
+            token_str.len()
+        );
         spawn_async(&rt_h, async move {
             let mut config = core.config.write().await;
             let result = config
@@ -5853,7 +6183,10 @@ fn main() {
             if let Err(e) = result {
                 tracing::error!("Failed to save integration token securely: {}", e);
             } else {
-                tracing::info!("Settings: {} integration token saved to OS keychain", name_str);
+                tracing::info!(
+                    "Settings: {} integration token saved to OS keychain",
+                    name_str
+                );
             }
         });
     });
@@ -5882,7 +6215,9 @@ fn main() {
                     tracing::info!("Devnet: no bootnodes (local only)");
                 }
                 "testnet" => {
-                    core.node.update_bootnodes(vec!["159.65.227.42:30303".to_string()]).await;
+                    core.node
+                        .update_bootnodes(vec!["159.65.227.42:30303".to_string()])
+                        .await;
                     tracing::info!("Testnet: connecting to bootnode");
                 }
                 _ => {}
@@ -5899,7 +6234,9 @@ fn main() {
             };
             tracing::info!(
                 "Environment switch: network={}, chain_id={}, data_dir={}",
-                lower, config.chain_id, config.data_dir
+                lower,
+                config.chain_id,
+                config.data_dir
             );
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
@@ -5917,7 +6254,12 @@ fn main() {
                 cfg.active_rpc_url()
             };
             core.wallet.set_rpc_url(&rpc_url);
-            tracing::info!("Wallet updated: chain_id={}, rpc={} for {}", new_chain_id, rpc_url, lower);
+            tracing::info!(
+                "Wallet updated: chain_id={}, rpc={} for {}",
+                new_chain_id,
+                rpc_url,
+                lower
+            );
 
             // Restart node with new config (reads updated data_dir + chain_id)
             crash_telemetry::set_last_state("node-start (environment switch)");
@@ -5928,7 +6270,10 @@ fn main() {
             }
 
             // Refresh chat context with new network info
-            let address = core.wallet.get_primary_address().await
+            let address = core
+                .wallet
+                .get_primary_address()
+                .await
                 .unwrap_or_else(|| "not connected".to_string());
             let height = core.node.get_status().await.block_height;
             core.chat.set_context(&address, "0", &lower, height).await;
@@ -5966,7 +6311,8 @@ fn main() {
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_learning_pool_status(
-                                    format!("LearningPool not deployed on chain {}", chain_id).into()
+                                    format!("LearningPool not deployed on chain {}", chain_id)
+                                        .into(),
                                 );
                             }
                         }
@@ -5980,14 +6326,15 @@ fn main() {
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_learning_pool_status(
-                                    "Create a wallet before joining a pool".into()
+                                    "Create a wallet before joining a pool".into(),
                                 );
                             }
                         }
                     });
                     return;
                 };
-                let pool_id = ui_w.upgrade()
+                let pool_id = ui_w
+                    .upgrade()
                     .map(|ui| ui.get_learning_current_pool_id() as u64)
                     .unwrap_or(0);
                 let data = marketplace_client::encode_join_pool(pool_id);
@@ -6000,14 +6347,22 @@ fn main() {
                     move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_learning_pool_status(
-                                format!("Submitting joinPool({}) tx…", pool_id).into()
+                                format!("Submitting joinPool({}) tx…", pool_id).into(),
                             );
                         }
                     }
                 });
                 // NAT-B-007: surface the decoded intent, target, and 1000-SALT
                 // stake for explicit Approve/Deny before broadcasting.
-                if !confirm_tx_intent(&core.approvals, "Join learning pool", addr, &stake_wei, &data).await {
+                if !confirm_tx_intent(
+                    &core.approvals,
+                    "Join learning pool",
+                    addr,
+                    &stake_wei,
+                    &data,
+                )
+                .await
+                {
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
                         move || {
@@ -6018,13 +6373,15 @@ fn main() {
                     });
                     return;
                 }
-                match core.wallet
+                match core
+                    .wallet
                     .send_transaction_with_data(&from, addr, &stake_wei, data, "")
                     .await
                 {
                     Ok(tx) => {
                         tracing::info!("Learning: joinPool tx={}", tx);
-                        let submitted = format!("Submitted joinPool({}) — tx {}", pool_id, short_hash(&tx));
+                        let submitted =
+                            format!("Submitted joinPool({}) — tx {}", pool_id, short_hash(&tx));
                         let _ = slint::invoke_from_event_loop({
                             let ui_w = ui_w.clone();
                             move || {
@@ -6040,10 +6397,17 @@ fn main() {
                                 format!("Joined pool {} (block {})", pool_id, block_number)
                             }
                             Ok(ReceiptOutcome::Reverted) => {
-                                format!("Join pool {} reverted — below minStake or not Open access?", pool_id)
+                                format!(
+                                    "Join pool {} reverted — below minStake or not Open access?",
+                                    pool_id
+                                )
                             }
                             Ok(ReceiptOutcome::Pending) => {
-                                format!("Join pool {} pending — tx {} not yet mined", pool_id, short_hash(&tx))
+                                format!(
+                                    "Join pool {} pending — tx {} not yet mined",
+                                    pool_id,
+                                    short_hash(&tx)
+                                )
                             }
                             Err(e) => format!("Receipt poll failed: {}", e),
                         };
@@ -6062,7 +6426,9 @@ fn main() {
                             let ui_w = ui_w.clone();
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_learning_pool_status(format!("Join failed: {}", e).into());
+                                    ui.set_learning_pool_status(
+                                        format!("Join failed: {}", e).into(),
+                                    );
                                 }
                             }
                         });
@@ -6087,30 +6453,39 @@ fn main() {
                     return;
                 };
                 let accounts = core.wallet.list_accounts().await;
-                let Some(from) = accounts.first().map(|a| a.address.clone()) else { return; };
-                let pool_id = ui_w.upgrade()
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else {
+                    return;
+                };
+                let pool_id = ui_w
+                    .upgrade()
                     .map(|ui| ui.get_learning_current_pool_id() as u64)
                     .unwrap_or(0);
                 let data = marketplace_client::encode_leave_pool(pool_id);
                 // NAT-B-007: confirm the leavePool write before broadcasting.
-                if !confirm_tx_intent(&core.approvals, "Leave learning pool", addr, "0", &data).await {
+                if !confirm_tx_intent(&core.approvals, "Leave learning pool", addr, "0", &data)
+                    .await
+                {
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
-                                ui.set_learning_pool_status("Cancelled — leave not approved".into());
+                                ui.set_learning_pool_status(
+                                    "Cancelled — leave not approved".into(),
+                                );
                             }
                         }
                     });
                     return;
                 }
-                match core.wallet
+                match core
+                    .wallet
                     .send_transaction_with_data(&from, addr, "0", data, "")
                     .await
                 {
                     Ok(tx) => {
                         tracing::info!("Learning: leavePool tx={}", tx);
-                        let submitted = format!("Submitted leavePool({}) — tx {}", pool_id, short_hash(&tx));
+                        let submitted =
+                            format!("Submitted leavePool({}) — tx {}", pool_id, short_hash(&tx));
                         let _ = slint::invoke_from_event_loop({
                             let ui_w = ui_w.clone();
                             move || {
@@ -6129,7 +6504,11 @@ fn main() {
                                 format!("Leave pool {} reverted — not a member?", pool_id)
                             }
                             Ok(ReceiptOutcome::Pending) => {
-                                format!("Leave pool {} pending — tx {} not yet mined", pool_id, short_hash(&tx))
+                                format!(
+                                    "Leave pool {} pending — tx {} not yet mined",
+                                    pool_id,
+                                    short_hash(&tx)
+                                )
                             }
                             Err(e) => format!("Receipt poll failed: {}", e),
                         };
@@ -6148,7 +6527,9 @@ fn main() {
                             let ui_w = ui_w.clone();
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
-                                    ui.set_learning_pool_status(format!("Leave failed: {}", e).into());
+                                    ui.set_learning_pool_status(
+                                        format!("Leave failed: {}", e).into(),
+                                    );
                                 }
                             }
                         });
@@ -6171,14 +6552,25 @@ fn main() {
             let ui_w = ui_w.clone();
             spawn_async(&rt_h, async move {
                 let chain_id = core.config.read().await.chain_id;
-                let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id) else {
+                let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id)
+                else {
                     return;
                 };
                 let accounts = core.wallet.list_accounts().await;
-                let Some(from) = accounts.first().map(|a| a.address.clone()) else { return; };
+                let Some(from) = accounts.first().map(|a| a.address.clone()) else {
+                    return;
+                };
                 let data = marketplace_client::encode_claim_rewards();
                 // NAT-B-007: confirm the claimRewards write before broadcasting.
-                if !confirm_tx_intent(&core.approvals, "Claim learning earnings", acc_addr, "0", &data).await {
+                if !confirm_tx_intent(
+                    &core.approvals,
+                    "Claim learning earnings",
+                    acc_addr,
+                    "0",
+                    &data,
+                )
+                .await
+                {
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
                         move || {
@@ -6189,7 +6581,8 @@ fn main() {
                     });
                     return;
                 }
-                match core.wallet
+                match core
+                    .wallet
                     .send_transaction_with_data(&from, acc_addr, "0", data, "")
                     .await
                 {
@@ -6201,7 +6594,7 @@ fn main() {
                             move || {
                                 if let Some(ui) = ui_w.upgrade() {
                                     ui.set_clipboard_toast(
-                                        format!("Claim submitted — tx {}", short_hash(&tx)).into()
+                                        format!("Claim submitted — tx {}", short_hash(&tx)).into(),
                                     );
                                 }
                             }
@@ -6269,7 +6662,8 @@ fn main() {
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
                                 ui.set_create_pool_status(
-                                    format!("LearningPool not deployed on chain {}", chain_id).into()
+                                    format!("LearningPool not deployed on chain {}", chain_id)
+                                        .into(),
                                 );
                             }
                         }
@@ -6290,7 +6684,10 @@ fn main() {
                 };
                 // V1 fixed: Open access (0) + 1000 SALT minStake
                 let data = marketplace_client::encode_create_pool(
-                    &name_s, &desc_s, 0, marketplace_client::MIN_PROVIDER_STAKE_WEI,
+                    &name_s,
+                    &desc_s,
+                    0,
+                    marketplace_client::MIN_PROVIDER_STAKE_WEI,
                 );
                 let stake_wei = marketplace_client::MIN_PROVIDER_STAKE_WEI.to_string();
                 let _ = slint::invoke_from_event_loop({
@@ -6302,18 +6699,29 @@ fn main() {
                     }
                 });
                 // NAT-B-007: confirm the createPool write (1000-SALT minStake) first.
-                if !confirm_tx_intent(&core.approvals, "Create learning pool", addr, &stake_wei, &data).await {
+                if !confirm_tx_intent(
+                    &core.approvals,
+                    "Create learning pool",
+                    addr,
+                    &stake_wei,
+                    &data,
+                )
+                .await
+                {
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
                         move || {
                             if let Some(ui) = ui_w.upgrade() {
-                                ui.set_create_pool_status("Cancelled — createPool not approved".into());
+                                ui.set_create_pool_status(
+                                    "Cancelled — createPool not approved".into(),
+                                );
                             }
                         }
                     });
                     return;
                 }
-                match core.wallet
+                match core
+                    .wallet
                     .send_transaction_with_data(&from, addr, &stake_wei, data, "")
                     .await
                 {
@@ -6404,7 +6812,9 @@ fn main() {
             let core = core.clone();
             tracing::info!("Edu: refresh requested");
             spawn_async(&rt_h, async move {
-                use citrate_desktop_app::services::edu::institutional_service::{RpcInstitutionalBackend, InstitutionalBackend};
+                use citrate_desktop_app::services::edu::institutional_service::{
+                    InstitutionalBackend, RpcInstitutionalBackend,
+                };
 
                 // Format RPC URL from the live config. AppCore exposes the RPC
                 // port via AppConfig (not a raw rpc_url field) so environment
@@ -6464,7 +6874,9 @@ fn main() {
             tracing::info!("Edu: teacher cashout requested");
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(_ui) = ui_w.upgrade() {
-                    tracing::info!("Edu: cashout flow — requires wallet tx to CashoutRequest.requestCashout()");
+                    tracing::info!(
+                        "Edu: cashout flow — requires wallet tx to CashoutRequest.requestCashout()"
+                    );
                 }
             });
         });
@@ -6526,7 +6938,8 @@ fn main() {
         tracing::info!("Compute: register provider requested");
         spawn_async(&rt_h, async move {
             let chain_id = core.config.read().await.chain_id;
-            let Some(market_addr) = marketplace_client::compute_marketplace_address(chain_id) else {
+            let Some(market_addr) = marketplace_client::compute_marketplace_address(chain_id)
+            else {
                 let msg = format!("ComputeMarketplace not deployed on chain {}", chain_id);
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
@@ -6561,9 +6974,9 @@ fn main() {
             };
 
             // Build the call data: one "any-model" sentinel, 1000 SALT stake.
-            let data = marketplace_client::encode_register_provider(
-                &[marketplace_client::any_model_hash()],
-            );
+            let data = marketplace_client::encode_register_provider(&[
+                marketplace_client::any_model_hash(),
+            ]);
             let stake_wei = marketplace_client::MIN_PROVIDER_STAKE_WEI.to_string();
 
             // Flip UI to a "submitting..." state so double-clicks are harmless.
@@ -6577,12 +6990,22 @@ fn main() {
             });
 
             // NAT-B-007: confirm the registerProvider write (1000-SALT stake) first.
-            if !confirm_tx_intent(&core.approvals, "Register compute provider", market_addr, &stake_wei, &data).await {
+            if !confirm_tx_intent(
+                &core.approvals,
+                "Register compute provider",
+                market_addr,
+                &stake_wei,
+                &data,
+            )
+            .await
+            {
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
                     move || {
                         if let Some(ui) = ui_w.upgrade() {
-                            ui.set_compute_provider_status("Cancelled — registration not approved".into());
+                            ui.set_compute_provider_status(
+                                "Cancelled — registration not approved".into(),
+                            );
                         }
                     }
                 });
@@ -6595,7 +7018,8 @@ fn main() {
             {
                 Ok(tx_hash) => {
                     tracing::info!("Compute: registerProvider tx={}", tx_hash);
-                    let status_msg = format!("Registration submitted — tx {}", short_hash(&tx_hash));
+                    let status_msg =
+                        format!("Registration submitted — tx {}", short_hash(&tx_hash));
                     let _ = slint::invoke_from_event_loop({
                         let ui_w = ui_w.clone();
                         move || {
@@ -6613,10 +7037,14 @@ fn main() {
                             format!("Registered — provider active (block {})", block_number)
                         }
                         Ok(ReceiptOutcome::Reverted) => {
-                            "Registration reverted — check MIN_PROVIDER_STAKE and supportedModels".to_string()
+                            "Registration reverted — check MIN_PROVIDER_STAKE and supportedModels"
+                                .to_string()
                         }
                         Ok(ReceiptOutcome::Pending) => {
-                            format!("Registration pending — tx {} not yet mined", short_hash(&tx_hash))
+                            format!(
+                                "Registration pending — tx {} not yet mined",
+                                short_hash(&tx_hash)
+                            )
                         }
                         Err(e) => format!("Receipt poll failed: {}", e),
                     };
@@ -6651,7 +7079,9 @@ fn main() {
     let ui_w = ui.as_weak();
     ui.on_compute_settings_changed(move || {
         let ui_w = ui_w.clone();
-        let Some(ui) = ui_w.upgrade() else { return; };
+        let Some(ui) = ui_w.upgrade() else {
+            return;
+        };
         let settings = compute_service::ComputeSettings {
             enabled: ui.get_compute_enabled(),
             allocation_percent: ui.get_compute_allocation() as u32,
@@ -6667,7 +7097,9 @@ fn main() {
         }
         tracing::info!(
             "Compute settings: enabled={} alloc={}% schedule={}",
-            settings.enabled, settings.allocation_percent, settings.schedule,
+            settings.enabled,
+            settings.allocation_percent,
+            settings.schedule,
         );
     });
 
@@ -6679,7 +7111,9 @@ fn main() {
         let relay = relay_for_toggle.clone();
         let ui_w = ui.as_weak();
         ui.on_relay_toggled(move || {
-            let Some(ui) = ui_w.upgrade() else { return; };
+            let Some(ui) = ui_w.upgrade() else {
+                return;
+            };
             let on = ui.get_relay_enabled();
             match &relay {
                 Some(r) => {
@@ -6712,13 +7146,18 @@ fn main() {
         let ui_w = ui_w.clone();
         spawn_async(&rt_h, async move {
             let chain_id = core.config.read().await.chain_id;
-            let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id) else {
+            let Some(acc_addr) = marketplace_client::contribution_accounting_address(chain_id)
+            else {
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
                     move || {
                         if let Some(ui) = ui_w.upgrade() {
                             ui.set_clipboard_toast(
-                                format!("Claim unavailable — no accounting contract on chain {}", chain_id).into(),
+                                format!(
+                                    "Claim unavailable — no accounting contract on chain {}",
+                                    chain_id
+                                )
+                                .into(),
                             );
                         }
                     }
@@ -6731,7 +7170,15 @@ fn main() {
             };
             let data = marketplace_client::encode_claim_rewards();
             // NAT-B-007: confirm the claimRewards write before broadcasting.
-            if !confirm_tx_intent(&core.approvals, "Claim compute earnings", acc_addr, "0", &data).await {
+            if !confirm_tx_intent(
+                &core.approvals,
+                "Claim compute earnings",
+                acc_addr,
+                "0",
+                &data,
+            )
+            .await
+            {
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
                     move || {
@@ -6832,13 +7279,16 @@ fn main() {
             let Some(market) = marketplace_client::compute_marketplace_address(chain_id) else {
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
-                    move || if let Some(ui) = ui_w.upgrade() {
-                        ui.set_compute_listing_connection_ok(false);
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_compute_listing_connection_ok(false);
+                        }
                     }
                 });
                 return;
             };
-            let Some(accounting) = marketplace_client::contribution_accounting_address(chain_id) else {
+            let Some(accounting) = marketplace_client::contribution_accounting_address(chain_id)
+            else {
                 return;
             };
             let accounts = core.wallet.list_accounts().await;
@@ -6849,7 +7299,8 @@ fn main() {
             // Data source: ComputeMarketplace.getProvider(address)
             // returns ProviderProfile (contracts/src/ComputeMarketplace.sol:829)
             let provider = if let Some(data) = marketplace_client::encode_get_provider(&addr) {
-                marketplace_client::eth_call(&rpc_url, market, &data).await
+                marketplace_client::eth_call(&rpc_url, market, &data)
+                    .await
                     .ok()
                     .and_then(|r| marketplace_client::decode_provider_profile(&r))
             } else {
@@ -6859,7 +7310,8 @@ fn main() {
             // Data source: ContributionAccounting.claimable(address)
             // returns uint256 (public mapping auto-getter)
             let claimable = if let Some(data) = marketplace_client::encode_claimable(&addr) {
-                marketplace_client::eth_call(&rpc_url, accounting, &data).await
+                marketplace_client::eth_call(&rpc_url, accounting, &data)
+                    .await
                     .ok()
                     .and_then(|r| marketplace_client::decode_uint256_u128(&r))
             } else {
@@ -6877,7 +7329,9 @@ fn main() {
             };
 
             let _ = slint::invoke_from_event_loop(move || {
-                let Some(ui) = ui_w.upgrade() else { return; };
+                let Some(ui) = ui_w.upgrade() else {
+                    return;
+                };
                 match (provider, claimable) {
                     (Some(p), Some(wei)) if p.is_registered => {
                         ui.set_compute_is_registered(true);
@@ -6887,7 +7341,7 @@ fn main() {
                         let rep_pct = (p.reputation_bps as f64) / 100.0;
                         ui.set_compute_listing_reputation_pct(format!("{:.1}", rep_pct).into());
                         ui.set_compute_listing_capacity(
-                            format!("{} / {}", p.current_active_jobs, p.max_concurrent_jobs).into()
+                            format!("{} / {}", p.current_active_jobs, p.max_concurrent_jobs).into(),
                         );
                         ui.set_compute_listing_models("any (wildcard)".into());
                         ui.set_compute_listing_total_completed(p.total_jobs_completed as i32);
@@ -6969,7 +7423,12 @@ fn main() {
             spawn_async(&rt_h, async move {
                 let rpc_url = core.config.read().await.active_rpc_url();
                 let client = reqwest::Client::new();
-                match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyPause")).send().await {
+                match client
+                    .post(&rpc_url)
+                    .json(&emergency_rpc_body("citrate_emergencyPause"))
+                    .send()
+                    .await
+                {
                     Ok(_) => {
                         tracing::warn!("Operations: chain PAUSED via RPC");
                         let _ = slint::invoke_from_event_loop(move || {
@@ -7003,7 +7462,12 @@ fn main() {
             spawn_async(&rt_h, async move {
                 let rpc_url = core.config.read().await.active_rpc_url();
                 let client = reqwest::Client::new();
-                match client.post(&rpc_url).json(&emergency_rpc_body("citrate_emergencyResume")).send().await {
+                match client
+                    .post(&rpc_url)
+                    .json(&emergency_rpc_body("citrate_emergencyResume"))
+                    .send()
+                    .await
+                {
                     Ok(_) => {
                         tracing::info!("Operations: chain RESUMED via RPC");
                         let _ = slint::invoke_from_event_loop(move || {
@@ -7079,7 +7543,7 @@ fn main() {
                             // existing copy-to-clipboard callback.
                             ui.invoke_copy_to_clipboard(json.into());
                             ui.set_clipboard_toast(
-                                "Sidecar config copied — paste into your Hermes client".into()
+                                "Sidecar config copied — paste into your Hermes client".into(),
                             );
                             let ui_for_clear = ui_w.clone();
                             slint::Timer::single_shot(
@@ -7106,15 +7570,21 @@ fn main() {
         spawn_async(&rt_h, async move {
             let events = core.trail.get_events().await;
             let count = events.len() as i32;
-            let trail_entries: Vec<TrailEntryData> = events.iter().map(|e| {
-                TrailEntryData {
-                    timestamp: e.timestamp.split('T').next_back().unwrap_or(&e.timestamp).into(),
+            let trail_entries: Vec<TrailEntryData> = events
+                .iter()
+                .map(|e| TrailEntryData {
+                    timestamp: e
+                        .timestamp
+                        .split('T')
+                        .next_back()
+                        .unwrap_or(&e.timestamp)
+                        .into(),
                     event_type: e.event_type.clone().into(),
                     tool_name: e.tool_name.clone().unwrap_or_default().into(),
                     risk_level: e.risk_level.clone().unwrap_or_default().into(),
                     approved: e.approved.map(|b| b.to_string()).unwrap_or_default().into(),
-                }
-            }).collect();
+                })
+                .collect();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_w.upgrade() {
                     ui.set_ops_trail_count(count);
@@ -7221,7 +7691,11 @@ fn main() {
         let provider_str = provider.to_string();
         let key_str = key.to_string();
         let core = core.clone();
-        tracing::info!("Settings: saving API key for {} ({} chars)", provider_str, key_str.len());
+        tracing::info!(
+            "Settings: saving API key for {} ({} chars)",
+            provider_str,
+            key_str.len()
+        );
         spawn_async(&rt_h, async move {
             let mut config = core.config.write().await;
             let result = config
@@ -7248,7 +7722,11 @@ fn main() {
             let found = detected.backend_type != "none";
             let display_name = detected.display_name.clone();
             let model_id = detected.model_id.clone();
-            tracing::info!("Settings: detected backend={}, model={}", detected.backend_type, display_name);
+            tracing::info!(
+                "Settings: detected backend={}, model={}",
+                detected.backend_type,
+                display_name
+            );
 
             // Update the chat service model so subsequent messages use the right model
             if found {
@@ -7271,7 +7749,9 @@ fn main() {
     let rt_h = rt.handle().clone();
     ui.on_settings_download_model(move || {
         let ui_w = ui_w.clone();
-        tracing::info!("Settings: ensuring bundled Gemma 4 model is seeded into ~/.citrate/models/");
+        tracing::info!(
+            "Settings: ensuring bundled Gemma 4 model is seeded into ~/.citrate/models/"
+        );
         spawn_async(&rt_h, async move {
             // The installer ships gemma-4-E4B-it-Q4_K_M.gguf inside
             // <app>/Contents/Resources/branding/models/ (and the equivalent
@@ -7288,9 +7768,11 @@ fn main() {
             // one is available." Reaching for other models happens via the
             // ModelRegistry contract — see Settings → Scan or the registry
             // browser once the team's IPFS pinning is live.
-            let result = tokio::task::spawn_blocking(citrate_desktop_app::AppCore::seed_bundled_model_public)
-                .await
-                .unwrap_or_else(|e| Err(std::io::Error::other(format!("seed task panicked: {}", e))));
+            let result = tokio::task::spawn_blocking(
+                citrate_desktop_app::AppCore::seed_bundled_model_public,
+            )
+            .await
+            .unwrap_or_else(|e| Err(std::io::Error::other(format!("seed task panicked: {}", e))));
 
             let model_dir = dirs::home_dir()
                 .map(|d| d.join(".citrate/models"))
@@ -7506,10 +7988,12 @@ fn main() {
         spawn_async(&rt_h, async move {
             let client = reqwest::Client::new();
             // Data source: IPFS daemon HTTP API at localhost:5001/api/v0/pin/add
-            match client.post("http://127.0.0.1:5001/api/v0/pin/add")
+            match client
+                .post("http://127.0.0.1:5001/api/v0/pin/add")
                 .query(&[("arg", &cid_str)])
                 .timeout(std::time::Duration::from_secs(30))
-                .send().await
+                .send()
+                .await
             {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!("Storage: pinned CID successfully");
@@ -7536,16 +8020,20 @@ fn main() {
         spawn_async(&rt_h, async move {
             let client = reqwest::Client::new();
             // Data source: IPFS daemon HTTP API at localhost:5001
-            match client.post("http://127.0.0.1:5001/api/v0/id")
+            match client
+                .post("http://127.0.0.1:5001/api/v0/id")
                 .timeout(std::time::Duration::from_secs(3))
-                .send().await
+                .send()
+                .await
             {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!("Storage: IPFS daemon is online");
                     let stats = ipfs_fetch_stats(&client).await;
                     tracing::info!(
                         "Storage: {} peers, {} pins, repo {}",
-                        stats.peer_count, stats.pin_count, stats.repo_size
+                        stats.peer_count,
+                        stats.pin_count,
+                        stats.repo_size
                     );
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_w.upgrade() {
@@ -7688,7 +8176,9 @@ fn main() {
                     let stats = ipfs_fetch_stats(&client).await;
                     tracing::info!(
                         "Storage: auto-detect — {} peers, {} pins, repo {}",
-                        stats.peer_count, stats.pin_count, stats.repo_size
+                        stats.peer_count,
+                        stats.pin_count,
+                        stats.repo_size
                     );
                     // P960-C: also hydrate the persisted file list so
                     // users see previously-uploaded files on boot.
@@ -7731,7 +8221,10 @@ fn main() {
                 .unwrap_or_default();
             tracing::info!(
                 "Compute hydration: {} (opt-in={}, alloc={}%, schedule={})",
-                hw.summary(), settings.enabled, settings.allocation_percent, settings.schedule,
+                hw.summary(),
+                settings.enabled,
+                settings.allocation_percent,
+                settings.schedule,
             );
             let desc = settings.schedule_description().to_string();
             let _ = slint::invoke_from_event_loop(move || {

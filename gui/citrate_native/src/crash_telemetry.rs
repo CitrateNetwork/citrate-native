@@ -384,8 +384,8 @@ fn write_marker_file(path: &Path, state: &str) -> io::Result<()> {
         last_state: redact_for_disk(state),
         updated_at: now,
     };
-    let json = serde_json::to_vec_pretty(&marker)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json =
+        serde_json::to_vec_pretty(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     std::fs::write(path, json)?;
     restrict_file_perms(path);
     Ok(())
@@ -800,20 +800,17 @@ mod tests {
         let rec = &records[0];
         assert_eq!(rec.kind, "panic");
         assert!(
-            rec.message.contains("injected test panic: WP-A1 crash telemetry"),
+            rec.message
+                .contains("injected test panic: WP-A1 crash telemetry"),
             "message: {}",
             rec.message
         );
         assert!(
-            rec.backtrace.contains("crash_telemetry")
-                || rec.backtrace.lines().count() > 3,
+            rec.backtrace.contains("crash_telemetry") || rec.backtrace.lines().count() > 3,
             "backtrace must be substantive, got: {}",
             rec.backtrace
         );
-        assert_eq!(
-            rec.last_state,
-            "injected-panic-test (node-start telemetry)"
-        );
+        assert_eq!(rec.last_state, "injected-panic-test (node-start telemetry)");
         assert_eq!(rec.app_version, APP_VERSION);
         // The chained previous hook must still have printed the panic
         // (libtest routes it to stdout or stderr depending on capture).
@@ -848,8 +845,7 @@ mod tests {
         let rec_path = report
             .unclean_exit_record
             .expect("stale marker must yield an unclean-exit record");
-        let rec: CrashRecord =
-            serde_json::from_slice(&std::fs::read(&rec_path).unwrap()).unwrap();
+        let rec: CrashRecord = serde_json::from_slice(&std::fs::read(&rec_path).unwrap()).unwrap();
         assert_eq!(rec.kind, "unclean-exit");
         assert_eq!(rec.last_state, "node-start (settings)");
         assert!(rec.message.contains("died without a clean exit"));
@@ -889,7 +885,10 @@ mod tests {
         assert!(!out.contains(HASH), "full hash must not survive");
         // 0x-prefixed 64-hex (tx hash as usually printed) too.
         let out2 = redact_for_disk(&format!("tx 0x{HASH} pending"));
-        assert!(out2.contains("0x9b71…3ca7"), "0x-hash truncated, got: {out2}");
+        assert!(
+            out2.contains("0x9b71…3ca7"),
+            "0x-hash truncated, got: {out2}"
+        );
         assert!(!out2.contains(HASH));
         // Short hex (code pointers like backtrace frame addresses)
         // is NOT touched.
@@ -910,7 +909,10 @@ mod tests {
         assert!(out.contains("total_amount: <redacted>"), "got: {out}");
         assert!(out.contains("pending_balance=<redacted>"), "got: {out}");
         let out = redact_for_disk(&format!("balance=0x{HASH}"));
-        assert_eq!(out, "balance=<redacted>", "hex balance value fully scrubbed");
+        assert_eq!(
+            out, "balance=<redacted>",
+            "hex balance value fully scrubbed"
+        );
         // Redaction is idempotent — re-scrubbing scrubbed text is a no-op.
         let addr = test_addr();
         let once = redact_for_disk(&format!("send {addr} balance=9"));
@@ -933,8 +935,16 @@ mod tests {
             "full address must not reach disk"
         );
         let parsed: SessionMarker = serde_json::from_slice(&raw).expect("marker stays valid JSON");
-        assert!(parsed.last_state.contains("0xd8dA…6BF2"), "got: {}", parsed.last_state);
-        assert!(parsed.last_state.contains("balance=<redacted>"), "got: {}", parsed.last_state);
+        assert!(
+            parsed.last_state.contains("0xd8dA…6BF2"),
+            "got: {}",
+            parsed.last_state
+        );
+        assert!(
+            parsed.last_state.contains("balance=<redacted>"),
+            "got: {}",
+            parsed.last_state
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -962,9 +972,21 @@ mod tests {
             "full address must not reach disk"
         );
         let read: CrashRecord = serde_json::from_slice(&raw).unwrap();
-        assert!(read.message.contains("0xd8dA…6BF2"), "got: {}", read.message);
-        assert!(read.message.contains("amount=<redacted>"), "got: {}", read.message);
-        assert!(read.last_state.contains("balance=<redacted>"), "got: {}", read.last_state);
+        assert!(
+            read.message.contains("0xd8dA…6BF2"),
+            "got: {}",
+            read.message
+        );
+        assert!(
+            read.message.contains("amount=<redacted>"),
+            "got: {}",
+            read.message
+        );
+        assert!(
+            read.last_state.contains("balance=<redacted>"),
+            "got: {}",
+            read.last_state
+        );
         assert_eq!(read.backtrace, backtrace, "backtrace symbols kept verbatim");
         assert_eq!(read.location, "src/main.rs:100:5");
         let _ = std::fs::remove_dir_all(&dir);
@@ -984,7 +1006,10 @@ mod tests {
         let logged = std::fs::read_to_string(&path).unwrap();
         assert!(logged.contains("balance=<redacted>"), "got: {logged}");
         assert!(logged.contains("0xd8dA…6BF2"), "got: {logged}");
-        assert!(!logged.contains(&addr), "full address must not reach the log file");
+        assert!(
+            !logged.contains(&addr),
+            "full address must not reach the log file"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -999,27 +1024,51 @@ mod tests {
         let mnemonic =
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let out = redact_for_disk(mnemonic);
-        assert!(!out.contains("abandon"), "bare mnemonic run must not survive: {out}");
-        assert!(!out.contains("about"), "mnemonic tail must not survive: {out}");
+        assert!(
+            !out.contains("abandon"),
+            "bare mnemonic run must not survive: {out}"
+        );
+        assert!(
+            !out.contains("about"),
+            "mnemonic tail must not survive: {out}"
+        );
 
         // A labeled mnemonic (the onboarding-verify shape) also goes.
         let out = redact_for_disk("expected word #7 'shrimp' in mnemonic=\"shrimp legal winner\"");
-        assert!(!out.contains("shrimp legal winner"), "labeled mnemonic must not survive: {out}");
+        assert!(
+            !out.contains("shrimp legal winner"),
+            "labeled mnemonic must not survive: {out}"
+        );
 
         // Keystore password by key.
         let out = redact_for_disk("unlock failed password=Hunter2-Sekret!");
-        assert!(!out.contains("Hunter2-Sekret"), "password value must not survive: {out}");
-        assert!(out.contains("password="), "the key label is kept for context: {out}");
+        assert!(
+            !out.contains("Hunter2-Sekret"),
+            "password value must not survive: {out}"
+        );
+        assert!(
+            out.contains("password="),
+            "the key label is kept for context: {out}"
+        );
 
         // Bearer / API token.
         let out = redact_for_disk("auth token: bk_live_0123456789ABCDEFdeadbeef");
-        assert!(!out.contains("bk_live_0123456789ABCDEFdeadbeef"), "token must not survive: {out}");
+        assert!(
+            !out.contains("bk_live_0123456789ABCDEFdeadbeef"),
+            "token must not survive: {out}"
+        );
 
         // Argon2 PHC string.
         let phc = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG";
         let out = redact_for_disk(&format!("keystore hash {phc} loaded"));
-        assert!(!out.contains("c29tZXNhbHQ"), "PHC salt must not survive: {out}");
-        assert!(!out.contains("RdescudvJCsgt3ub"), "PHC hash must not survive: {out}");
+        assert!(
+            !out.contains("c29tZXNhbHQ"),
+            "PHC salt must not survive: {out}"
+        );
+        assert!(
+            !out.contains("RdescudvJCsgt3ub"),
+            "PHC hash must not survive: {out}"
+        );
     }
 
     /// NAT-B-005: files this module writes must be owner-only (0600) on
@@ -1076,7 +1125,11 @@ mod tests {
         }
         w.flush().unwrap();
         let rotated = dir.join("citrate-gui.log.1");
-        assert!(rotated.exists(), "rotation must produce {}", rotated.display());
+        assert!(
+            rotated.exists(),
+            "rotation must produce {}",
+            rotated.display()
+        );
         assert!(path.exists(), "current log must be re-created");
         assert!(
             std::fs::metadata(&path).unwrap().len() <= 256,

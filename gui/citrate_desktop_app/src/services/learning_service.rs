@@ -14,10 +14,10 @@ pub struct PoolInfo {
     pub name: String,
     pub model_name: String,
     pub member_count: u32,
-    pub stake_requirement: String,   // SALT amount
+    pub stake_requirement: String, // SALT amount
     pub total_staked: String,
     pub current_epoch: u64,
-    pub status: String,              // "active", "paused", "completed"
+    pub status: String, // "active", "paused", "completed"
 }
 
 /// Staking position.
@@ -91,14 +91,18 @@ impl LearningBackend for RpcLearningBackend {
         // Try local RPC first, fall back to testnet for contract queries
         let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
         for url in &urls {
-            if let Ok(resp) = self.client.post(*url).json(&body)
+            if let Ok(resp) = self
+                .client
+                .post(*url)
+                .json(&body)
                 .timeout(std::time::Duration::from_secs(5))
-                .send().await
+                .send()
+                .await
             {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
-                        let count = u64::from_str_radix(result.trim_start_matches("0x"), 16)
-                            .unwrap_or(0);
+                        let count =
+                            u64::from_str_radix(result.trim_start_matches("0x"), 16).unwrap_or(0);
                         tracing::info!("LearningPool: {} pools on-chain (via {})", count, url);
                         return Ok(Vec::new());
                     }
@@ -111,7 +115,11 @@ impl LearningBackend for RpcLearningBackend {
     async fn get_pool(&self, pool_id: &str) -> Result<PoolInfo, AppError> {
         Err(AppError::ChainQuery(format!(
             "Learning pools {}: pool '{}' not available",
-            if LEARNING_CONTRACT.is_some() { "query failed" } else { "not deployed on this network" },
+            if LEARNING_CONTRACT.is_some() {
+                "query failed"
+            } else {
+                "not deployed on this network"
+            },
             pool_id
         )))
     }
@@ -122,13 +130,11 @@ impl LearningBackend for RpcLearningBackend {
     }
 
     async fn get_epoch_status(&self, _pool_id: &str) -> Result<EpochStatus, AppError> {
-        Err(AppError::ChainQuery(
-            if LEARNING_CONTRACT.is_some() {
-                "Epoch query not yet implemented".to_string()
-            } else {
-                "Learning pools not deployed on this network".to_string()
-            }
-        ))
+        Err(AppError::ChainQuery(if LEARNING_CONTRACT.is_some() {
+            "Epoch query not yet implemented".to_string()
+        } else {
+            "Learning pools not deployed on this network".to_string()
+        }))
     }
 
     /// Data source: ContributionAccounting.getScore(address) via eth_call
@@ -170,7 +176,13 @@ impl LearningBackend for TestLearningBackend {
         }))
     }
     async fn get_epoch_status(&self, _id: &str) -> Result<EpochStatus, AppError> {
-        Ok(EpochStatus { epoch: 3, loss: 0.45, accuracy: 0.82, participants: 5, duration_secs: 120 })
+        Ok(EpochStatus {
+            epoch: 3,
+            loss: 0.45,
+            accuracy: 0.82,
+            participants: 5,
+            duration_secs: 120,
+        })
     }
     async fn get_earnings(&self, _addr: &str) -> Result<String, AppError> {
         Ok("50".to_string())
@@ -187,16 +199,29 @@ pub struct LearningService {
 
 impl LearningService {
     pub fn new(events: Arc<EventBus>, rpc_url: &str) -> Self {
-        Self { events, backend: Arc::new(RpcLearningBackend::new(rpc_url)) }
+        Self {
+            events,
+            backend: Arc::new(RpcLearningBackend::new(rpc_url)),
+        }
     }
     pub fn with_backend(events: Arc<EventBus>, backend: Arc<dyn LearningBackend>) -> Self {
         Self { events, backend }
     }
-    pub async fn list_pools(&self) -> Result<Vec<PoolInfo>, AppError> { self.backend.list_pools().await }
-    pub async fn get_pool(&self, id: &str) -> Result<PoolInfo, AppError> { self.backend.get_pool(id).await }
-    pub async fn get_stake(&self, addr: &str) -> Result<Option<StakePosition>, AppError> { self.backend.get_stake(addr).await }
-    pub async fn get_epoch_status(&self, id: &str) -> Result<EpochStatus, AppError> { self.backend.get_epoch_status(id).await }
-    pub async fn get_earnings(&self, addr: &str) -> Result<String, AppError> { self.backend.get_earnings(addr).await }
+    pub async fn list_pools(&self) -> Result<Vec<PoolInfo>, AppError> {
+        self.backend.list_pools().await
+    }
+    pub async fn get_pool(&self, id: &str) -> Result<PoolInfo, AppError> {
+        self.backend.get_pool(id).await
+    }
+    pub async fn get_stake(&self, addr: &str) -> Result<Option<StakePosition>, AppError> {
+        self.backend.get_stake(addr).await
+    }
+    pub async fn get_epoch_status(&self, id: &str) -> Result<EpochStatus, AppError> {
+        self.backend.get_epoch_status(id).await
+    }
+    pub async fn get_earnings(&self, addr: &str) -> Result<String, AppError> {
+        self.backend.get_earnings(addr).await
+    }
 }
 
 #[cfg(test)]

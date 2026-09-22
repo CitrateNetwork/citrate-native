@@ -129,26 +129,25 @@ fn load_supervision_token() -> Option<String> {
 /// rejection.
 pub fn validate_node_agent_url(base_url: &str) -> Result<(), RelayError> {
     let url = base_url.trim();
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| RelayError::Http(format!("node-agent url must be http://loopback: {url:?}")))?;
+    let rest = url.strip_prefix("http://").ok_or_else(|| {
+        RelayError::Http(format!("node-agent url must be http://loopback: {url:?}"))
+    })?;
     // The authority is everything up to the first path/query/fragment
     // delimiter. NAT-B-008: a hand-rolled `rsplit_once(':')` treated
     // `127.0.0.1:19600@evil.example` as host `127.0.0.1` while reqwest
     // would resolve `evil.example` — the userinfo `@` is the confused
     // deputy. Split the authority on EVERY RFC-3986 delimiter and reject
     // any userinfo component outright.
-    let authority = rest
-        .split(['/', '?', '#', '\\'])
-        .next()
-        .unwrap_or(rest);
+    let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or(rest);
     if authority.contains('@') {
         return Err(RelayError::Http(format!(
             "refusing a node-agent url with userinfo (`@`): {url:?}"
         )));
     }
     if authority.is_empty() {
-        return Err(RelayError::Http(format!("node-agent url has no host: {url:?}")));
+        return Err(RelayError::Http(format!(
+            "node-agent url has no host: {url:?}"
+        )));
     }
     // Strip an optional `:port`. IPv6 literals are bracketed (`[::1]:port`),
     // so only split on the LAST colon that follows a `]` or when there are
@@ -157,10 +156,17 @@ pub fn validate_node_agent_url(base_url: &str) -> Result<(), RelayError> {
         // `[::1]` or `[::1]:port`
         match rest_after_bracket.split_once(']') {
             Some((inner, _port)) => inner,
-            None => return Err(RelayError::Http(format!("malformed IPv6 authority: {url:?}"))),
+            None => {
+                return Err(RelayError::Http(format!(
+                    "malformed IPv6 authority: {url:?}"
+                )))
+            }
         }
     } else {
-        authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority)
+        authority
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(authority)
     };
     let is_loopback = host == "127.0.0.1"
         || host == "localhost"
@@ -356,11 +362,19 @@ pub enum DecodedArgs {
     /// `submitCommitment(uint256,bytes32)`.
     Commitment { job_id: u128, commitment: [u8; 32] },
     /// `submitResult(uint256,bytes,bytes)` — payload sizes, not contents.
-    Result { job_id: u128, result_len: usize, proof_len: usize },
+    Result {
+        job_id: u128,
+        result_len: usize,
+        proof_len: usize,
+    },
     /// `claimRewards()` / `heartbeat()`.
     NoArgs,
     /// `bidOnJob(uint256,uint256,uint256)`.
-    Bid { job_id: u128, price_wei: u128, latency_ms: u128 },
+    Bid {
+        job_id: u128,
+        price_wei: u128,
+        latency_ms: u128,
+    },
 }
 
 /// Sanity bound on relay-signed calldata. The largest legitimate write is
@@ -378,7 +392,9 @@ fn decode_job_id(word: &[u8]) -> Result<u128, String> {
     if word[..16].iter().any(|b| *b != 0) {
         return Err("job id exceeds u128 — not a plausible job counter".to_string());
     }
-    Ok(u128::from_be_bytes(word[16..32].try_into().expect("16 bytes")))
+    Ok(u128::from_be_bytes(
+        word[16..32].try_into().expect("16 bytes"),
+    ))
 }
 
 /// Decode a 32-byte ABI word as a `u128`, refusing non-zero high bytes
@@ -390,7 +406,9 @@ fn decode_u128_word(word: &[u8], what: &str) -> Result<u128, String> {
     if word[..16].iter().any(|b| *b != 0) {
         return Err(format!("{what} exceeds u128 — not a plausible value"));
     }
-    Ok(u128::from_be_bytes(word[16..32].try_into().expect("16 bytes")))
+    Ok(u128::from_be_bytes(
+        word[16..32].try_into().expect("16 bytes"),
+    ))
 }
 
 /// Round up to the next 32-byte ABI word boundary.
@@ -408,9 +426,14 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
     match intent {
         "startExecution" | "completeJob" => {
             if args.len() != 32 {
-                return Err(format!("{intent}(uint256) takes exactly one word, got {} bytes", args.len()));
+                return Err(format!(
+                    "{intent}(uint256) takes exactly one word, got {} bytes",
+                    args.len()
+                ));
             }
-            Ok(DecodedArgs::JobId { job_id: decode_job_id(word(0))? })
+            Ok(DecodedArgs::JobId {
+                job_id: decode_job_id(word(0))?,
+            })
         }
         "submitCommitment" => {
             if args.len() != 64 {
@@ -420,7 +443,10 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
                 ));
             }
             let commitment: [u8; 32] = word(1).try_into().expect("32 bytes");
-            Ok(DecodedArgs::Commitment { job_id: decode_job_id(word(0))?, commitment })
+            Ok(DecodedArgs::Commitment {
+                job_id: decode_job_id(word(0))?,
+                commitment,
+            })
         }
         "submitResult" => {
             // submitResult(uint256,bytes,bytes) — canonical head + two
@@ -429,17 +455,22 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
                 return Err("submitResult head requires three words".to_string());
             }
             let job_id = decode_job_id(word(0))?;
-            let off_result = decode_job_id(word(1)).map_err(|_| "result offset overflows".to_string())? as usize;
-            let off_proof = decode_job_id(word(2)).map_err(|_| "proof offset overflows".to_string())? as usize;
+            let off_result =
+                decode_job_id(word(1)).map_err(|_| "result offset overflows".to_string())? as usize;
+            let off_proof =
+                decode_job_id(word(2)).map_err(|_| "proof offset overflows".to_string())? as usize;
             if off_result != 0x60 {
-                return Err(format!("non-canonical result offset {off_result:#x} (expected 0x60)"));
+                return Err(format!(
+                    "non-canonical result offset {off_result:#x} (expected 0x60)"
+                ));
             }
             let read_len = |off: usize| -> Result<usize, String> {
                 if off + 32 > args.len() {
                     return Err(format!("dynamic length word at {off:#x} is out of bounds"));
                 }
                 let len = decode_job_id(&args[off..off + 32])
-                    .map_err(|_| "dynamic length overflows".to_string())? as usize;
+                    .map_err(|_| "dynamic length overflows".to_string())?
+                    as usize;
                 if off + 32 + len > args.len() {
                     return Err(format!("dynamic payload at {off:#x} overruns the calldata"));
                 }
@@ -460,11 +491,18 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
                     args.len()
                 ));
             }
-            Ok(DecodedArgs::Result { job_id, result_len, proof_len })
+            Ok(DecodedArgs::Result {
+                job_id,
+                result_len,
+                proof_len,
+            })
         }
         "claimRewards" | "heartbeat" => {
             if !args.is_empty() {
-                return Err(format!("{intent}() takes no arguments, got {} bytes", args.len()));
+                return Err(format!(
+                    "{intent}() takes no arguments, got {} bytes",
+                    args.len()
+                ));
             }
             Ok(DecodedArgs::NoArgs)
         }
@@ -486,7 +524,11 @@ pub fn decode_args(intent: &str, calldata: &[u8]) -> Result<DecodedArgs, String>
                     "bid price {price_wei} wei is at/over the 10 SALT Commitment cap"
                 ));
             }
-            Ok(DecodedArgs::Bid { job_id, price_wei, latency_ms })
+            Ok(DecodedArgs::Bid {
+                job_id,
+                price_wei,
+                latency_ms,
+            })
         }
         other => Err(format!("no argument shape known for intent {other:?}")),
     }
@@ -511,17 +553,31 @@ impl ValidatedWrite {
         let args = match &self.args {
             DecodedArgs::JobId { job_id } => format!("job {job_id}"),
             DecodedArgs::Commitment { job_id, commitment } => {
-                format!("job {job_id}, commitment 0x{}…", hex::encode(&commitment[..8]))
+                format!(
+                    "job {job_id}, commitment 0x{}…",
+                    hex::encode(&commitment[..8])
+                )
             }
-            DecodedArgs::Result { job_id, result_len, proof_len } => {
+            DecodedArgs::Result {
+                job_id,
+                result_len,
+                proof_len,
+            } => {
                 format!("job {job_id}, result {result_len}B, proof {proof_len}B")
             }
             DecodedArgs::NoArgs => "no arguments".to_string(),
-            DecodedArgs::Bid { job_id, price_wei, latency_ms } => {
+            DecodedArgs::Bid {
+                job_id,
+                price_wei,
+                latency_ms,
+            } => {
                 format!("job {job_id}, price {price_wei} wei, latency {latency_ms}ms")
             }
         };
-        format!("{}({}) → {} [value {}]", self.intent, args, self.to, self.value_wei)
+        format!(
+            "{}({}) → {} [value {}]",
+            self.intent, args, self.to, self.value_wei
+        )
     }
 }
 
@@ -612,8 +668,7 @@ impl RelayValidator {
                 to: req.to.clone(),
             });
         }
-        let calldata =
-            decode_hex(&req.calldata).map_err(RejectReason::BadCalldata)?;
+        let calldata = decode_hex(&req.calldata).map_err(RejectReason::BadCalldata)?;
         if calldata.len() < 4 || calldata[0..4] != expected_selector {
             return Err(RejectReason::SelectorMismatch {
                 intent: req.intent.clone(),
@@ -627,12 +682,11 @@ impl RelayValidator {
                 reason: format!("calldata exceeds {MAX_CALLDATA_BYTES} bytes"),
             });
         }
-        let args = decode_args(&req.intent, &calldata).map_err(|reason| {
-            RejectReason::MalformedArgs {
+        let args =
+            decode_args(&req.intent, &calldata).map_err(|reason| RejectReason::MalformedArgs {
                 intent: req.intent.clone(),
                 reason,
-            }
-        })?;
+            })?;
         Ok(ValidatedWrite {
             id: req.id,
             intent: req.intent.clone(),
@@ -724,7 +778,9 @@ pub async fn run_once(
                     }
                     Err(e) => {
                         // Leave it pending for retry; don't sign more this tick.
-                        report.errors.push(format!("sign {} ({}): {e}", vw.id, vw.intent));
+                        report
+                            .errors
+                            .push(format!("sign {} ({}): {e}", vw.id, vw.intent));
                         break;
                     }
                 }
@@ -818,7 +874,12 @@ impl RelayService {
 
 /// Case-insensitive `0x`-hex address equality.
 fn addr_eq(a: &str, b: &str) -> bool {
-    let n = |s: &str| s.trim().trim_start_matches("0x").trim_start_matches("0X").to_lowercase();
+    let n = |s: &str| {
+        s.trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X")
+            .to_lowercase()
+    };
     n(a) == n(b)
 }
 
@@ -871,7 +932,12 @@ mod tests {
             s if s == SEL_CLAIM_REWARDS || s == SEL_HEARTBEAT => String::new(),
             s if s == SEL_BID_ON_JOB => {
                 // bidOnJob(jobId, price 1 SALT — under the Commitment cap, latency 600s).
-                format!("{}{}{}", word(job_id), word(1_000_000_000_000_000_000), word(600_000))
+                format!(
+                    "{}{}{}",
+                    word(job_id),
+                    word(1_000_000_000_000_000_000),
+                    word(600_000)
+                )
             }
             _ => word(job_id), // unknown selectors: one plausible word
         }
@@ -879,7 +945,10 @@ mod tests {
 
     /// A pending request with a given intent, contract, value, and selector.
     fn req(id: u64, intent: &str, to: &str, value_wei: &str, selector: [u8; 4]) -> PendingRequest {
-        let mut calldata = format!("0x{:02x}{:02x}{:02x}{:02x}", selector[0], selector[1], selector[2], selector[3]);
+        let mut calldata = format!(
+            "0x{:02x}{:02x}{:02x}{:02x}",
+            selector[0], selector[1], selector[2], selector[3]
+        );
         calldata.push_str(&canonical_args_for(selector, id));
         PendingRequest {
             id,
@@ -961,7 +1030,9 @@ mod tests {
             ("heartbeat", HEARTBEAT_MONITOR, SEL_HEARTBEAT),
         ] {
             let r = req(1, intent, to, "0", sel);
-            let vw = v.validate(&r).unwrap_or_else(|e| panic!("{intent} should pass: {e:?}"));
+            let vw = v
+                .validate(&r)
+                .unwrap_or_else(|e| panic!("{intent} should pass: {e:?}"));
             assert_eq!(vw.intent, intent);
             assert_eq!(&vw.calldata[0..4], &sel);
         }
@@ -1004,19 +1075,34 @@ mod tests {
         // heartbeat() with smuggled argument bytes → refused.
         let mut r = req(1, "heartbeat", HEARTBEAT_MONITOR, "0", SEL_HEARTBEAT);
         r.calldata.push_str(&"00".repeat(32));
-        assert!(matches!(v.validate(&r), Err(RejectReason::MalformedArgs { .. })));
+        assert!(matches!(
+            v.validate(&r),
+            Err(RejectReason::MalformedArgs { .. })
+        ));
         // heartbeat aimed at the marketplace → refused.
         let r2 = req(1, "heartbeat", MARKETPLACE, "0", SEL_HEARTBEAT);
-        assert!(matches!(v.validate(&r2), Err(RejectReason::WrongContract { .. })));
+        assert!(matches!(
+            v.validate(&r2),
+            Err(RejectReason::WrongContract { .. })
+        ));
         // bidOnJob aimed at the heartbeat monitor → refused.
         let r3 = req(1, "bidOnJob", HEARTBEAT_MONITOR, "0", SEL_BID_ON_JOB);
-        assert!(matches!(v.validate(&r3), Err(RejectReason::WrongContract { .. })));
+        assert!(matches!(
+            v.validate(&r3),
+            Err(RejectReason::WrongContract { .. })
+        ));
     }
 
     #[test]
     fn validator_accepts_mixed_case_address() {
         let v = validator();
-        let r = req(1, "submitResult", "0xc12DBCDB80Ef2aE675315F455210f39a736a373c", "0", SEL_SUBMIT_RESULT);
+        let r = req(
+            1,
+            "submitResult",
+            "0xc12DBCDB80Ef2aE675315F455210f39a736a373c",
+            "0",
+            SEL_SUBMIT_RESULT,
+        );
         assert!(v.validate(&r).is_ok());
     }
 
@@ -1033,7 +1119,13 @@ mod tests {
         let v = validator();
         let mut r = req(1, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
         r.chain_id = 1;
-        assert_eq!(v.validate(&r), Err(RejectReason::WrongChain { expected: 40204, got: 1 }));
+        assert_eq!(
+            v.validate(&r),
+            Err(RejectReason::WrongChain {
+                expected: 40204,
+                got: 1
+            })
+        );
     }
 
     #[test]
@@ -1047,7 +1139,10 @@ mod tests {
     fn validator_refuses_unknown_intent() {
         let v = validator();
         let r = req(1, "drainTreasury", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
-        assert_eq!(v.validate(&r), Err(RejectReason::UnknownIntent("drainTreasury".into())));
+        assert_eq!(
+            v.validate(&r),
+            Err(RejectReason::UnknownIntent("drainTreasury".into()))
+        );
     }
 
     #[test]
@@ -1055,10 +1150,22 @@ mod tests {
         let v = validator();
         // claimRewards must target accounting, not the marketplace.
         let r = req(1, "claimRewards", MARKETPLACE, "0", SEL_CLAIM_REWARDS);
-        assert!(matches!(v.validate(&r), Err(RejectReason::WrongContract { .. })));
+        assert!(matches!(
+            v.validate(&r),
+            Err(RejectReason::WrongContract { .. })
+        ));
         // an attacker-supplied 'to' is refused.
-        let r2 = req(1, "submitResult", "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "0", SEL_SUBMIT_RESULT);
-        assert!(matches!(v.validate(&r2), Err(RejectReason::WrongContract { .. })));
+        let r2 = req(
+            1,
+            "submitResult",
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "0",
+            SEL_SUBMIT_RESULT,
+        );
+        assert!(matches!(
+            v.validate(&r2),
+            Err(RejectReason::WrongContract { .. })
+        ));
     }
 
     #[test]
@@ -1066,7 +1173,12 @@ mod tests {
         let v = validator();
         // intent says submitResult but the calldata carries completeJob's selector.
         let r = req(1, "submitResult", MARKETPLACE, "0", SEL_COMPLETE_JOB);
-        assert_eq!(v.validate(&r), Err(RejectReason::SelectorMismatch { intent: "submitResult".into() }));
+        assert_eq!(
+            v.validate(&r),
+            Err(RejectReason::SelectorMismatch {
+                intent: "submitResult".into()
+            })
+        );
     }
 
     #[test]
@@ -1086,7 +1198,11 @@ mod tests {
     }
     impl MockQueue {
         fn new(requests: Vec<PendingRequest>) -> Self {
-            Self { requests, observed: Mutex::new(Vec::new()), fail_observe: false }
+            Self {
+                requests,
+                observed: Mutex::new(Vec::new()),
+                fail_observe: false,
+            }
         }
     }
     #[async_trait::async_trait]
@@ -1098,7 +1214,10 @@ mod tests {
             if self.fail_observe {
                 return Err(RelayError::Http("observe boom".into()));
             }
-            self.observed.lock().unwrap().push((id, tx_hash.to_string()));
+            self.observed
+                .lock()
+                .unwrap()
+                .push((id, tx_hash.to_string()));
             Ok(())
         }
     }
@@ -1109,13 +1228,25 @@ mod tests {
     }
     impl MockSigner {
         fn new(ok: bool) -> Self {
-            Self { ok, calls: Mutex::new(Vec::new()) }
+            Self {
+                ok,
+                calls: Mutex::new(Vec::new()),
+            }
         }
     }
     #[async_trait::async_trait]
     impl TxSigner for MockSigner {
-        async fn sign_and_send(&self, from: &str, to: &str, value_wei: &str, data: Vec<u8>) -> Result<String, String> {
-            self.calls.lock().unwrap().push((from.into(), to.into(), value_wei.into(), data));
+        async fn sign_and_send(
+            &self,
+            from: &str,
+            to: &str,
+            value_wei: &str,
+            data: Vec<u8>,
+        ) -> Result<String, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((from.into(), to.into(), value_wei.into(), data));
             if self.ok {
                 Ok("0xdeadbeef".to_string())
             } else {
@@ -1131,7 +1262,10 @@ mod tests {
     }
     impl MockGate {
         fn new(allow: bool) -> Self {
-            Self { allow, asked: Mutex::new(Vec::new()) }
+            Self {
+                allow,
+                asked: Mutex::new(Vec::new()),
+            }
         }
     }
     #[async_trait::async_trait]
@@ -1144,7 +1278,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_signs_validates_and_observes() {
-        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s = MockSigner::new(true);
         let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
 
@@ -1156,12 +1296,21 @@ mod tests {
         assert_eq!(calls[0].0, FROM);
         assert_eq!(calls[0].2, "0");
         // It POSTed observed with the hash.
-        assert_eq!(q.observed.lock().unwrap().as_slice(), &[(7, "0xdeadbeef".to_string())]);
+        assert_eq!(
+            q.observed.lock().unwrap().as_slice(),
+            &[(7, "0xdeadbeef".to_string())]
+        );
     }
 
     #[tokio::test]
     async fn run_once_broadcast_failure_leaves_it_pending() {
-        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s = MockSigner::new(false); // broadcast fails
         let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
 
@@ -1175,7 +1324,13 @@ mod tests {
     async fn run_once_skips_submitted_and_refuses_bad_then_signs_valid() {
         let mut submitted = req(1, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
         submitted.status = "submitted".into();
-        let bad_to = req(2, "submitResult", "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "0", SEL_SUBMIT_RESULT);
+        let bad_to = req(
+            2,
+            "submitResult",
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "0",
+            SEL_SUBMIT_RESULT,
+        );
         let good = req(3, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
         let q = MockQueue::new(vec![submitted, bad_to, good]);
         let s = MockSigner::new(true);
@@ -1183,7 +1338,10 @@ mod tests {
 
         assert_eq!(report.skipped_non_pending, 1);
         assert_eq!(report.rejected.len(), 1);
-        assert!(matches!(report.rejected[0], (2, RejectReason::WrongContract { .. })));
+        assert!(matches!(
+            report.rejected[0],
+            (2, RejectReason::WrongContract { .. })
+        ));
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 3);
     }
@@ -1204,7 +1362,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_records_observe_failure_but_still_reports_signed() {
-        let mut q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let mut q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         q.fail_observe = true;
         let s = MockSigner::new(true);
         let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
@@ -1229,10 +1393,19 @@ mod tests {
     async fn service_tick_is_noop_when_disabled() {
         let svc = relay_service(); // disabled by default (opt-in)
         assert!(!svc.is_enabled());
-        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s = MockSigner::new(true);
         // Even unlocked, a disabled relay signs nothing.
-        assert!(svc.tick(&s, FROM, &q, true, &MockGate::new(true)).await.is_none());
+        assert!(svc
+            .tick(&s, FROM, &q, true, &MockGate::new(true))
+            .await
+            .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
     }
 
@@ -1240,10 +1413,19 @@ mod tests {
     async fn service_tick_is_noop_when_locked() {
         let svc = relay_service();
         svc.set_enabled(true);
-        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s = MockSigner::new(true);
         // Enabled but locked → nothing signed (never auto-unlocks).
-        assert!(svc.tick(&s, FROM, &q, false, &MockGate::new(true)).await.is_none());
+        assert!(svc
+            .tick(&s, FROM, &q, false, &MockGate::new(true))
+            .await
+            .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
     }
 
@@ -1251,9 +1433,18 @@ mod tests {
     async fn service_tick_runs_when_enabled_and_unlocked() {
         let svc = relay_service();
         svc.set_enabled(true);
-        let q = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s = MockSigner::new(true);
-        let report = svc.tick(&s, FROM, &q, true, &MockGate::new(true)).await.expect("should run");
+        let report = svc
+            .tick(&s, FROM, &q, true, &MockGate::new(true))
+            .await
+            .expect("should run");
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 7);
     }
@@ -1294,8 +1485,18 @@ mod tests {
     #[test]
     fn validator_refuses_truncated_submit_commitment() {
         let v = validator();
-        let mut r = req(1, "submitCommitment", MARKETPLACE, "0", SEL_SUBMIT_COMMITMENT);
-        r.calldata = format!("0x{}{}", hex::encode(SEL_SUBMIT_COMMITMENT), "00".repeat(32));
+        let mut r = req(
+            1,
+            "submitCommitment",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_COMMITMENT,
+        );
+        r.calldata = format!(
+            "0x{}{}",
+            hex::encode(SEL_SUBMIT_COMMITMENT),
+            "00".repeat(32)
+        );
         assert!(
             v.validate(&r).is_err(),
             "submitCommitment with only one argument word must be refused"
@@ -1337,16 +1538,32 @@ mod tests {
     #[test]
     fn decode_args_extracts_each_shape() {
         let v = validator();
-        let r = req(9, "submitCommitment", MARKETPLACE, "0", SEL_SUBMIT_COMMITMENT);
+        let r = req(
+            9,
+            "submitCommitment",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_COMMITMENT,
+        );
         let vw = v.validate(&r).expect("valid");
         assert_eq!(
             vw.args,
-            DecodedArgs::Commitment { job_id: 9, commitment: [0x11; 32] }
+            DecodedArgs::Commitment {
+                job_id: 9,
+                commitment: [0x11; 32]
+            }
         );
 
         let r = req(4, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
         let vw = v.validate(&r).expect("valid");
-        assert_eq!(vw.args, DecodedArgs::Result { job_id: 4, result_len: 3, proof_len: 2 });
+        assert_eq!(
+            vw.args,
+            DecodedArgs::Result {
+                job_id: 4,
+                result_len: 3,
+                proof_len: 2
+            }
+        );
         assert!(vw.describe().contains("job 4"));
 
         let r = req(2, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
@@ -1361,7 +1578,10 @@ mod tests {
     fn requires_confirmation_policy() {
         assert!(requires_confirmation("claimRewards", "0"));
         assert!(requires_confirmation("submitResult", "5"));
-        assert!(requires_confirmation("anythingValueBearing", "1000000000000000000"));
+        assert!(requires_confirmation(
+            "anythingValueBearing",
+            "1000000000000000000"
+        ));
         assert!(!requires_confirmation("startExecution", "0"));
         assert!(!requires_confirmation("submitCommitment", "0"));
         assert!(!requires_confirmation("submitResult", "0"));
@@ -1371,44 +1591,88 @@ mod tests {
     /// An unconfirmed claimRewards is refused — and never signed.
     #[tokio::test]
     async fn run_once_refuses_unconfirmed_claim_rewards() {
-        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let q = MockQueue::new(vec![req(
+            5,
+            "claimRewards",
+            ACCOUNTING,
+            "0",
+            SEL_CLAIM_REWARDS,
+        )]);
         let s = MockSigner::new(true);
         let gate = MockGate::new(false); // user declines / no surface
         let report = run_once(&s, FROM, &q, &validator(), &gate).await;
 
-        assert!(report.signed.is_empty(), "declined write must not be signed");
-        assert!(s.calls.lock().unwrap().is_empty(), "signer must never be reached");
-        assert_eq!(gate.asked.lock().unwrap().as_slice(), &[5], "gate was consulted");
+        assert!(
+            report.signed.is_empty(),
+            "declined write must not be signed"
+        );
+        assert!(
+            s.calls.lock().unwrap().is_empty(),
+            "signer must never be reached"
+        );
+        assert_eq!(
+            gate.asked.lock().unwrap().as_slice(),
+            &[5],
+            "gate was consulted"
+        );
         assert!(matches!(
             report.rejected.as_slice(),
             [(5, RejectReason::NotConfirmed { .. })]
         ));
-        assert!(q.observed.lock().unwrap().is_empty(), "no observed POST either");
+        assert!(
+            q.observed.lock().unwrap().is_empty(),
+            "no observed POST either"
+        );
     }
 
     /// A confirmed claimRewards signs; value-0 lifecycle writes never consult
     /// the gate (covered by the relay's explicit opt-in consent).
     #[tokio::test]
     async fn run_once_confirmed_claim_rewards_signs_and_lifecycle_skips_gate() {
-        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let q = MockQueue::new(vec![req(
+            5,
+            "claimRewards",
+            ACCOUNTING,
+            "0",
+            SEL_CLAIM_REWARDS,
+        )]);
         let s = MockSigner::new(true);
         let gate = MockGate::new(true);
         let report = run_once(&s, FROM, &q, &validator(), &gate).await;
         assert_eq!(report.signed.len(), 1);
         assert_eq!(gate.asked.lock().unwrap().as_slice(), &[5]);
 
-        let q2 = MockQueue::new(vec![req(7, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT)]);
+        let q2 = MockQueue::new(vec![req(
+            7,
+            "submitResult",
+            MARKETPLACE,
+            "0",
+            SEL_SUBMIT_RESULT,
+        )]);
         let s2 = MockSigner::new(true);
         let gate2 = MockGate::new(false); // even a denying gate is irrelevant here
         let report2 = run_once(&s2, FROM, &q2, &validator(), &gate2).await;
-        assert_eq!(report2.signed.len(), 1, "value-0 lifecycle write signs without the gate");
-        assert!(gate2.asked.lock().unwrap().is_empty(), "gate not consulted for lifecycle writes");
+        assert_eq!(
+            report2.signed.len(),
+            1,
+            "value-0 lifecycle write signs without the gate"
+        );
+        assert!(
+            gate2.asked.lock().unwrap().is_empty(),
+            "gate not consulted for lifecycle writes"
+        );
     }
 
     /// The fail-closed default gate refuses everything.
     #[tokio::test]
     async fn deny_all_gate_refuses() {
-        let q = MockQueue::new(vec![req(5, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS)]);
+        let q = MockQueue::new(vec![req(
+            5,
+            "claimRewards",
+            ACCOUNTING,
+            "0",
+            SEL_CLAIM_REWARDS,
+        )]);
         let s = MockSigner::new(true);
         let report = run_once(&s, FROM, &q, &validator(), &DenyAllConfirmations).await;
         assert!(report.signed.is_empty());

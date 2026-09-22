@@ -11,8 +11,8 @@
 //! Each service follows the crate's trait-backend pattern:
 //!   trait XxxBackend → struct RpcXxxBackend (real on-chain queries)
 
-pub mod institutional_service;
+mod abi;
+pub mod budget_service;
 pub mod classroom_service;
 pub mod forwarder_service;
-pub mod budget_service;
-mod abi;
+pub mod institutional_service;

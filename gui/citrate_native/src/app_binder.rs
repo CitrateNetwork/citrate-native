@@ -4,9 +4,9 @@
 //! to wire the same service orchestration. This ensures callback-driven tests
 //! exercise the same code paths as the running application.
 
-use crate::{App, spawn_async};
-use citrate_desktop_app::AppCore;
+use crate::{spawn_async, App};
 use citrate_desktop_app::services::model_service::ModelPublishState;
+use citrate_desktop_app::AppCore;
 use slint::ComponentHandle;
 use std::sync::Arc;
 
@@ -15,11 +15,7 @@ use std::sync::Arc;
 ///
 /// This is the same wiring used by main.rs. Tests can call this function
 /// with a test AppCore to exercise the real publish pipeline.
-pub fn bind_model_publish(
-    app: &App,
-    core: Arc<AppCore>,
-    rt_handle: &tokio::runtime::Handle,
-) {
+pub fn bind_model_publish(app: &App, core: Arc<AppCore>, rt_handle: &tokio::runtime::Handle) {
     let ui_w = app.as_weak();
     let rt_h = rt_handle.clone();
 
@@ -30,16 +26,14 @@ pub fn bind_model_publish(
 
         spawn_async(&rt_h, async move {
             // 1. Find local model file
-            let model_dir = dirs::data_local_dir()
-                .map(|d| d.join("citrate").join("models"));
+            let model_dir = dirs::data_local_dir().map(|d| d.join("citrate").join("models"));
             let model_path = match model_dir {
-                Some(dir) if dir.exists() => {
-                    std::fs::read_dir(&dir).ok()
-                        .and_then(|entries| entries
-                            .filter_map(|e| e.ok())
-                            .find(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
-                            .map(|e| e.path()))
-                }
+                Some(dir) if dir.exists() => std::fs::read_dir(&dir).ok().and_then(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .find(|e| e.path().extension().is_some_and(|ext| ext == "gguf"))
+                        .map(|e| e.path())
+                }),
                 _ => None,
             };
             let path = match model_path {
@@ -65,8 +59,11 @@ pub fn bind_model_publish(
                 hasher.finalize().into()
             };
             let content_hash = hex::encode(model_hash);
-            tracing::info!("Models: artifact hash={} size={} bytes",
-                &content_hash[..16], model_bytes.len());
+            tracing::info!(
+                "Models: artifact hash={} size={} bytes",
+                &content_hash[..16],
+                model_bytes.len()
+            );
 
             // 3. Get sender address
             let from = match core.wallet.get_primary_address().await {
@@ -78,15 +75,18 @@ pub fn bind_model_publish(
             };
 
             // 4. Init publish record in ModelService
-            core.models.init_publish(
-                &path.to_string_lossy(),
-                &content_hash,
-                model_bytes.len() as u64,
-                &from,
-            ).await;
+            core.models
+                .init_publish(
+                    &path.to_string_lossy(),
+                    &content_hash,
+                    model_bytes.len() as u64,
+                    &from,
+                )
+                .await;
 
             // 5. Get CID if pinned
-            let cid = ui_w.upgrade()
+            let cid = ui_w
+                .upgrade()
                 .map(|ui: App| ui.get_models_ipfs_cid().to_string())
                 .filter(|s: &String| !s.is_empty())
                 .unwrap_or_else(|| format!("hash:{}", hex::encode(model_hash)));
@@ -95,7 +95,11 @@ pub fn bind_model_publish(
                 core.models.mark_pinned(&cid).await;
                 let _ = slint::invoke_from_event_loop({
                     let ui_w = ui_w.clone();
-                    move || { if let Some(ui) = ui_w.upgrade() { ui.set_models_publish_state("pinned".into()); } }
+                    move || {
+                        if let Some(ui) = ui_w.upgrade() {
+                            ui.set_models_publish_state("pinned".into());
+                        }
+                    }
                 });
             }
 
@@ -106,7 +110,15 @@ pub fn bind_model_publish(
             let precompile = "0x0000000000000000000000000000000000001000";
             // NAT-B-007: surface the decoded registerModel intent + target for
             // explicit Approve/Deny before broadcasting to the precompile.
-            if !crate::confirm_tx_intent(&core.approvals, "Publish model", precompile, "0", &calldata).await {
+            if !crate::confirm_tx_intent(
+                &core.approvals,
+                "Publish model",
+                precompile,
+                "0",
+                &calldata,
+            )
+            .await
+            {
                 let ui_w2 = ui_w.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_w2.upgrade() {
@@ -115,9 +127,11 @@ pub fn bind_model_publish(
                 });
                 return;
             }
-            match core.wallet.send_transaction_with_data(
-                &from, precompile, "0", calldata, ""
-            ).await {
+            match core
+                .wallet
+                .send_transaction_with_data(&from, precompile, "0", calldata, "")
+                .await
+            {
                 Ok(tx_hash) => {
                     tracing::info!("Models: deploy tx submitted: {}", tx_hash);
                     core.models.mark_submitted(&tx_hash).await;
@@ -144,7 +158,8 @@ pub fn bind_model_publish(
                                         ui.set_models_publish_state(state_str.into());
                                     }
                                 });
-                                if matches!(state,
+                                if matches!(
+                                    state,
                                     ModelPublishState::Confirmed | ModelPublishState::Failed
                                 ) {
                                     break;
@@ -228,7 +243,10 @@ mod tests {
         let len_word = &calldata[4 + 64..4 + 96];
         let declared = u64::from_be_bytes(len_word[24..32].try_into().unwrap());
         assert!(len_word[..24].iter().all(|b| *b == 0));
-        assert_eq!(declared, 300, "declared string length must be the real length");
+        assert_eq!(
+            declared, 300,
+            "declared string length must be the real length"
+        );
         // Payload + zero padding to a word boundary.
         assert_eq!(calldata.len(), 4 + 32 + 32 + 32 + 320);
     }

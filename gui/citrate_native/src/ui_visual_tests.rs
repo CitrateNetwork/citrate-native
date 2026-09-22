@@ -39,8 +39,7 @@ fn snapshot_lock() -> &'static Mutex<()> {
 }
 
 fn artifacts_dir() -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/gui-snapshots");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/gui-snapshots");
     if let Err(err) = fs::create_dir_all(&dir) {
         panic!("snapshot artifact directory should be created: {err}");
     }
@@ -54,12 +53,8 @@ fn save_snapshot(name: &str, snapshot: SharedPixelBuffer<slint::Rgba8Pixel>) {
     for chunk in pixels.chunks_exact_mut(4) {
         chunk[3] = 255; // Set alpha to fully opaque
     }
-    let image = RgbaImage::from_raw(
-        snapshot.width(),
-        snapshot.height(),
-        pixels,
-    )
-    .unwrap_or_else(|| panic!("snapshot should contain RGBA pixels"));
+    let image = RgbaImage::from_raw(snapshot.width(), snapshot.height(), pixels)
+        .unwrap_or_else(|| panic!("snapshot should contain RGBA pixels"));
     let path = artifacts_dir().join(format!("{name}.png"));
     if let Err(err) = image.save(&path) {
         panic!("snapshot png should save: {err}");
@@ -79,7 +74,8 @@ fn base_app(width: u32, height: u32) -> App {
     // Recover from poisoned mutex (prior test panic should not block subsequent tests)
     let _guard = snapshot_lock().lock().unwrap_or_else(|e| e.into_inner());
 
-    let app = App::new().unwrap_or_else(|err| panic!("App should instantiate for visual test: {err}"));
+    let app =
+        App::new().unwrap_or_else(|err| panic!("App should instantiate for visual test: {err}"));
     WINDOW.with(|window| {
         window.set_size(PhysicalSize::new(width, height));
     });
@@ -311,18 +307,17 @@ fn configure_cmo_compliance(app: &App) {
     app.set_active_tab("cmo_compliance".into());
     app.set_cmo_active_school_id("".into());
 
-    let make_cell = |gate_id: &str, gate_label: &str, status: &str, last_signed: &str, expires_at: &str| {
-        ComplianceCell {
-            gate_id: gate_id.into(),
-            gate_label: gate_label.into(),
-            status: status.into(),
-            last_signed: last_signed.into(),
-            expires_at: expires_at.into(),
-        }
-    };
-    let na_cell = |gate_id: &str, gate_label: &str| {
-        make_cell(gate_id, gate_label, "N/A", "", "")
-    };
+    let make_cell =
+        |gate_id: &str, gate_label: &str, status: &str, last_signed: &str, expires_at: &str| {
+            ComplianceCell {
+                gate_id: gate_id.into(),
+                gate_label: gate_label.into(),
+                status: status.into(),
+                last_signed: last_signed.into(),
+                expires_at: expires_at.into(),
+            }
+        };
+    let na_cell = |gate_id: &str, gate_label: &str| make_cell(gate_id, gate_label, "N/A", "", "");
 
     let newark_cells = vec![
         make_cell("dpa", "DPA", "Green", "2026-04-15", "2027-04-15"),
@@ -421,12 +416,21 @@ fn configure_chat_thinking(app: &App) {
 // ============================================================================
 
 /// Capture a snapshot for a page by configuring the shared app and resizing the window.
-fn capture_page_inline(app: &App, page_name: &str, width: u32, height: u32, configure: impl FnOnce(&App)) {
+fn capture_page_inline(
+    app: &App,
+    page_name: &str,
+    width: u32,
+    height: u32,
+    configure: impl FnOnce(&App),
+) {
     WINDOW.with(|window| {
         window.set_size(PhysicalSize::new(width, height));
     });
     configure(app);
-    let snapshot = app.window().take_snapshot().unwrap_or_else(|_| panic!("snapshot should render"));
+    let snapshot = app
+        .window()
+        .take_snapshot()
+        .unwrap_or_else(|_| panic!("snapshot should render"));
     assert_eq!(snapshot.width(), width);
     assert_eq!(snapshot.height(), height);
     assert_snapshot_has_content(&snapshot);
@@ -498,7 +502,10 @@ fn ui_visual_proof_suite() {
             ("cmo_compliance", configure_cmo_compliance),
             ("cmo_compliance_drawer", configure_cmo_compliance_drawer),
             ("onboarding_welcome", configure_onboarding_welcome),
-            ("onboarding_bootstrap_loader_t0", configure_onboarding_bootstrap_loader_t0),
+            (
+                "onboarding_bootstrap_loader_t0",
+                configure_onboarding_bootstrap_loader_t0,
+            ),
             ("lock_screen", configure_lock_screen),
         ];
 
@@ -536,8 +543,12 @@ fn ui_visual_proof_suite() {
 
         // No approval pending
         assert!(!app.get_chat_tool_pending());
-        save_snapshot("journey_approval_01_no_pending",
-            app.window().take_snapshot().unwrap_or_else(|_| panic!("snap")));
+        save_snapshot(
+            "journey_approval_01_no_pending",
+            app.window()
+                .take_snapshot()
+                .unwrap_or_else(|_| panic!("snap")),
+        );
 
         // Tool approval appears
         app.set_chat_tool_pending(true);
@@ -548,16 +559,22 @@ fn ui_visual_proof_suite() {
         app.set_chat_tool_description("{\"to\":\"0xb6E9\",\"amount\":\"5\"}".into());
         assert!(app.get_chat_tool_pending());
         assert_eq!(app.get_chat_tool_risk_level().to_string(), "high");
-        save_snapshot("journey_approval_02_pending",
-            app.window().take_snapshot().unwrap_or_else(|_| panic!("snap")));
+        save_snapshot(
+            "journey_approval_02_pending",
+            app.window()
+                .take_snapshot()
+                .unwrap_or_else(|_| panic!("snap")),
+        );
 
         // User approves → disclosure shown
         app.set_chat_tool_pending(false);
         app.set_chat_tool_disclosure("Executed send_tx — Transaction sent. Hash: 0xfeed".into());
         assert!(!app.get_chat_tool_pending());
         assert!(!app.get_chat_tool_disclosure().to_string().is_empty());
-        save_snapshot("journey_approval_03_approved",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_approval_03_approved",
+            app.window().take_snapshot().expect("snap"),
+        );
         app.set_chat_tool_disclosure("".into());
     }
 
@@ -568,14 +585,18 @@ fn ui_visual_proof_suite() {
         app.set_chat_tool_risk_level("critical".into());
         app.set_chat_tool_target("Command: rm -rf /tmp/test".into());
         app.set_chat_tool_scope("Execute shell command".into());
-        save_snapshot("journey_deny_01_pending",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_deny_01_pending",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         app.set_chat_tool_pending(false);
         app.set_chat_tool_disclosure("".into());
         assert!(!app.get_chat_tool_pending());
-        save_snapshot("journey_deny_02_denied",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_deny_02_denied",
+            app.window().take_snapshot().expect("snap"),
+        );
     }
 
     // (Journey 3 — compile/deploy — retired in P960-H along with the
@@ -587,14 +608,18 @@ fn ui_visual_proof_suite() {
         app.set_ops_pending_count(3);
         app.set_ops_trail_count(10);
         app.set_ops_active_sessions(1);
-        save_snapshot("journey_estop_01_pending",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_estop_01_pending",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         app.set_ops_pending_count(0);
         app.set_chat_tool_pending(false);
         assert_eq!(app.get_ops_pending_count(), 0);
-        save_snapshot("journey_estop_02_cleared",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_estop_02_cleared",
+            app.window().take_snapshot().expect("snap"),
+        );
     }
 
     // ── Journey 5: Privacy mode switch ──
@@ -604,18 +629,24 @@ fn ui_visual_proof_suite() {
 
         app.set_chat_backend_type("local".into());
         assert_eq!(app.get_chat_backend_type().to_string(), "local");
-        save_snapshot("journey_privacy_01_local",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_privacy_01_local",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         app.set_chat_backend_type("api".into());
         assert_eq!(app.get_chat_backend_type().to_string(), "api");
-        save_snapshot("journey_privacy_02_api",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_privacy_02_api",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         app.set_chat_backend_type("none".into());
         assert_eq!(app.get_chat_backend_type().to_string(), "none");
-        save_snapshot("journey_privacy_03_none",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_privacy_03_none",
+            app.window().take_snapshot().expect("snap"),
+        );
     }
 
     // ── Journey 6: Environment switch ──
@@ -625,13 +656,17 @@ fn ui_visual_proof_suite() {
 
         app.set_environment("Testnet".into());
         assert_eq!(app.get_environment().to_string(), "Testnet");
-        save_snapshot("journey_env_01_testnet",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_env_01_testnet",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         app.set_environment("Devnet".into());
         assert_eq!(app.get_environment().to_string(), "Devnet");
-        save_snapshot("journey_env_02_devnet",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_env_02_devnet",
+            app.window().take_snapshot().expect("snap"),
+        );
     }
 
     // ── Journey 7: Model publish state machine (service-driven) ──
@@ -643,40 +678,54 @@ fn ui_visual_proof_suite() {
 
         // State: local (no publish record yet)
         app.set_models_publish_state("local".into());
-        save_snapshot("journey_publish_01_local",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_01_local",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: hashed (artifact identity computed)
         app.set_models_publish_state("hashed".into());
-        save_snapshot("journey_publish_02_hashed",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_02_hashed",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: pinned (CID assigned)
         app.set_models_publish_state("pinned".into());
         app.set_models_ipfs_cid("QmExamplePinnedCid123456789".into());
-        save_snapshot("journey_publish_03_pinned",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_03_pinned",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: submitted (tx sent, awaiting receipt)
         app.set_models_publish_state("submitted".into());
         app.set_models_ipfs_cid("tx: 0xfeedface00000000000000000001".into());
-        save_snapshot("journey_publish_04_submitted",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_04_submitted",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: confirmed (receipt received, status=success)
         app.set_models_publish_state("confirmed".into());
-        save_snapshot("journey_publish_05_confirmed",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_05_confirmed",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: verified (registry readback matches)
         app.set_models_publish_state("verified".into());
-        save_snapshot("journey_publish_06_verified",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_06_verified",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // State: failed (readback mismatch or receipt revert)
         app.set_models_publish_state("failed".into());
-        save_snapshot("journey_publish_07_failed",
-            app.window().take_snapshot().expect("snap"));
+        save_snapshot(
+            "journey_publish_07_failed",
+            app.window().take_snapshot().expect("snap"),
+        );
 
         // Reset
         app.set_models_publish_state("local".into());
@@ -708,7 +757,8 @@ fn service_driven_publish_lifecycle() {
         assert!(svc.publish_state().await.is_none());
 
         // Init: hashed
-        svc.init_publish("/tmp/test.gguf", "deadbeef12345678abcdef", 4096, "0xowner").await;
+        svc.init_publish("/tmp/test.gguf", "deadbeef12345678abcdef", 4096, "0xowner")
+            .await;
         assert_eq!(svc.publish_state().await, Some("hashed".to_string()));
 
         // Pin: pinned
@@ -721,7 +771,10 @@ fn service_driven_publish_lifecycle() {
 
         // Verify the publish record has correct data
         let record = svc.publish_record().await.expect("record exists");
-        assert_eq!(record.artifact.content_hash_keccak256, "deadbeef12345678abcdef");
+        assert_eq!(
+            record.artifact.content_hash_keccak256,
+            "deadbeef12345678abcdef"
+        );
         assert_eq!(record.artifact.cid, Some("QmTestCid".to_string()));
         assert_eq!(record.tx_hash, Some("0xtxhash".to_string()));
         assert_eq!(record.owner, "0xowner");

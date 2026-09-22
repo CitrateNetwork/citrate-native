@@ -22,12 +22,7 @@
 //! review (TLS, auth, CORS).
 
 use crate::error::AppError;
-use axum::{
-    extract::State,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
 use citrate_agent_core::canonical::{CapabilityGrant, PolicyProfile};
 use citrate_agent_core::mcp_server::McpServer;
 use rand::RngCore;
@@ -505,8 +500,7 @@ impl McpHostService {
     /// ENCRYPT-S1 WP-4: persistence is ciphertext-only. No master key
     /// (headless/no-keyring) → in-memory only, nothing touches disk.
     async fn persist_tokens(&self, tokens: &HashMap<String, AuthToken>) {
-        let (Some(path), Some(key)) = (self.tokens_file.as_ref(), self.master_key.as_ref())
-        else {
+        let (Some(path), Some(key)) = (self.tokens_file.as_ref(), self.master_key.as_ref()) else {
             return;
         };
         write_sealed_tokens(path, key, tokens);
@@ -517,9 +511,9 @@ impl McpHostService {
     /// bind succeeds (or fails fast with AppError on bind error).
     pub async fn start(self: Arc<Self>, port: u16) -> Result<(), AppError> {
         let addr = format!("127.0.0.1:{}", port);
-        let listener = TcpListener::bind(&addr).await.map_err(|e| {
-            AppError::Network(format!("MCP host bind {} failed: {}", addr, e))
-        })?;
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|e| AppError::Network(format!("MCP host bind {} failed: {}", addr, e)))?;
         let endpoint = format!("http://{}", addr);
         tracing::info!("MCP host listening on {}", endpoint);
         *self.endpoint.write().await = endpoint;
@@ -554,7 +548,9 @@ impl McpHostService {
 
     /// List all non-revoked grants as UI-friendly summaries.
     pub async fn list_active_grants(&self) -> Vec<GrantSummary> {
-        self.mcp.snapshot_grants().await
+        self.mcp
+            .snapshot_grants()
+            .await
             .into_iter()
             .filter(|g| !g.revoked)
             .map(|g| GrantSummary {
@@ -674,13 +670,21 @@ struct JsonRpcError {
 
 impl JsonRpcResponse {
     fn ok(id: serde_json::Value, result: serde_json::Value) -> Self {
-        Self { jsonrpc: "2.0", result: Some(result), error: None, id }
+        Self {
+            jsonrpc: "2.0",
+            result: Some(result),
+            error: None,
+            id,
+        }
     }
     fn err(id: serde_json::Value, code: i32, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             result: None,
-            error: Some(JsonRpcError { code, message: message.into() }),
+            error: Some(JsonRpcError {
+                code,
+                message: message.into(),
+            }),
             id,
         }
     }
@@ -771,7 +775,11 @@ async fn dispatch(
     }
 
     if req.jsonrpc != "2.0" {
-        return Json(JsonRpcResponse::err(req.id, -32600, "Expected jsonrpc: 2.0"));
+        return Json(JsonRpcResponse::err(
+            req.id,
+            -32600,
+            "Expected jsonrpc: 2.0",
+        ));
     }
 
     // Extract bearer token from the Authorization header if present.
@@ -789,10 +797,7 @@ async fn dispatch(
     if let Some(token) = bearer_token.clone() {
         if let Some(obj) = params.as_object_mut() {
             if !obj.contains_key("auth_token") {
-                obj.insert(
-                    "auth_token".to_string(),
-                    serde_json::Value::String(token),
-                );
+                obj.insert("auth_token".to_string(), serde_json::Value::String(token));
             }
         }
     }
@@ -819,12 +824,22 @@ async fn handle_initialize(
     id: serde_json::Value,
     params: serde_json::Value,
 ) -> Json<JsonRpcResponse> {
-    let requested_policy = match params.get("policy").and_then(|v| v.as_str()).unwrap_or("ReadOnly") {
+    let requested_policy = match params
+        .get("policy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ReadOnly")
+    {
         "ReadOnly" => PolicyProfile::ReadOnly,
         "Guided" => PolicyProfile::Guided,
         "Operator" => PolicyProfile::Operator,
         "Maintainer" => PolicyProfile::Maintainer,
-        other => return Json(JsonRpcResponse::err(id, -32602, format!("Unknown policy: {}", other))),
+        other => {
+            return Json(JsonRpcResponse::err(
+                id,
+                -32602,
+                format!("Unknown policy: {}", other),
+            ))
+        }
     };
 
     // RM-B1 / WP-E1.1 (audit GUI-C-04): server-bounded policy.
@@ -856,7 +871,8 @@ async fn handle_initialize(
         }
     };
 
-    let recipient = params.get("recipient")
+    let recipient = params
+        .get("recipient")
         .and_then(|v| v.as_str())
         .unwrap_or("hermes-client")
         .to_string();
@@ -917,12 +933,15 @@ async fn handle_initialize(
     }
     tracing::info!("MCP host: grant {} registered", &grant_id[..8]);
 
-    Json(JsonRpcResponse::ok(id, serde_json::json!({
-        "grant_id": grant_id,
-        "server_version": env!("CARGO_PKG_VERSION"),
-        "tool_count": tool_count,
-        "expires_at": expires,
-    })))
+    Json(JsonRpcResponse::ok(
+        id,
+        serde_json::json!({
+            "grant_id": grant_id,
+            "server_version": env!("CARGO_PKG_VERSION"),
+            "tool_count": tool_count,
+            "expires_at": expires,
+        }),
+    ))
 }
 
 async fn handle_tools_list(
@@ -937,7 +956,11 @@ async fn handle_tools_list(
     // Look up the grant
     let grants = host.mcp.snapshot_grants().await;
     let Some(grant) = grants.iter().find(|g| g.id == grant_id && !g.revoked) else {
-        return Json(JsonRpcResponse::err(id, -32001, "Unknown or revoked grant_id"));
+        return Json(JsonRpcResponse::err(
+            id,
+            -32001,
+            "Unknown or revoked grant_id",
+        ));
     };
     // NAT-B-011: enforce grant expiry here — `initialize` sets `expires_at`
     // but `tools/list` used to serve the tool inventory indefinitely.
@@ -950,7 +973,10 @@ async fn handle_tools_list(
         .into_iter()
         .map(|d| serde_json::to_value(&d).unwrap_or(serde_json::Value::Null))
         .collect();
-    Json(JsonRpcResponse::ok(id, serde_json::json!({ "tools": tools })))
+    Json(JsonRpcResponse::ok(
+        id,
+        serde_json::json!({ "tools": tools }),
+    ))
 }
 
 async fn handle_session_end(
@@ -989,7 +1015,10 @@ async fn handle_session_end(
     let removed = host.mcp.revoke_grant(&grant_id).await;
     if removed {
         host.grant_owners.write().await.remove(&grant_id);
-        tracing::info!("MCP host: grant {} ended", &grant_id[..8.min(grant_id.len())]);
+        tracing::info!(
+            "MCP host: grant {} ended",
+            &grant_id[..8.min(grant_id.len())]
+        );
         Json(JsonRpcResponse::ok(id, serde_json::json!({ "ok": true })))
     } else {
         Json(JsonRpcResponse::err(id, -32001, "Grant not found"))
@@ -1045,7 +1074,9 @@ mod tests {
     #[tokio::test]
     async fn sidecar_config_with_grant_id() {
         let host = test_host();
-        let cfg = host.export_sidecar_config(Some("abc-123".to_string())).await;
+        let cfg = host
+            .export_sidecar_config(Some("abc-123".to_string()))
+            .await;
         assert_eq!(cfg["grant_id"], "abc-123");
     }
 
@@ -1064,7 +1095,10 @@ mod tests {
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         let body = resp.0;
         // Request is accepted, but the issued grant is bounded.
-        assert!(body.error.is_none(), "no-token requests are accepted at ReadOnly");
+        assert!(
+            body.error.is_none(),
+            "no-token requests are accepted at ReadOnly"
+        );
         let grants = host.list_active_grants().await;
         assert_eq!(grants.len(), 1);
         assert_eq!(grants[0].policy, format!("{:?}", PolicyProfile::ReadOnly));
@@ -1081,10 +1115,7 @@ mod tests {
         });
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         let body = resp.0;
-        let err = body
-            .error
-            .as_ref()
-            .expect("unknown auth_token must error");
+        let err = body.error.as_ref().expect("unknown auth_token must error");
         assert_eq!(err.code, -32001);
         let grants = host.list_active_grants().await;
         assert_eq!(grants.len(), 0, "no grant on rejection");
@@ -1166,7 +1197,9 @@ mod tests {
     #[tokio::test]
     async fn test_005_session_end_without_owner_token_is_refused() {
         let host = test_host();
-        let token = host.create_token("owner", PolicyProfile::Guided, None).await;
+        let token = host
+            .create_token("owner", PolicyProfile::Guided, None)
+            .await;
         let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         let grant_id = resp.0.result.as_ref().expect("grant issued")["grant_id"]
@@ -1192,14 +1225,19 @@ mod tests {
         );
 
         // Wrong token → refused too.
-        let other = host.create_token("other", PolicyProfile::Guided, None).await;
+        let other = host
+            .create_token("other", PolicyProfile::Guided, None)
+            .await;
         let end2 = handle_session_end(
             &host,
             serde_json::json!(3),
             serde_json::json!({ "grant_id": resp.0.result.as_ref().unwrap()["grant_id"], "auth_token": other.token }),
         )
         .await;
-        assert!(end2.0.error.is_some(), "a different token must not end the grant");
+        assert!(
+            end2.0.error.is_some(),
+            "a different token must not end the grant"
+        );
         assert_eq!(host.list_active_grants().await.len(), 1);
     }
 
@@ -1207,7 +1245,9 @@ mod tests {
     #[tokio::test]
     async fn test_005_session_end_with_owner_token_succeeds() {
         let host = test_host();
-        let token = host.create_token("owner", PolicyProfile::Guided, None).await;
+        let token = host
+            .create_token("owner", PolicyProfile::Guided, None)
+            .await;
         let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
         let resp = handle_initialize(&host, serde_json::json!(1), params).await;
         let grant_id = resp.0.result.as_ref().unwrap()["grant_id"].clone();
@@ -1218,7 +1258,10 @@ mod tests {
             serde_json::json!({ "grant_id": grant_id, "auth_token": token.token }),
         )
         .await;
-        assert!(end.0.error.is_none(), "owner-presented session/end succeeds");
+        assert!(
+            end.0.error.is_none(),
+            "owner-presented session/end succeeds"
+        );
         assert_eq!(host.list_active_grants().await.len(), 0);
     }
 
@@ -1237,7 +1280,10 @@ mod tests {
             serde_json::json!({ "grant_id": grant_id }),
         )
         .await;
-        assert!(end.0.error.is_none(), "tokenless grant ends with grant_id alone");
+        assert!(
+            end.0.error.is_none(),
+            "tokenless grant ends with grant_id alone"
+        );
         assert_eq!(host.list_active_grants().await.len(), 0);
     }
 
@@ -1266,8 +1312,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let registry = Arc::new(ToolRegistry::new());
         let mcp = Arc::new(McpServer::new(registry.clone()));
-        let host =
-            Arc::new(McpHostService::with_token_storage(mcp, tmp.path().to_path_buf()));
+        let host = Arc::new(McpHostService::with_token_storage(
+            mcp,
+            tmp.path().to_path_buf(),
+        ));
         let token = host
             .create_token("persistent", PolicyProfile::Operator, None)
             .await;
@@ -1377,7 +1425,10 @@ mod tests {
         assert_eq!(summaries[0].label, "legacy-plaintext");
 
         let raw = std::fs::read(&path).expect("file still exists (sealed)");
-        assert!(raw.starts_with(TOKEN_VAULT_MAGIC), "file must now be sealed");
+        assert!(
+            raw.starts_with(TOKEN_VAULT_MAGIC),
+            "file must now be sealed"
+        );
         assert!(
             !raw.windows(secret.len()).any(|w| w == secret.as_bytes()),
             "plaintext token must be shredded from disk"
@@ -1401,10 +1452,16 @@ mod tests {
 
         let mut tampered = sealed.clone();
         *tampered.last_mut().unwrap() ^= 0x01;
-        assert!(open_token_blob(&key, &tampered).is_err(), "tamper must fail");
+        assert!(
+            open_token_blob(&key, &tampered).is_err(),
+            "tamper must fail"
+        );
 
         let wrong = [8u8; 32];
-        assert!(open_token_blob(&wrong, &sealed).is_err(), "wrong key must fail");
+        assert!(
+            open_token_blob(&wrong, &sealed).is_err(),
+            "wrong key must fail"
+        );
     }
 
     // ── NAT-B-024: AEAD associated data binds the vault magic ────────────
@@ -1423,13 +1480,22 @@ mod tests {
             .is_err());
         // A swapped magic (downgrade) also fails to authenticate.
         assert!(cipher
-            .decrypt(Nonce::from_slice(nonce), Payload { msg: ct, aad: b"CITMCPV2" })
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload {
+                    msg: ct,
+                    aad: b"CITMCPV2"
+                }
+            )
             .is_err());
         // Only the bound magic authenticates.
         assert!(cipher
             .decrypt(
                 Nonce::from_slice(nonce),
-                Payload { msg: ct, aad: TOKEN_VAULT_MAGIC.as_slice() }
+                Payload {
+                    msg: ct,
+                    aad: TOKEN_VAULT_MAGIC.as_slice()
+                }
             )
             .is_ok());
     }
@@ -1451,7 +1517,10 @@ mod tests {
         // Empty / short arguments must NOT revoke an arbitrary token.
         assert!(!host.revoke_token("").await, "empty must not revoke");
         assert!(!host.revoke_token("a").await, "1-char must not revoke");
-        assert!(!host.revoke_token("abcdefg").await, "7-char must not revoke");
+        assert!(
+            !host.revoke_token("abcdefg").await,
+            "7-char must not revoke"
+        );
         // A full token still revokes exactly itself.
         assert!(host.revoke_token(&a.token).await, "full token revokes");
     }
@@ -1465,7 +1534,10 @@ mod tests {
         assert!(is_local_request(None, Some("[::1]:9600")));
         assert!(is_local_request(None, None));
         // Any Origin (browser/DNS-rebinding page) → refused.
-        assert!(!is_local_request(Some("http://evil.example"), Some("127.0.0.1:9600")));
+        assert!(!is_local_request(
+            Some("http://evil.example"),
+            Some("127.0.0.1:9600")
+        ));
         // Rebound hostname in Host → refused.
         assert!(!is_local_request(None, Some("evil.example:9600")));
         assert!(!is_local_request(None, Some("attacker.tld")));
@@ -1512,6 +1584,9 @@ mod tests {
         host.mcp.add_grant(expired).await;
         let params = serde_json::json!({ "grant_id": "expired-grant" });
         let resp = handle_tools_list(&host, serde_json::json!(1), params).await;
-        assert!(resp.0.error.is_some(), "expired grant must be refused by tools/list");
+        assert!(
+            resp.0.error.is_some(),
+            "expired grant must be refused by tools/list"
+        );
     }
 }

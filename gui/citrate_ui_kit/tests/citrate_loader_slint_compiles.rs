@@ -10,7 +10,10 @@
 #[test]
 fn citrate_loader_slint_compiles() {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let slint_file = manifest_dir.join("ui").join("loader").join("citrate_loader.slint");
+    let slint_file = manifest_dir
+        .join("ui")
+        .join("loader")
+        .join("citrate_loader.slint");
     assert!(slint_file.is_file(), "missing {}", slint_file.display());
 
     // slint-build is written for build scripts and reads OUT_DIR from the

@@ -345,9 +345,18 @@ mod tests {
 
     #[test]
     fn test_cursor_position_equality() {
-        let a = CursorPosition { line: 5, column: 10 };
-        let b = CursorPosition { line: 5, column: 10 };
-        let c = CursorPosition { line: 5, column: 11 };
+        let a = CursorPosition {
+            line: 5,
+            column: 10,
+        };
+        let b = CursorPosition {
+            line: 5,
+            column: 10,
+        };
+        let c = CursorPosition {
+            line: 5,
+            column: 11,
+        };
         assert_eq!(a, b);
         assert_ne!(a, c);
     }

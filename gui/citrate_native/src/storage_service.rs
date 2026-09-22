@@ -80,7 +80,7 @@ impl FileRecord {
             "image" => "🖼",
             "video" => "🎬",
             "audio" => "🎵",
-            "text"  => "📄",
+            "text" => "📄",
             "application" => match self.mime.as_str() {
                 "application/pdf" => "📕",
                 "application/zip"
@@ -143,7 +143,10 @@ pub struct FilesIndex {
 
 impl FilesIndex {
     fn new() -> Self {
-        Self { version: 1, files: Vec::new() }
+        Self {
+            version: 1,
+            files: Vec::new(),
+        }
     }
 
     /// Where the index lives: `~/.local/share/citrate-gui/files.json`
@@ -221,10 +224,7 @@ pub const DEFAULT_IPFS_API: &str = "http://127.0.0.1:5001";
 /// Calls `POST /api/v0/add?pin=true&cid-version=1` on `127.0.0.1:5001`
 /// with the file as a multipart/form-data body. Returns the CID +
 /// raw byte size parsed from the daemon's response.
-pub async fn ipfs_add_file(
-    client: &reqwest::Client,
-    path: &Path,
-) -> Result<(String, u64), String> {
+pub async fn ipfs_add_file(client: &reqwest::Client, path: &Path) -> Result<(String, u64), String> {
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -273,11 +273,15 @@ async fn ipfs_add_bytes(
     // IPFS may return multiple NDJSON lines when given a directory;
     // for a single file it's one line.
     let body = resp.text().await.map_err(|e| format!("read body: {}", e))?;
-    let last_line = body.lines().rfind(|l| !l.trim().is_empty())
+    let last_line = body
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
         .ok_or_else(|| "empty ipfs response".to_string())?;
-    let json: serde_json::Value = serde_json::from_str(last_line)
-        .map_err(|e| format!("parse ipfs response: {}", e))?;
-    let cid = json.get("Hash").and_then(|v| v.as_str())
+    let json: serde_json::Value =
+        serde_json::from_str(last_line).map_err(|e| format!("parse ipfs response: {}", e))?;
+    let cid = json
+        .get("Hash")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| "no Hash in ipfs response".to_string())?
         .to_string();
 
@@ -326,7 +330,9 @@ pub struct EnvelopeKey {
 impl EnvelopeKey {
     /// Construct from raw secret bytes (tests, future import/export).
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self { secret: x25519_dalek::StaticSecret::from(bytes) }
+        Self {
+            secret: x25519_dalek::StaticSecret::from(bytes),
+        }
     }
 
     /// The recipient public key files get wrapped to.
@@ -372,10 +378,7 @@ pub struct EncryptedBlob {
 /// Encrypt `plaintext` so that only the holder of the X25519 secret
 /// behind `owner_pub` can read it. Pure function — no I/O — so tests
 /// exercise it directly.
-pub fn encrypt_for_owner(
-    owner_pub: &[u8; 32],
-    plaintext: &[u8],
-) -> Result<EncryptedBlob, String> {
+pub fn encrypt_for_owner(owner_pub: &[u8; 32], plaintext: &[u8]) -> Result<EncryptedBlob, String> {
     use chacha20poly1305::aead::Aead;
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
     use rand::RngCore;
@@ -437,8 +440,8 @@ pub fn decrypt_with_key(
     use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
     use zeroize::Zeroize;
 
-    let wrapped_all = hex::decode(wrapped_key_hex)
-        .map_err(|e| format!("wrapped_key not hex: {}", e))?;
+    let wrapped_all =
+        hex::decode(wrapped_key_hex).map_err(|e| format!("wrapped_key not hex: {}", e))?;
     if wrapped_all.len() != 32 + 32 + 16 {
         return Err(format!("wrapped_key wrong length: {}", wrapped_all.len()));
     }
@@ -670,10 +673,8 @@ mod tests {
 
     #[test]
     fn index_roundtrip_preserves_entries() {
-        let tmp = std::env::temp_dir().join(format!(
-            "citrate-storage-test-{}.json",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("citrate-storage-test-{}.json", std::process::id()));
         let mut idx = FilesIndex::new();
         idx.upsert(FileRecord {
             cid: "bafy1".into(),
@@ -755,7 +756,10 @@ mod tests {
             self.data.lock().expect("mutex").get(key).cloned()
         }
         fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
-            self.data.lock().expect("mutex").insert(key.into(), value.into());
+            self.data
+                .lock()
+                .expect("mutex")
+                .insert(key.into(), value.into());
             Ok(())
         }
         fn delete_secret(&self, key: &str) -> Result<(), String> {
@@ -816,7 +820,9 @@ mod tests {
         let blobs_srv = blobs.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((mut sock, _)) = listener.accept().await else { break };
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
                 let bodies = bodies_srv.clone();
                 let blobs = blobs_srv.clone();
                 tokio::spawn(async move {
@@ -894,7 +900,8 @@ mod tests {
                             None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
                         }
                     } else {
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_vec()
                     };
                     let _ = sock.write_all(&response).await;
                     let _ = sock.shutdown().await;
@@ -902,15 +909,16 @@ mod tests {
             }
         });
 
-        MockKubo { base_url, add_bodies, blobs }
+        MockKubo {
+            base_url,
+            add_bodies,
+            blobs,
+        }
     }
 
     fn write_temp_file(name_hint: &str, contents: &[u8]) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "citrate-wp9-{}-{}",
-            std::process::id(),
-            name_hint
-        ));
+        let path =
+            std::env::temp_dir().join(format!("citrate-wp9-{}-{}", std::process::id(), name_hint));
         std::fs::write(&path, contents).expect("write temp file");
         path
     }
@@ -921,11 +929,14 @@ mod tests {
         let plaintext = b"the plans for the salt mine";
         let blob = encrypt_for_owner(&key.public_bytes(), plaintext).expect("encrypt");
         assert_ne!(blob.ciphertext, plaintext.to_vec());
-        assert_eq!(blob.wrapped_key.len(), (32 + 32 + 16) * 2, "hex(eph_pub‖wrapped)");
+        assert_eq!(
+            blob.wrapped_key.len(),
+            (32 + 32 + 16) * 2,
+            "hex(eph_pub‖wrapped)"
+        );
         assert_eq!(blob.nonce.len(), 24, "hex(12-byte nonce)");
-        let opened =
-            decrypt_with_key(&key, &blob.ciphertext, &blob.wrapped_key, &blob.nonce)
-                .expect("decrypt");
+        let opened = decrypt_with_key(&key, &blob.ciphertext, &blob.wrapped_key, &blob.nonce)
+            .expect("decrypt");
         assert_eq!(opened, plaintext.to_vec());
     }
 
@@ -935,7 +946,10 @@ mod tests {
         let intruder = EnvelopeKey::from_bytes([8u8; 32]);
         let blob = encrypt_for_owner(&owner.public_bytes(), b"private").expect("encrypt");
         let err = decrypt_with_key(&intruder, &blob.ciphertext, &blob.wrapped_key, &blob.nonce);
-        assert!(err.is_err(), "a different X25519 secret must not open the envelope");
+        assert!(
+            err.is_err(),
+            "a different X25519 secret must not open the envelope"
+        );
         // Tampered ciphertext fails too (AEAD tag).
         let mut tampered = blob.ciphertext.clone();
         tampered[0] ^= 0x01;
@@ -967,11 +981,14 @@ mod tests {
         let plaintext = b"WP-9 roundtrip: encrypt, add, cat, decrypt".to_vec();
         let path = write_temp_file("roundtrip.txt", &plaintext);
 
-        let added =
-            ipfs_add_file_encrypted(&client, &kubo.base_url, &path, &key.public_bytes())
-                .await
-                .expect("encrypted add");
-        assert_eq!(added.size_bytes, plaintext.len() as u64, "records plaintext size");
+        let added = ipfs_add_file_encrypted(&client, &kubo.base_url, &path, &key.public_bytes())
+            .await
+            .expect("encrypted add");
+        assert_eq!(
+            added.size_bytes,
+            plaintext.len() as u64,
+            "records plaintext size"
+        );
 
         let rec = FileRecord {
             cid: added.cid.clone(),
@@ -1025,9 +1042,14 @@ mod tests {
 
         // Positive control: the same probe on a PLAINTEXT add does see
         // the marker — proving the probe itself works.
-        ipfs_add_bytes(&client, &kubo.base_url, plaintext.clone(), "control.bin".into())
-            .await
-            .expect("plaintext add");
+        ipfs_add_bytes(
+            &client,
+            &kubo.base_url,
+            plaintext.clone(),
+            "control.bin".into(),
+        )
+        .await
+        .expect("plaintext add");
         let bodies = kubo.add_bodies.lock().expect("mutex");
         assert!(
             find_subslice(&bodies[1], b"TOPSECRET-MARKER").is_some(),
@@ -1063,10 +1085,8 @@ mod tests {
         assert!(!json.contains("nonce"));
 
         // Mixed index roundtrips through save/load with fields intact.
-        let tmp = std::env::temp_dir().join(format!(
-            "citrate-wp9-compat-{}.json",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("citrate-wp9-compat-{}.json", std::process::id()));
         let mut idx = idx;
         idx.upsert(FileRecord {
             cid: "bafyenc".into(),

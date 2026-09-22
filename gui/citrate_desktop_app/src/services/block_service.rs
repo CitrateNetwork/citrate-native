@@ -27,9 +27,9 @@ pub struct TxInfo {
     pub from: String,
     pub to: String,
     pub value: String,
-    pub status: String,   // "confirmed", "pending", "failed"
+    pub status: String, // "confirmed", "pending", "failed"
     pub block_height: u64,
-    pub tx_type: String,  // "transfer", "deploy", "inference", "training"
+    pub tx_type: String, // "transfer", "deploy", "inference", "training"
 }
 
 /// Backend trait.
@@ -67,26 +67,51 @@ impl BlockBackend for RpcBlockBackend {
             "id": 1,
         });
 
-        let response = self.client.post(&self.rpc_url)
-            .json(&body).send().await
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| AppError::Network(format!("Block RPC failed: {}", e)))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Block parse failed: {}", e)))?;
 
-        let result = json.get("result")
+        let result = json
+            .get("result")
             .ok_or_else(|| AppError::ChainQuery("No block result".to_string()))?;
 
         Ok(BlockInfo {
             height: number,
-            hash: result.get("hash").and_then(|h| h.as_str()).unwrap_or("0x").to_string(),
-            parent_hash: result.get("parentHash").and_then(|h| h.as_str()).unwrap_or("0x").to_string(),
-            timestamp: result.get("timestamp").and_then(|t| t.as_str())
+            hash: result
+                .get("hash")
+                .and_then(|h| h.as_str())
+                .unwrap_or("0x")
+                .to_string(),
+            parent_hash: result
+                .get("parentHash")
+                .and_then(|h| h.as_str())
+                .unwrap_or("0x")
+                .to_string(),
+            timestamp: result
+                .get("timestamp")
+                .and_then(|t| t.as_str())
                 .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
                 .unwrap_or(0),
-            tx_count: result.get("transactions").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0),
+            tx_count: result
+                .get("transactions")
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
             blue_score: 0,
-            proposer: result.get("miner").and_then(|m| m.as_str()).unwrap_or("0x").to_string(),
+            proposer: result
+                .get("miner")
+                .and_then(|m| m.as_str())
+                .unwrap_or("0x")
+                .to_string(),
         })
     }
 
@@ -99,14 +124,21 @@ impl BlockBackend for RpcBlockBackend {
             "id": 1,
         });
 
-        let response = self.client.post(&self.rpc_url)
-            .json(&body).send().await
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| AppError::Network(format!("BlockNumber RPC failed: {}", e)))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("BlockNumber parse failed: {}", e)))?;
 
-        let hex = json.pointer("/result")
+        let hex = json
+            .pointer("/result")
             .and_then(|r| r.as_str())
             .unwrap_or("0x0");
         let current = u64::from_str_radix(hex.trim_start_matches("0x"), 16).unwrap_or(0);
@@ -127,7 +159,9 @@ impl BlockBackend for RpcBlockBackend {
     }
 
     async fn get_transaction(&self, _tx_hash: &str) -> Result<TxInfo, AppError> {
-        Err(AppError::ChainQuery("Transaction lookup not yet wired".to_string()))
+        Err(AppError::ChainQuery(
+            "Transaction lookup not yet wired".to_string(),
+        ))
     }
 }
 

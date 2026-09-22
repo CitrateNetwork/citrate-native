@@ -3,8 +3,8 @@
 //! Data source: InstitutionalVault (0x8464...318bC) and CashoutRequest (0xbCF2...1508)
 //! via eth_call on chain 40204.
 
-use crate::error::AppError;
 use super::abi;
+use crate::error::AppError;
 
 /// Contract addresses on chain 40204 (deployed 2026-04-05).
 const VAULT_ADDRESS: &str = "0x20Fbd46DeEd5EEDEB6e5c87eeB31924e9CA312ad";
@@ -92,21 +92,26 @@ impl RpcInstitutionalBackend {
             "id": 1,
         });
 
-        let resp = self.client.post(&self.rpc_url)
+        let resp = self
+            .client
+            .post(&self.rpc_url)
             .json(&body)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Vault RPC call failed: {}", e)))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Vault response parse failed: {}", e)))?;
 
         json.get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                let err_msg = json.get("error")
+                let err_msg = json
+                    .get("error")
                     .and_then(|e| e.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
@@ -145,15 +150,20 @@ impl InstitutionalBackend for RpcInstitutionalBackend {
             "params": [VAULT_ADDRESS, "latest"],
             "id": 2,
         });
-        let balance_resp = self.client.post(&self.rpc_url)
+        let balance_resp = self
+            .client
+            .post(&self.rpc_url)
             .json(&balance_body)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Balance RPC failed: {}", e)))?;
-        let balance_json: serde_json::Value = balance_resp.json().await
+        let balance_json: serde_json::Value = balance_resp
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Balance parse failed: {}", e)))?;
-        let balance_wei = balance_json.get("result")
+        let balance_wei = balance_json
+            .get("result")
             .and_then(|r| r.as_str())
             .unwrap_or("0x0")
             .to_string();
@@ -169,7 +179,8 @@ impl InstitutionalBackend for RpcInstitutionalBackend {
 
     /// Data source: InstitutionalVault.isSigner(address) via eth_call
     async fn is_signer(&self, address: &str) -> Result<bool, AppError> {
-        let data = abi::encode_call_address("isSigner(address)", address).map_err(AppError::ChainQuery)?;
+        let data =
+            abi::encode_call_address("isSigner(address)", address).map_err(AppError::ChainQuery)?;
         let result = self.eth_call(VAULT_ADDRESS, &data).await?;
         Ok(abi::decode_bool(&result))
     }

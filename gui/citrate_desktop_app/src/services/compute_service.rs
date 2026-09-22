@@ -12,8 +12,8 @@ use std::sync::Arc;
 pub struct ComputeJob {
     pub id: String,
     pub model_id: String,
-    pub status: String,        // "posted", "assigned", "executing", "completed", "failed"
-    pub budget: String,        // SALT amount
+    pub status: String, // "posted", "assigned", "executing", "completed", "failed"
+    pub budget: String, // SALT amount
     pub provider: Option<String>,
     pub created_at: u64,
     pub compute_time_secs: Option<u64>,
@@ -50,7 +50,10 @@ pub struct RpcComputeBackend {
 
 impl RpcComputeBackend {
     pub fn new(rpc_url: &str) -> Self {
-        Self { rpc_url: rpc_url.to_string(), client: reqwest::Client::new() }
+        Self {
+            rpc_url: rpc_url.to_string(),
+            client: reqwest::Client::new(),
+        }
     }
 }
 
@@ -78,16 +81,24 @@ impl ComputeBackend for RpcComputeBackend {
         // (embedded node doesn't serve HTTP RPC)
         let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
         for url in &urls {
-            match self.client.post(*url).json(&body)
+            match self
+                .client
+                .post(*url)
+                .json(&body)
                 .timeout(std::time::Duration::from_secs(5))
-                .send().await
+                .send()
+                .await
             {
                 Ok(resp) => {
                     if let Ok(json) = resp.json::<serde_json::Value>().await {
                         if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
                             let hex = result.trim_start_matches("0x");
                             let count = u64::from_str_radix(hex, 16).unwrap_or(0);
-                            tracing::info!("ComputeMarketplace: {} providers registered (via {})", count, url);
+                            tracing::info!(
+                                "ComputeMarketplace: {} providers registered (via {})",
+                                count,
+                                url
+                            );
                             return Ok(Vec::new());
                         }
                     }
@@ -112,9 +123,13 @@ impl ComputeBackend for RpcComputeBackend {
         });
         let urls = [self.rpc_url.as_str(), "https://rpc.citrate.ai"];
         for url in &urls {
-            if let Ok(resp) = self.client.post(*url).json(&body)
+            if let Ok(resp) = self
+                .client
+                .post(*url)
+                .json(&body)
                 .timeout(std::time::Duration::from_secs(5))
-                .send().await
+                .send()
+                .await
             {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
                     if let Some(result) = json.get("result").and_then(|r| r.as_str()) {
@@ -132,15 +147,23 @@ impl ComputeBackend for RpcComputeBackend {
     async fn get_job(&self, job_id: &str) -> Result<ComputeJob, AppError> {
         Err(AppError::ChainQuery(format!(
             "Compute marketplace {}: job '{}' not available",
-            if COMPUTE_CONTRACT.is_some() { "query failed" } else { "not deployed on this network" },
+            if COMPUTE_CONTRACT.is_some() {
+                "query failed"
+            } else {
+                "not deployed on this network"
+            },
             job_id
         )))
     }
 
     async fn post_job(&self, _model_id: &str, _budget: &str) -> Result<String, AppError> {
         match COMPUTE_CONTRACT {
-            Some(_) => Err(AppError::ChainQuery("Job posting requires wallet signing — use the GUI".to_string())),
-            None => Err(AppError::ChainQuery("Compute marketplace not yet deployed on this network".to_string())),
+            Some(_) => Err(AppError::ChainQuery(
+                "Job posting requires wallet signing — use the GUI".to_string(),
+            )),
+            None => Err(AppError::ChainQuery(
+                "Compute marketplace not yet deployed on this network".to_string(),
+            )),
         }
     }
 }
@@ -191,15 +214,26 @@ pub struct ComputeService {
 
 impl ComputeService {
     pub fn new(events: Arc<EventBus>, rpc_url: &str) -> Self {
-        Self { events, backend: Arc::new(RpcComputeBackend::new(rpc_url)) }
+        Self {
+            events,
+            backend: Arc::new(RpcComputeBackend::new(rpc_url)),
+        }
     }
     pub fn with_backend(events: Arc<EventBus>, backend: Arc<dyn ComputeBackend>) -> Self {
         Self { events, backend }
     }
-    pub async fn list_jobs(&self) -> Result<Vec<ComputeJob>, AppError> { self.backend.list_jobs().await }
-    pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>, AppError> { self.backend.list_providers().await }
-    pub async fn get_job(&self, id: &str) -> Result<ComputeJob, AppError> { self.backend.get_job(id).await }
-    pub async fn post_job(&self, model_id: &str, budget: &str) -> Result<String, AppError> { self.backend.post_job(model_id, budget).await }
+    pub async fn list_jobs(&self) -> Result<Vec<ComputeJob>, AppError> {
+        self.backend.list_jobs().await
+    }
+    pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>, AppError> {
+        self.backend.list_providers().await
+    }
+    pub async fn get_job(&self, id: &str) -> Result<ComputeJob, AppError> {
+        self.backend.get_job(id).await
+    }
+    pub async fn post_job(&self, model_id: &str, budget: &str) -> Result<String, AppError> {
+        self.backend.post_job(model_id, budget).await
+    }
 }
 
 #[cfg(test)]

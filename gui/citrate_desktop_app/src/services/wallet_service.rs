@@ -46,11 +46,22 @@ pub trait WalletBackend: Send + Sync {
     /// Load existing accounts from disk
     async fn load_accounts(&self) -> Result<Vec<Account>, AppError>;
     /// Create a new wallet with password, return address + mnemonic
-    async fn create_wallet(&self, password: &str, label: &str) -> Result<CreateAccountResult, AppError>;
+    async fn create_wallet(
+        &self,
+        password: &str,
+        label: &str,
+    ) -> Result<CreateAccountResult, AppError>;
     /// Recover an account from a BIP39 mnemonic phrase.
     /// Default returns an error — overridden by production backend.
-    async fn recover_from_mnemonic(&self, _mnemonic: &str, _password: &str, _label: &str) -> Result<CreateAccountResult, AppError> {
-        Err(AppError::Wallet("Mnemonic recovery not supported by this backend".to_string()))
+    async fn recover_from_mnemonic(
+        &self,
+        _mnemonic: &str,
+        _password: &str,
+        _label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
+        Err(AppError::Wallet(
+            "Mnemonic recovery not supported by this backend".to_string(),
+        ))
     }
     /// Verify password and unlock session
     async fn unlock(&self, address: &str, password: &str) -> Result<bool, AppError>;
@@ -69,9 +80,22 @@ pub trait WalletBackend: Send + Sync {
     /// Lock the session
     async fn lock(&self) -> Result<(), AppError>;
     /// Sign and send a transaction, return tx hash
-    async fn send_transaction(&self, from: &str, to: &str, value_wei: &str, password: &str) -> Result<String, AppError>;
+    async fn send_transaction(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+        password: &str,
+    ) -> Result<String, AppError>;
     /// Sign and send a transaction with calldata (for contract/precompile calls)
-    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, _data: Vec<u8>, password: &str) -> Result<String, AppError> {
+    async fn send_transaction_with_data(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+        _data: Vec<u8>,
+        password: &str,
+    ) -> Result<String, AppError> {
         // Default: ignore data, fall back to value-only send
         self.send_transaction(from, to, value_wei, password).await
     }
@@ -91,7 +115,9 @@ pub trait WalletBackend: Send + Sync {
     /// secp256k1 — an Ed25519 account cannot own the wallet's
     /// CitrateECDSAValidator. Default errs (test backends override).
     async fn key_kind(&self, _address: &str) -> Result<String, AppError> {
-        Err(AppError::Wallet("key_kind not supported by this backend".to_string()))
+        Err(AppError::Wallet(
+            "key_kind not supported by this backend".to_string(),
+        ))
     }
     /// Recoverable secp256k1 ECDSA over a PRE-HASHED 32-byte digest,
     /// returned as `r(32) ++ s(32) ++ v(27|28)` — the shape
@@ -102,15 +128,23 @@ pub trait WalletBackend: Send + Sync {
         _address: &str,
         _digest: [u8; 32],
     ) -> Result<[u8; 65], AppError> {
-        Err(AppError::Wallet("sign_digest_recoverable not supported by this backend".to_string()))
+        Err(AppError::Wallet(
+            "sign_digest_recoverable not supported by this backend".to_string(),
+        ))
     }
     /// Re-decrypt and export a private key as hex, verifying `password`
     /// against the on-disk keystore. NAT-B-017: exposed on the backend so
     /// `WalletService` can wrap it in the shared `SessionManager` lockout —
     /// pre-fix the GUI built a fresh `KeyManager` per attempt, bypassing the
     /// brute-force lockout entirely (an unthrottled password oracle).
-    async fn export_private_key(&self, _address: &str, _password: &str) -> Result<String, AppError> {
-        Err(AppError::Wallet("export_private_key not supported by this backend".to_string()))
+    async fn export_private_key(
+        &self,
+        _address: &str,
+        _password: &str,
+    ) -> Result<String, AppError> {
+        Err(AppError::Wallet(
+            "export_private_key not supported by this backend".to_string(),
+        ))
     }
 }
 
@@ -129,14 +163,17 @@ impl WalletCoreBackend {
         let keystore_path = std::path::PathBuf::from(&config.keystore_path);
         Self {
             key_manager: Arc::new(citrate_wallet_core::KeyManager::new(&keystore_path)),
-            rpc_client: std::sync::RwLock::new(Arc::new(citrate_wallet_core::RpcClient::new(&config.rpc_url))),
+            rpc_client: std::sync::RwLock::new(Arc::new(citrate_wallet_core::RpcClient::new(
+                &config.rpc_url,
+            ))),
             chain_id: std::sync::atomic::AtomicU64::new(40204), // default testnet
         }
     }
 
     /// Update the signing chain ID (called when environment switches).
     pub fn set_chain_id(&self, id: u64) {
-        self.chain_id.store(id, std::sync::atomic::Ordering::Relaxed);
+        self.chain_id
+            .store(id, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Update the RPC URL target (called when environment switches).
@@ -190,21 +227,31 @@ impl WalletCoreBackend {
 #[async_trait::async_trait]
 impl WalletBackend for WalletCoreBackend {
     async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
-        self.key_manager.load()
+        self.key_manager
+            .load()
             .map_err(|e| AppError::Wallet(format!("Failed to load keystore: {}", e)))?;
 
         let wallet_accounts = self.key_manager.list_accounts();
-        Ok(wallet_accounts.iter().map(|a| Account {
-            address: a.address.clone(),
-            label: a.label.clone(),
-            balance: a.balance.clone(),
-            nonce: a.nonce,
-            is_default: a.is_default,
-        }).collect())
+        Ok(wallet_accounts
+            .iter()
+            .map(|a| Account {
+                address: a.address.clone(),
+                label: a.label.clone(),
+                balance: a.balance.clone(),
+                nonce: a.nonce,
+                is_default: a.is_default,
+            })
+            .collect())
     }
 
-    async fn create_wallet(&self, password: &str, label: &str) -> Result<CreateAccountResult, AppError> {
-        let result = self.key_manager.create_account(password, label)
+    async fn create_wallet(
+        &self,
+        password: &str,
+        label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
+        let result = self
+            .key_manager
+            .create_account(password, label)
             .map_err(|e| AppError::Wallet(format!("{}", e)))?;
 
         Ok(CreateAccountResult {
@@ -214,10 +261,17 @@ impl WalletBackend for WalletCoreBackend {
         })
     }
 
-    async fn recover_from_mnemonic(&self, mnemonic: &str, password: &str, label: &str) -> Result<CreateAccountResult, AppError> {
+    async fn recover_from_mnemonic(
+        &self,
+        mnemonic: &str,
+        password: &str,
+        label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
         // Data source: citrate_wallet_core::KeyManager::recover_from_mnemonic
         // Derives Ed25519 key from BIP39 mnemonic via SLIP-0010, encrypts with Argon2+AES-GCM
-        let result = self.key_manager.recover_from_mnemonic(mnemonic, password, label)
+        let result = self
+            .key_manager
+            .recover_from_mnemonic(mnemonic, password, label)
             .map_err(|e| AppError::Wallet(format!("Recovery failed: {}", e)))?;
         Ok(CreateAccountResult {
             address: result.address,
@@ -256,11 +310,20 @@ impl WalletBackend for WalletCoreBackend {
             Err(citrate_wallet_core::WalletError::InvalidPassword) => {
                 Err(AppError::Wallet("Incorrect password".to_string()))
             }
-            Err(e) => Err(AppError::Wallet(format!("Password verification failed: {}", e))),
+            Err(e) => Err(AppError::Wallet(format!(
+                "Password verification failed: {}",
+                e
+            ))),
         }
     }
 
-    async fn send_transaction(&self, from: &str, to: &str, value_wei: &str, password: &str) -> Result<String, AppError> {
+    async fn send_transaction(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+        password: &str,
+    ) -> Result<String, AppError> {
         // NAT-B-002: verify the confirm-screen password BEFORE signing.
         // A wrong (or, on the interactive path, empty) password must not
         // produce a signature. Empty is accepted here only for the
@@ -268,18 +331,22 @@ impl WalletBackend for WalletCoreBackend {
         self.verify_password(password).await?;
 
         // Get the signing key (must be unlocked)
-        let unified_key = self.key_manager.get_signing_key(from)
+        let unified_key = self
+            .key_manager
+            .get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
         // Clone the RPC client Arc so we don't hold the lock across await points
         let rpc = self.rpc_client_read().clone();
 
         // Get the nonce from the chain — MUST succeed, no fallback to 0
-        let nonce = rpc.get_nonce(from).await
-            .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}. Is the node running?", e)))?;
+        let nonce = rpc.get_nonce(from).await.map_err(|e| {
+            AppError::Network(format!("Cannot fetch nonce: {}. Is the node running?", e))
+        })?;
 
         // Parse value — invalid amounts are errors, not silent zeros
-        let value: u128 = value_wei.parse()
+        let value: u128 = value_wei
+            .parse()
             .map_err(|_| AppError::Wallet(format!("Invalid amount: '{}'", value_wei)))?;
 
         // Build and sign the transaction — supports both Ed25519 and secp256k1
@@ -310,18 +377,30 @@ impl WalletBackend for WalletCoreBackend {
         Ok(tx_hash)
     }
 
-    async fn send_transaction_with_data(&self, from: &str, to: &str, value_wei: &str, data: Vec<u8>, password: &str) -> Result<String, AppError> {
+    async fn send_transaction_with_data(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+        data: Vec<u8>,
+        password: &str,
+    ) -> Result<String, AppError> {
         // NAT-B-002: same confirm-screen password gate as send_transaction.
         self.verify_password(password).await?;
 
-        let unified_key = self.key_manager.get_signing_key(from)
+        let unified_key = self
+            .key_manager
+            .get_signing_key(from)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
 
         let rpc = self.rpc_client_read().clone();
-        let nonce = rpc.get_nonce(from).await
+        let nonce = rpc
+            .get_nonce(from)
+            .await
             .map_err(|e| AppError::Network(format!("Cannot fetch nonce: {}", e)))?;
 
-        let value: u128 = value_wei.parse()
+        let value: u128 = value_wei
+            .parse()
             .map_err(|_| AppError::Wallet(format!("Invalid amount: '{}'", value_wei)))?;
 
         let signed = match &unified_key {
@@ -345,14 +424,17 @@ impl WalletBackend for WalletCoreBackend {
             }
         };
 
-        let tx_hash = rpc.send_raw_transaction(&signed.raw).await
+        let tx_hash = rpc
+            .send_raw_transaction(&signed.raw)
+            .await
             .map_err(|e| AppError::Network(format!("Transaction failed: {}", e)))?;
 
         Ok(tx_hash)
     }
 
     fn set_chain_id(&self, chain_id: u64) {
-        self.chain_id.store(chain_id, std::sync::atomic::Ordering::Relaxed);
+        self.chain_id
+            .store(chain_id, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("WalletCoreBackend: chain_id updated to {}", chain_id);
     }
 
@@ -369,7 +451,9 @@ impl WalletBackend for WalletCoreBackend {
     // Data source: citrate_wallet_core::KeyManager::get_signing_key
     // (the unlocked in-memory key) — no key material leaves this method.
     async fn key_kind(&self, address: &str) -> Result<String, AppError> {
-        let key = self.key_manager.get_signing_key(address)
+        let key = self
+            .key_manager
+            .get_signing_key(address)
             .map_err(|e| AppError::Wallet(format!("Cannot read key: {}", e)))?;
         Ok(match key.key_type() {
             citrate_wallet_core::types::KeyType::Ed25519 => "ed25519".to_string(),
@@ -382,7 +466,9 @@ impl WalletBackend for WalletCoreBackend {
         address: &str,
         digest: [u8; 32],
     ) -> Result<[u8; 65], AppError> {
-        let key = self.key_manager.get_signing_key(address)
+        let key = self
+            .key_manager
+            .get_signing_key(address)
             .map_err(|e| AppError::Wallet(format!("Cannot sign: {}", e)))?;
         match &key {
             citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp) => {
@@ -420,12 +506,19 @@ pub struct TestWalletBackend;
 #[cfg(test)]
 #[async_trait::async_trait]
 impl WalletBackend for TestWalletBackend {
-    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(Vec::new()) }
-    async fn create_wallet(&self, _password: &str, _label: &str) -> Result<CreateAccountResult, AppError> {
+    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+        Ok(Vec::new())
+    }
+    async fn create_wallet(
+        &self,
+        _password: &str,
+        _label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
         Ok(CreateAccountResult {
             address: "0x0000000000000000000000000000000000000000".to_string(),
             mnemonic: "test mnemonic words for development only not real".to_string(),
-            public_key: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            public_key: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
         })
     }
     async fn unlock(&self, _address: &str, password: &str) -> Result<bool, AppError> {
@@ -441,8 +534,16 @@ impl WalletBackend for TestWalletBackend {
             Err(AppError::Wallet("Incorrect password".to_string()))
         }
     }
-    async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-    async fn send_transaction(&self, _from: &str, _to: &str, _value: &str, _password: &str) -> Result<String, AppError> {
+    async fn lock(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn send_transaction(
+        &self,
+        _from: &str,
+        _to: &str,
+        _value: &str,
+        _password: &str,
+    ) -> Result<String, AppError> {
         Ok("0x0000000000000000000000000000000000000000000000000000000000000000".to_string())
     }
     /// NAT-B-003: reachable signer so the value-reauth chokepoint in
@@ -526,7 +627,11 @@ pub struct WalletService {
 }
 
 fn new_session_manager() -> SessionManager {
-    SessionManager::new(MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION_SECS, SESSION_TIMEOUT_SECS)
+    SessionManager::new(
+        MAX_FAILED_ATTEMPTS,
+        LOCKOUT_DURATION_SECS,
+        SESSION_TIMEOUT_SECS,
+    )
 }
 
 impl WalletService {
@@ -584,11 +689,7 @@ impl WalletService {
     /// Persist lockout state to disk if `enable_lockout_persistence`
     /// has set a path. No-op otherwise.
     async fn persist_lockout_state(&self) {
-        let path_opt = self
-            .lockout_file
-            .read()
-            .ok()
-            .and_then(|g| g.clone());
+        let path_opt = self.lockout_file.read().ok().and_then(|g| g.clone());
         let Some(path) = path_opt else {
             return;
         };
@@ -614,10 +715,7 @@ impl WalletService {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &path,
-                std::fs::Permissions::from_mode(0o600),
-            );
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
     }
 
@@ -674,10 +772,15 @@ impl WalletService {
     /// Create a new wallet with password (first-time setup)
     pub async fn create_wallet(&self, password: &str) -> Result<CreateAccountResult, AppError> {
         if password.len() < 8 {
-            return Err(AppError::Wallet("Password must be at least 8 characters".to_string()));
+            return Err(AppError::Wallet(
+                "Password must be at least 8 characters".to_string(),
+            ));
         }
 
-        let result = self.backend.create_wallet(password, "Primary Account").await?;
+        let result = self
+            .backend
+            .create_wallet(password, "Primary Account")
+            .await?;
 
         let account = Account {
             address: result.address.clone(),
@@ -696,21 +799,35 @@ impl WalletService {
         // browser-wallet install: create → unlocked.
         *self.active_address.write().await = Some(result.address.clone());
         *self.last_unlock_at.write().await = Some(Instant::now());
-        self.session_mgr.write().await.record_success(&result.address);
+        self.session_mgr
+            .write()
+            .await
+            .record_success(&result.address);
 
         Ok(result)
     }
 
     /// Import a wallet from a BIP39 mnemonic phrase
-    pub async fn import_from_mnemonic(&self, mnemonic: &str, password: &str) -> Result<CreateAccountResult, AppError> {
+    pub async fn import_from_mnemonic(
+        &self,
+        mnemonic: &str,
+        password: &str,
+    ) -> Result<CreateAccountResult, AppError> {
         if password.len() < 8 {
-            return Err(AppError::Wallet("Password must be at least 8 characters".to_string()));
+            return Err(AppError::Wallet(
+                "Password must be at least 8 characters".to_string(),
+            ));
         }
         if mnemonic.split_whitespace().count() < 12 {
-            return Err(AppError::Wallet("Mnemonic must be at least 12 words".to_string()));
+            return Err(AppError::Wallet(
+                "Mnemonic must be at least 12 words".to_string(),
+            ));
         }
 
-        let result = self.backend.recover_from_mnemonic(mnemonic, password, "Imported Account").await?;
+        let result = self
+            .backend
+            .recover_from_mnemonic(mnemonic, password, "Imported Account")
+            .await?;
 
         let account = Account {
             address: result.address.clone(),
@@ -727,7 +844,10 @@ impl WalletService {
         // sufficient — don't make the user re-type it for the next op.
         *self.active_address.write().await = Some(result.address.clone());
         *self.last_unlock_at.write().await = Some(Instant::now());
-        self.session_mgr.write().await.record_success(&result.address);
+        self.session_mgr
+            .write()
+            .await
+            .record_success(&result.address);
 
         Ok(result)
     }
@@ -885,7 +1005,10 @@ impl WalletService {
             self.session_mgr.write().await.touch_session(&addr);
         }
 
-        let tx_hash = self.backend.send_transaction(from, to, value_wei, password).await?;
+        let tx_hash = self
+            .backend
+            .send_transaction(from, to, value_wei, password)
+            .await?;
 
         self.events.publish(AppEvent::TransactionConfirmed {
             tx_hash: tx_hash.clone(),
@@ -932,7 +1055,10 @@ impl WalletService {
             self.session_mgr.write().await.touch_session(&addr);
         }
 
-        let tx_hash = self.backend.send_transaction_with_data(from, to, value_wei, data, password).await?;
+        let tx_hash = self
+            .backend
+            .send_transaction_with_data(from, to, value_wei, data, password)
+            .await?;
 
         self.events.publish(AppEvent::TransactionConfirmed {
             tx_hash: tx_hash.clone(),
@@ -987,7 +1113,11 @@ impl WalletService {
     /// locked-out address is refused, wrong passwords are counted (and
     /// persisted so a restart cannot launder the counter), and a success
     /// clears the counter — exactly as `unlock` does.
-    pub async fn export_private_key(&self, address: &str, password: &str) -> Result<String, AppError> {
+    pub async fn export_private_key(
+        &self,
+        address: &str,
+        password: &str,
+    ) -> Result<String, AppError> {
         if password.is_empty() {
             return Err(AppError::Wallet("Password required".to_string()));
         }
@@ -1079,7 +1209,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_wallet() {
         let svc = test_service();
-        let result = svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        let result = svc
+            .create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         assert!(!result.address.is_empty());
         assert!(!result.mnemonic.is_empty());
         assert!(!svc.is_first_run().await);
@@ -1102,7 +1235,10 @@ mod tests {
     #[tokio::test]
     async fn test_unlock_sets_session_active() {
         let svc = test_service();
-        let status = svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        let status = svc
+            .unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
         assert!(status.is_active);
         assert!(status.remaining_seconds.is_some());
     }
@@ -1110,7 +1246,9 @@ mod tests {
     #[tokio::test]
     async fn test_lock_clears_session() {
         let svc = test_service();
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
         svc.lock().await.expect("lock succeeded");
         let status = svc.get_session_status().await;
         assert!(!status.is_active);
@@ -1120,14 +1258,18 @@ mod tests {
     async fn test_primary_address_after_create() {
         let svc = test_service();
         assert!(svc.get_primary_address().await.is_none());
-        svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        svc.create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         assert!(svc.get_primary_address().await.is_some());
     }
 
     #[tokio::test]
     async fn test_send_requires_active_session() {
         let svc = test_service();
-        let result = svc.send_transaction("0xfrom", "0xto", "1000", "password").await;
+        let result = svc
+            .send_transaction("0xfrom", "0xto", "1000", "password")
+            .await;
         match result {
             Err(AppError::SessionExpired) => {}
             other => panic!("Expected SessionExpired, got {:?}", other),
@@ -1137,8 +1279,13 @@ mod tests {
     #[tokio::test]
     async fn test_send_works_when_unlocked() {
         let svc = test_service();
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-        let hash = svc.send_transaction("0xfrom", "0xto", "1000", "password").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
+        let hash = svc
+            .send_transaction("0xfrom", "0xto", "1000", "password")
+            .await
+            .expect("async operation succeeded");
         assert!(!hash.is_empty());
     }
 
@@ -1147,7 +1294,9 @@ mod tests {
     #[tokio::test]
     async fn test_fua_gui_03_non_numeric_value_fails_closed() {
         let svc = test_service();
-        svc.unlock("0xabc", "password123").await.expect("unlock succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("unlock succeeded");
         let result = svc
             .send_transaction("0xfrom", "0xto", "not-a-number", "password")
             .await;
@@ -1173,8 +1322,12 @@ mod tests {
         let mut rx = events.subscribe();
         let svc = WalletService::with_backend(events, Arc::new(TestWalletBackend));
 
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-        svc.send_transaction("0xfrom", "0xto", "1000", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
+        svc.send_transaction("0xfrom", "0xto", "1000", "password123")
+            .await
+            .expect("async operation succeeded");
 
         let event = rx.recv().await.expect("event received");
         match event {
@@ -1195,8 +1348,14 @@ mod tests {
     #[tokio::test]
     async fn test_create_wallet_returns_mnemonic() {
         let svc = test_service();
-        let result = svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
-        assert!(result.mnemonic.split_whitespace().count() >= 5, "Mnemonic should have multiple words");
+        let result = svc
+            .create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
+        assert!(
+            result.mnemonic.split_whitespace().count() >= 5,
+            "Mnemonic should have multiple words"
+        );
     }
 
     #[tokio::test]
@@ -1217,7 +1376,9 @@ mod tests {
     #[tokio::test]
     async fn test_list_accounts_after_create() {
         let svc = test_service();
-        svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        svc.create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         let accounts = svc.list_accounts().await;
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].label, "Primary Account");
@@ -1240,10 +1401,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_decrements_then_locks() {
         let svc = test_service();
-        let status = svc
-            .unlock("0xabc", "password123")
-            .await
-            .expect("unlock");
+        let status = svc.unlock("0xabc", "password123").await.expect("unlock");
         let initial = status.remaining_seconds.expect("initial seconds");
         assert!(initial <= SESSION_TIMEOUT_SECS && initial > 0);
 
@@ -1379,10 +1537,8 @@ mod tests {
         // Force the unlock timestamp into the past, beyond freshness.
         {
             let mut last = svc.last_unlock_at.write().await;
-            *last = Some(
-                Instant::now()
-                    - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5),
-            );
+            *last =
+                Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
         }
 
         // NAT-B-002 (RC-8 inversion): pre-fix this asserted that a stale
@@ -1392,14 +1548,15 @@ mod tests {
         // stale-session-must-fail case is now the EMPTY (programmatic, no
         // password) path: no fresh password means no re-auth.
         let big_value = RE_AUTH_THRESHOLD_WEI.to_string();
-        let r = svc
-            .send_transaction("0xabc", "0xto", &big_value, "")
-            .await;
+        let r = svc.send_transaction("0xabc", "0xto", &big_value, "").await;
         match r {
             Err(AppError::Wallet(msg)) => {
                 assert!(msg.contains("Re-authentication"), "msg = {}", msg);
             }
-            other => panic!("expected re-auth error on empty-password stale send, got {:?}", other),
+            other => panic!(
+                "expected re-auth error on empty-password stale send, got {:?}",
+                other
+            ),
         }
 
         // Typing the CORRECT password IS the re-auth: it refreshes the
@@ -1407,7 +1564,10 @@ mod tests {
         let r = svc
             .send_transaction("0xabc", "0xto", &big_value, "password123")
             .await;
-        assert!(r.is_ok(), "correct confirm-screen password authorizes the high-value send");
+        assert!(
+            r.is_ok(),
+            "correct confirm-screen password authorizes the high-value send"
+        );
     }
 
     /// RM-B / GUI_NATIVE-001 (audit WAL-07 bypass): the calldata-bearing
@@ -1422,17 +1582,21 @@ mod tests {
         // Sub-threshold calldata send works.
         let small_value = (RE_AUTH_THRESHOLD_WEI / 2).to_string();
         let r = svc
-            .send_transaction_with_data("0xabc", "0xpool", &small_value, vec![0u8; 36], "password123")
+            .send_transaction_with_data(
+                "0xabc",
+                "0xpool",
+                &small_value,
+                vec![0u8; 36],
+                "password123",
+            )
             .await;
         assert!(r.is_ok(), "sub-threshold calldata send must work");
 
         // Age the unlock beyond the freshness window.
         {
             let mut last = svc.last_unlock_at.write().await;
-            *last = Some(
-                Instant::now()
-                    - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5),
-            );
+            *last =
+                Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
         }
 
         // 1000-SALT (100x threshold) staking call via the calldata path
@@ -1456,7 +1620,10 @@ mod tests {
         let r = svc
             .send_transaction_with_data("0xabc", "0xpool", &big_value, vec![0u8; 36], "password123")
             .await;
-        assert!(r.is_ok(), "correct password authorizes the high-value calldata send");
+        assert!(
+            r.is_ok(),
+            "correct password authorizes the high-value calldata send"
+        );
     }
 
     /// NAT-B-002: the production signer must VERIFY the confirm-screen
@@ -1523,7 +1690,8 @@ mod tests {
         // Age the unlock beyond freshness.
         {
             let mut last = svc.last_unlock_at.write().await;
-            *last = Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
+            *last =
+                Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
         }
 
         // Wrong password: refused, no refresh, no send.
@@ -1535,7 +1703,9 @@ mod tests {
 
         // Correct password: refreshes the clock, high-value send succeeds.
         assert!(
-            svc.send_transaction("0xabc", "0xto", &big, "password123").await.is_ok(),
+            svc.send_transaction("0xabc", "0xto", &big, "password123")
+                .await
+                .is_ok(),
             "correct password must refresh re-auth and authorize the send"
         );
     }
@@ -1554,14 +1724,17 @@ mod tests {
         // Sub-threshold sponsored signature works.
         let small = (RE_AUTH_THRESHOLD_WEI / 2).to_string();
         assert!(
-            svc.sign_digest_recoverable("0xabc", [7u8; 32], &small).await.is_ok(),
+            svc.sign_digest_recoverable("0xabc", [7u8; 32], &small)
+                .await
+                .is_ok(),
             "sub-threshold sponsored signature must work"
         );
 
         // Age the unlock beyond freshness.
         {
             let mut last = svc.last_unlock_at.write().await;
-            *last = Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
+            *last =
+                Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
         }
 
         // Unlimited-value (1000x threshold) sponsored send on a stale
@@ -1569,13 +1742,17 @@ mod tests {
         let huge = (RE_AUTH_THRESHOLD_WEI * 1000).to_string();
         match svc.sign_digest_recoverable("0xabc", [7u8; 32], &huge).await {
             Err(AppError::Wallet(msg)) => assert!(msg.contains("Re-authentication"), "msg = {msg}"),
-            other => panic!("expected re-auth error on stale high-value sponsored send, got {other:?}"),
+            other => {
+                panic!("expected re-auth error on stale high-value sponsored send, got {other:?}")
+            }
         }
 
         // Fresh unlock re-enables it.
         svc.unlock("0xabc", "password123").await.expect("re-unlock");
         assert!(
-            svc.sign_digest_recoverable("0xabc", [7u8; 32], &huge).await.is_ok(),
+            svc.sign_digest_recoverable("0xabc", [7u8; 32], &huge)
+                .await
+                .is_ok(),
             "high-value sponsored send works after fresh unlock"
         );
     }
@@ -1586,13 +1763,17 @@ mod tests {
     #[tokio::test]
     async fn test_wal08_per_account_unlock_status() {
         let svc = test_service();
-        svc.unlock("0xalice", "password123").await.expect("unlock alice");
+        svc.unlock("0xalice", "password123")
+            .await
+            .expect("unlock alice");
 
         assert!(svc.is_account_unlocked("0xalice").await);
         assert!(!svc.is_account_unlocked("0xbob").await);
 
         // Unlock bob too.
-        svc.unlock("0xbob", "password123").await.expect("unlock bob");
+        svc.unlock("0xbob", "password123")
+            .await
+            .expect("unlock bob");
         assert!(svc.is_account_unlocked("0xalice").await);
         assert!(svc.is_account_unlocked("0xbob").await);
 
@@ -1605,7 +1786,9 @@ mod tests {
     #[tokio::test]
     async fn test_lock_then_send_fails() {
         let svc = test_service();
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
         svc.lock().await.expect("lock succeeded");
         let result = svc.send_transaction("0xfrom", "0xto", "1000", "pwd").await;
         match result {
@@ -1617,7 +1800,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_wallet_returns_address() {
         let svc = test_service();
-        let result = svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        let result = svc
+            .create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         assert!(result.address.starts_with("0x"));
         assert_eq!(result.address.len(), 42); // 0x + 40 hex chars
     }
@@ -1625,7 +1811,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_wallet_returns_public_key() {
         let svc = test_service();
-        let result = svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        let result = svc
+            .create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         assert!(!result.public_key.is_empty());
         assert_eq!(result.public_key.len(), 64); // 32 bytes hex
     }
@@ -1662,7 +1851,9 @@ mod tests {
     async fn test_multiple_unlock_lock_cycles() {
         let svc = test_service();
         for _ in 0..5 {
-            svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+            svc.unlock("0xabc", "password123")
+                .await
+                .expect("async operation succeeded");
             assert!(svc.get_session_status().await.is_active);
             svc.lock().await.expect("lock succeeded");
             assert!(!svc.get_session_status().await.is_active);
@@ -1672,13 +1863,17 @@ mod tests {
     #[tokio::test]
     async fn test_send_with_various_amounts() {
         let svc = test_service();
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
 
         for amount in ["0", "1", "1000000000000000000", "999999999999999999999"] {
             // NAT-B-002: filler password must now be a *valid* one — the
             // signer verifies it. (Was "pwd"; behaviour under test is the
             // amount handling, not the password.)
-            let result = svc.send_transaction("0xfrom", "0xto", amount, "password123").await;
+            let result = svc
+                .send_transaction("0xfrom", "0xto", amount, "password123")
+                .await;
             assert!(result.is_ok(), "Send should succeed for amount {}", amount);
         }
     }
@@ -1738,7 +1933,9 @@ mod tests {
     #[tokio::test]
     async fn test_primary_address_returns_first_account() {
         let svc = test_service();
-        svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        svc.create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         let addr = svc.get_primary_address().await;
         assert!(addr.is_some());
         assert!(addr.expect("test assertion").starts_with("0x"));
@@ -1748,7 +1945,9 @@ mod tests {
     async fn test_not_first_run_after_create() {
         let svc = test_service();
         assert!(svc.is_first_run().await);
-        svc.create_wallet("strongpassword123").await.expect("async operation succeeded");
+        svc.create_wallet("strongpassword123")
+            .await
+            .expect("async operation succeeded");
         assert!(!svc.is_first_run().await);
     }
 
@@ -1767,16 +1966,30 @@ mod tests {
                     is_default: true,
                 }])
             }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
                 Ok(CreateAccountResult {
                     address: "0xcustom".to_string(),
                     mnemonic: "custom words here".to_string(),
                     public_key: "aabbccdd".to_string(),
                 })
             }
-            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Ok("0xcustomhash".to_string())
             }
         }
@@ -1796,13 +2009,29 @@ mod tests {
 
         #[async_trait::async_trait]
         impl WalletBackend for FailingBackend {
-            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+                Ok(vec![])
+            }
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
                 Err(AppError::Wallet("disk write failed".into()))
             }
-            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Err(AppError::Network("offline".into()))
             }
         }
@@ -1819,17 +2048,33 @@ mod tests {
 
         #[async_trait::async_trait]
         impl WalletBackend for FailSendBackend {
-            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+                Ok(vec![])
+            }
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
                 Ok(CreateAccountResult {
                     address: "0xabc".into(),
                     mnemonic: "words".into(),
                     public_key: "pk".into(),
                 })
             }
-            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Err(AppError::InsufficientFunds {
                     have: "1 SALT".into(),
                     need: "100 SALT".into(),
@@ -1839,7 +2084,9 @@ mod tests {
 
         let events = Arc::new(EventBus::new());
         let svc = WalletService::with_backend(events, Arc::new(FailSendBackend));
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
         let result = svc.send_transaction("0xfrom", "0xto", "100", "pwd").await;
         assert!(result.is_err());
         match result.expect_err("expected error") {
@@ -1854,15 +2101,33 @@ mod tests {
 
         #[async_trait::async_trait]
         impl WalletBackend for StrictBackend {
-            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
-                Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+                Ok(vec![])
+            }
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
+                Ok(CreateAccountResult {
+                    address: "0x".into(),
+                    mnemonic: "w".into(),
+                    public_key: "k".into(),
+                })
             }
             async fn unlock(&self, _: &str, password: &str) -> Result<bool, AppError> {
                 Ok(password == "correct_password")
             }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Ok("0x".into())
             }
         }
@@ -1883,16 +2148,40 @@ mod tests {
 
         #[async_trait::async_trait]
         impl WalletBackend for ExportBackend {
-            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
-                Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+                Ok(vec![])
             }
-            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
+                Ok(CreateAccountResult {
+                    address: "0x".into(),
+                    mnemonic: "w".into(),
+                    public_key: "k".into(),
+                })
+            }
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Ok("0x".into())
             }
-            async fn export_private_key(&self, _: &str, password: &str) -> Result<String, AppError> {
+            async fn export_private_key(
+                &self,
+                _: &str,
+                password: &str,
+            ) -> Result<String, AppError> {
                 if password == "correct" {
                     Ok("00".repeat(32))
                 } else {
@@ -1933,17 +2222,45 @@ mod tests {
 
         #[async_trait::async_trait]
         impl WalletBackend for ExportBackend {
-            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
-            async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
-                Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+                Ok(vec![])
             }
-            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-            async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-            async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+            async fn create_wallet(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<CreateAccountResult, AppError> {
+                Ok(CreateAccountResult {
+                    address: "0x".into(),
+                    mnemonic: "w".into(),
+                    public_key: "k".into(),
+                })
+            }
+            async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            async fn lock(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn send_transaction(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<String, AppError> {
                 Ok("0x".into())
             }
-            async fn export_private_key(&self, _: &str, password: &str) -> Result<String, AppError> {
-                if password == "correct" { Ok("ab".repeat(32)) } else { Err(AppError::Wallet("Invalid password".into())) }
+            async fn export_private_key(
+                &self,
+                _: &str,
+                password: &str,
+            ) -> Result<String, AppError> {
+                if password == "correct" {
+                    Ok("ab".repeat(32))
+                } else {
+                    Err(AppError::Wallet("Invalid password".into()))
+                }
             }
         }
 

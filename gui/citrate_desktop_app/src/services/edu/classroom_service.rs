@@ -3,8 +3,8 @@
 //! Data source: ClassroomClusterV1 (0x71C9...292e) via eth_call on chain 40204.
 //! Covers: classroom CRUD, org/classroom roles, device registry, student transfers.
 
-use crate::error::AppError;
 use super::abi;
+use crate::error::AppError;
 
 /// Contract address on chain 40204 (deployed 2026-04-05).
 const CLUSTER_ADDRESS: &str = "0xe0B39353F69b54e945364ffcdDD7901697Ca0166";
@@ -83,7 +83,11 @@ pub trait ClassroomBackend: Send + Sync {
     async fn get_org_role(&self, address: &str) -> Result<OrgRole, AppError>;
 
     /// Get a user's role in a specific classroom.
-    async fn get_classroom_role(&self, classroom_id: u64, address: &str) -> Result<ClassroomRole, AppError>;
+    async fn get_classroom_role(
+        &self,
+        classroom_id: u64,
+        address: &str,
+    ) -> Result<ClassroomRole, AppError>;
 
     /// Check if a device cert is active.
     async fn is_device_active(&self, cert_hash: &str) -> Result<bool, AppError>;
@@ -114,21 +118,26 @@ impl RpcClassroomBackend {
             "id": 1,
         });
 
-        let resp = self.client.post(&self.rpc_url)
+        let resp = self
+            .client
+            .post(&self.rpc_url)
             .json(&body)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Cluster RPC call failed: {}", e)))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Cluster response parse failed: {}", e)))?;
 
         json.get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                let err_msg = json.get("error")
+                let err_msg = json
+                    .get("error")
                     .and_then(|e| e.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
@@ -177,16 +186,23 @@ impl ClassroomBackend for RpcClassroomBackend {
 
     /// Data source: ClassroomClusterV1.getOrgRole(address) via eth_call
     async fn get_org_role(&self, address: &str) -> Result<OrgRole, AppError> {
-        let data = abi::encode_call_address("getOrgRole(address)", address).map_err(AppError::ChainQuery)?;
+        let data = abi::encode_call_address("getOrgRole(address)", address)
+            .map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;
         let code = abi::decode_uint8(&result).unwrap_or(0);
         Ok(OrgRole::from(code))
     }
 
     /// Data source: ClassroomClusterV1.getClassroomRole(uint256,address) via eth_call
-    async fn get_classroom_role(&self, classroom_id: u64, address: &str) -> Result<ClassroomRole, AppError> {
+    async fn get_classroom_role(
+        &self,
+        classroom_id: u64,
+        address: &str,
+    ) -> Result<ClassroomRole, AppError> {
         let data = abi::encode_call_uint256_address(
-            "getClassroomRole(uint256,address)", classroom_id, address,
+            "getClassroomRole(uint256,address)",
+            classroom_id,
+            address,
         )
         .map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;

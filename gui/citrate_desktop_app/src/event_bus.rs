@@ -44,25 +44,16 @@ pub enum AppEvent {
     },
 
     /// Error occurred in background service
-    BackgroundError {
-        service: String,
-        message: String,
-    },
+    BackgroundError { service: String, message: String },
 
     /// Editor buffer content changed (needs re-render)
-    EditorBufferChanged {
-        buffer_id: String,
-    },
+    EditorBufferChanged { buffer_id: String },
 
     /// Terminal output ready (needs re-render)
-    TerminalOutputReady {
-        session_id: String,
-    },
+    TerminalOutputReady { session_id: String },
 
     /// Terminal session closed
-    TerminalSessionClosed {
-        session_id: String,
-    },
+    TerminalSessionClosed { session_id: String },
 
     /// Git status changed
     GitStatusChanged {
@@ -75,10 +66,7 @@ pub enum AppEvent {
     FileTreeChanged,
 
     /// File system watch event
-    FileWatchEvent {
-        path: String,
-        event_type: String,
-    },
+    FileWatchEvent { path: String, event_type: String },
 
     /// Compilation completed
     CompileCompleted {
@@ -119,7 +107,7 @@ pub enum AppEvent {
     /// audit log see the conversation that prompted each tool call,
     /// not just the tool calls themselves.
     ChatMessage {
-        role: String,    // "user" | "assistant" | "system"
+        role: String, // "user" | "assistant" | "system"
         content: String,
         chars: usize,
     },
@@ -367,7 +355,11 @@ mod tests {
         };
         let cloned = event.clone();
         match cloned {
-            AppEvent::TransactionConfirmed { tx_hash, block_height, success } => {
+            AppEvent::TransactionConfirmed {
+                tx_hash,
+                block_height,
+                success,
+            } => {
                 assert_eq!(tx_hash, "0xabc");
                 assert_eq!(block_height, 100);
                 assert!(success);
@@ -379,12 +371,34 @@ mod tests {
     #[test]
     fn test_all_event_variants_constructible() {
         let events: [AppEvent; 6] = [
-            AppEvent::NodeStatusChanged { running: true, block_height: 0, peer_count: 0, syncing: false },
-            AppEvent::BalanceUpdated { address: "0x".into(), balance_wei: "0".into() },
-            AppEvent::RewardReceived { block_height: 0, amount_wei: "0".into() },
-            AppEvent::TransactionConfirmed { tx_hash: "0x".into(), block_height: 0, success: false },
-            AppEvent::ModelDownloadProgress { model_name: "m".into(), progress_percent: 0.0, status: "s".into() },
-            AppEvent::BackgroundError { service: "s".into(), message: "m".into() },
+            AppEvent::NodeStatusChanged {
+                running: true,
+                block_height: 0,
+                peer_count: 0,
+                syncing: false,
+            },
+            AppEvent::BalanceUpdated {
+                address: "0x".into(),
+                balance_wei: "0".into(),
+            },
+            AppEvent::RewardReceived {
+                block_height: 0,
+                amount_wei: "0".into(),
+            },
+            AppEvent::TransactionConfirmed {
+                tx_hash: "0x".into(),
+                block_height: 0,
+                success: false,
+            },
+            AppEvent::ModelDownloadProgress {
+                model_name: "m".into(),
+                progress_percent: 0.0,
+                status: "s".into(),
+            },
+            AppEvent::BackgroundError {
+                service: "s".into(),
+                message: "m".into(),
+            },
         ];
         assert_eq!(events.len(), 6);
     }

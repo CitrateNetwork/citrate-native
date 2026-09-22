@@ -3,8 +3,8 @@
 //! Data source: BudgetAllocation (0x7125...3e) via eth_call on chain 40204.
 //! Queries per-classroom budget status: allocated, remaining, spent, monthly limit.
 
-use crate::error::AppError;
 use super::abi;
+use crate::error::AppError;
 
 /// Contract address on chain 40204 (deployed 2026-04-05).
 const BUDGET_ADDRESS: &str = "0xAd5d57aD9bB17d34Debb88566ab2F5dB879Cc46F";
@@ -54,21 +54,26 @@ impl RpcBudgetBackend {
             "id": 1,
         });
 
-        let resp = self.client.post(&self.rpc_url)
+        let resp = self
+            .client
+            .post(&self.rpc_url)
             .json(&body)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Budget RPC call failed: {}", e)))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Budget response parse failed: {}", e)))?;
 
         json.get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                let err_msg = json.get("error")
+                let err_msg = json
+                    .get("error")
                     .and_then(|e| e.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");

@@ -26,27 +26,39 @@ impl IpfsTrackingNodeBackend {
     }
 
     fn was_ipfs_initialized(&self) -> bool {
-        self.ipfs_initialized.load(std::sync::atomic::Ordering::SeqCst)
+        self.ipfs_initialized
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 #[async_trait::async_trait]
 impl NodeBackend for IpfsTrackingNodeBackend {
     async fn start_node(&self, _chain_id: u64, _data_dir: &str) -> Result<(), AppError> {
-        self.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         // In production, IPFS daemon should auto-initialize here
         // This test backend tracks whether the call was made
-        self.ipfs_initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ipfs_initialized
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     async fn stop_node(&self) -> Result<(), AppError> {
-        self.started.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.started
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
-    async fn get_block_height(&self) -> u64 { 0 }
-    async fn get_peer_count(&self) -> u32 { 0 }
-    async fn get_mempool_size(&self) -> usize { 0 }
-    async fn get_balance(&self, _: &[u8; 20]) -> String { "0".to_string() }
+    async fn get_block_height(&self) -> u64 {
+        0
+    }
+    async fn get_peer_count(&self) -> u32 {
+        0
+    }
+    async fn get_mempool_size(&self) -> usize {
+        0
+    }
+    async fn get_balance(&self, _: &[u8; 20]) -> String {
+        "0".to_string()
+    }
 }
 
 fn test_node_with_ipfs() -> (NodeService, Arc<IpfsTrackingNodeBackend>) {
@@ -67,7 +79,10 @@ async fn test_ipfs_initializes_on_node_start() {
     assert!(!backend.was_ipfs_initialized());
 
     svc.start().await.expect("node start");
-    assert!(backend.was_ipfs_initialized(), "IPFS should initialize when node starts");
+    assert!(
+        backend.was_ipfs_initialized(),
+        "IPFS should initialize when node starts"
+    );
 }
 
 #[tokio::test]
@@ -109,8 +124,14 @@ fn test_daemon_config_defaults() {
     let config = citrate_storage::ipfs::DaemonConfig::default();
     assert!(config.auto_start);
     assert!(config.auto_download);
-    assert!(config.api_addr.contains("5001"), "API addr should contain port 5001");
-    assert!(config.gateway_addr.contains("8080"), "Gateway addr should contain port 8080");
+    assert!(
+        config.api_addr.contains("5001"),
+        "API addr should contain port 5001"
+    );
+    assert!(
+        config.gateway_addr.contains("8080"),
+        "Gateway addr should contain port 8080"
+    );
 }
 
 #[test]
@@ -163,7 +184,8 @@ fn test_model_metadata_serialization() {
     assert!(json.contains("qwen2.5-0.5b"));
     assert!(json.contains("469000000"));
 
-    let parsed: citrate_storage::ipfs::ModelMetadata = serde_json::from_str(&json).expect("deserialize");
+    let parsed: citrate_storage::ipfs::ModelMetadata =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(parsed.name, "qwen2.5-0.5b");
     assert_eq!(parsed.size_bytes, 469_000_000);
 }
@@ -186,7 +208,15 @@ fn test_pin_reward_for_large_model() {
         created_at: 0,
     };
 
-    svc.record_external_pin(cid.clone(), "node-1".to_string(), metadata.clone(), metadata.size_bytes);
+    svc.record_external_pin(
+        cid.clone(),
+        "node-1".to_string(),
+        metadata.clone(),
+        metadata.size_bytes,
+    );
     let reward = svc.calculate_pin_reward(&cid, 24);
-    assert!(reward > 0, "Large model pinning should earn non-zero reward");
+    assert!(
+        reward > 0,
+        "Large model pinning should earn non-zero reward"
+    );
 }

@@ -4,8 +4,8 @@
 //! Constructs ForwardRequest structs for student sponsored transactions.
 //! Manages nonce tracking and device binding validation.
 
-use crate::error::AppError;
 use super::abi;
+use crate::error::AppError;
 
 /// Forwarder (EIP-2771) contract address on chain 40204.
 ///
@@ -23,13 +23,13 @@ const FORWARDER_ADDRESS: &str = "0xcb5fcad35f892e7e1da4bb4d17a48dd9e056583e";
 /// A meta-transaction forward request matching the Solidity struct.
 #[derive(Debug, Clone)]
 pub struct ForwardRequest {
-    pub org_principal_id: String,  // bytes32 hex
+    pub org_principal_id: String, // bytes32 hex
     pub classroom_id: u64,
     pub nonce: u64,
     pub session_expiry: u64,
-    pub device_cert_hash: String,  // bytes32 hex
-    pub target: String,            // address
-    pub data: Vec<u8>,             // calldata
+    pub device_cert_hash: String, // bytes32 hex
+    pub target: String,           // address
+    pub data: Vec<u8>,            // calldata
 }
 
 /// Relayer status.
@@ -85,21 +85,26 @@ impl RpcForwarderBackend {
             "id": 1,
         });
 
-        let resp = self.client.post(&self.rpc_url)
+        let resp = self
+            .client
+            .post(&self.rpc_url)
             .json(&body)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Forwarder RPC call failed: {}", e)))?;
 
-        let json: serde_json::Value = resp.json().await
+        let json: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Forwarder response parse failed: {}", e)))?;
 
         json.get("result")
             .and_then(|r| r.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                let err_msg = json.get("error")
+                let err_msg = json
+                    .get("error")
                     .and_then(|e| e.get("message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown error");
@@ -128,7 +133,8 @@ impl ForwarderBackend for RpcForwarderBackend {
 
     /// Data source: Forwarder.isRelayer(address) via eth_call
     async fn is_relayer(&self, address: &str) -> Result<bool, AppError> {
-        let data = abi::encode_call_address("isRelayer(address)", address).map_err(AppError::ChainQuery)?;
+        let data = abi::encode_call_address("isRelayer(address)", address)
+            .map_err(AppError::ChainQuery)?;
         let result = self.eth_call(&data).await?;
         Ok(abi::decode_bool(&result))
     }
@@ -167,15 +173,16 @@ impl ForwarderBackend for RpcForwarderBackend {
     ///   tuple: 7 static words (data offset = 0xe0) + data length + padded data
     ///   sig:   length word (0 — the relayer attaches the signature)
     fn encode_execute_call(&self, req: &ForwardRequest) -> Result<Vec<u8>, AppError> {
-        let sel = abi::selector("execute((bytes32,uint256,uint256,uint256,bytes32,address,bytes),bytes)");
+        let sel =
+            abi::selector("execute((bytes32,uint256,uint256,uint256,bytes32,address,bytes),bytes)");
 
         // Validated fixed-width hex — malformed fields err, never pad.
         let org_id = abi::require_hex(&req.org_principal_id, 64, "org_principal_id")
             .map_err(AppError::ChainQuery)?;
         let device = abi::require_hex(&req.device_cert_hash, 64, "device_cert_hash")
             .map_err(AppError::ChainQuery)?;
-        let target = abi::require_hex(&req.target, 40, "target address")
-            .map_err(AppError::ChainQuery)?;
+        let target =
+            abi::require_hex(&req.target, 40, "target address").map_err(AppError::ChainQuery)?;
 
         let data_hex = hex::encode(&req.data);
         let data_len = req.data.len();
@@ -196,7 +203,7 @@ impl ForwarderBackend for RpcForwarderBackend {
         encoded.push_str(&format!("{:0>64x}", req.session_expiry)); // sessionExpiry
         encoded.push_str(&format!("{:0>64}", device)); // deviceCertHash (bytes32)
         encoded.push_str(&format!("{:0>64}", target)); // target (address, left-padded)
-        // data offset within the tuple = 7 * 32 = 0xe0
+                                                       // data offset within the tuple = 7 * 32 = 0xe0
         encoded.push_str(&format!("{:0>64x}", 0xe0u64));
         // data length + right-padded content
         encoded.push_str(&format!("{:0>64x}", data_len));
@@ -237,7 +244,10 @@ mod tests {
 
     fn word_u64(enc: &[u8], word_idx: usize) -> u64 {
         let w = &enc[4 + word_idx * 32..4 + (word_idx + 1) * 32];
-        assert!(w[..24].iter().all(|b| *b == 0), "word {word_idx} overflows u64");
+        assert!(
+            w[..24].iter().all(|b| *b == 0),
+            "word {word_idx} overflows u64"
+        );
         u64::from_be_bytes(w[24..32].try_into().unwrap())
     }
 
@@ -249,13 +259,19 @@ mod tests {
     fn execute_encoding_is_canonical_abi() {
         let backend = RpcForwarderBackend::new("http://127.0.0.1:1");
         let data = vec![0xde, 0xad, 0xbe, 0xef, 0x01]; // 5 bytes → pads to 32
-        let enc = backend.encode_execute_call(&sample_request(data)).expect("encodes");
+        let enc = backend
+            .encode_execute_call(&sample_request(data))
+            .expect("encodes");
 
         // Head: tuple offset, then signature offset.
         assert_eq!(word_u64(&enc, 0), 0x40, "tuple offset");
         // tuple = 7 head words + data length word + 1 padded data word
         //       = 7*32 + 32 + 32 = 288; sig offset = 0x40 + 288 = 0x160.
-        assert_eq!(word_u64(&enc, 1), 0x160, "signature offset must point just past the tuple");
+        assert_eq!(
+            word_u64(&enc, 1),
+            0x160,
+            "signature offset must point just past the tuple"
+        );
 
         // Tuple fields (words 2..=8).
         assert_eq!(word_u64(&enc, 3), 7, "classroomId");
@@ -279,15 +295,24 @@ mod tests {
 
         let mut short_org = sample_request(vec![]);
         short_org.org_principal_id = "0xabcd".into();
-        assert!(backend.encode_execute_call(&short_org).is_err(), "short org_principal_id");
+        assert!(
+            backend.encode_execute_call(&short_org).is_err(),
+            "short org_principal_id"
+        );
 
         let mut bad_device = sample_request(vec![]);
         bad_device.device_cert_hash = format!("0x{}", "zz".repeat(32));
-        assert!(backend.encode_execute_call(&bad_device).is_err(), "non-hex device_cert_hash");
+        assert!(
+            backend.encode_execute_call(&bad_device).is_err(),
+            "non-hex device_cert_hash"
+        );
 
         let mut short_target = sample_request(vec![]);
         short_target.target = "0x1234".into();
-        assert!(backend.encode_execute_call(&short_target).is_err(), "short target address");
+        assert!(
+            backend.encode_execute_call(&short_target).is_err(),
+            "short target address"
+        );
     }
 
     #[test]
@@ -300,6 +325,8 @@ mod tests {
         // Sanity: 0x + 40 lowercase hex.
         assert!(FORWARDER_ADDRESS.starts_with("0x"));
         assert_eq!(FORWARDER_ADDRESS.len(), 42);
-        assert!(FORWARDER_ADDRESS[2..].chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(FORWARDER_ADDRESS[2..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
     }
 }

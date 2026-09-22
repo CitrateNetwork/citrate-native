@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
     pub id: String,
-    pub role: String,     // "user", "assistant", "system", "tool_request", "tool_result"
+    pub role: String, // "user", "assistant", "system", "tool_request", "tool_result"
     pub content: String,
     pub timestamp: u64,
     pub tool_action: Option<ToolAction>,
@@ -27,9 +27,9 @@ pub struct ChatMessage {
 /// A tool action requested by the AI.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolAction {
-    pub tool_type: String,   // "send_tx", "check_balance", "deploy_contract", "query_chain"
-    pub params: String,      // JSON-encoded parameters
-    pub status: String,      // "pending", "approved", "rejected", "executing", "completed", "failed"
+    pub tool_type: String, // "send_tx", "check_balance", "deploy_contract", "query_chain"
+    pub params: String,    // JSON-encoded parameters
+    pub status: String,    // "pending", "approved", "rejected", "executing", "completed", "failed"
     pub result: Option<String>,
 }
 
@@ -37,7 +37,7 @@ pub struct ToolAction {
 #[derive(Debug, Clone, Default)]
 pub struct ChatRequest {
     pub model: String,
-    pub messages: Vec<(String, String)>,   // (role, content) pairs
+    pub messages: Vec<(String, String)>, // (role, content) pairs
     pub max_tokens: u32,
     pub temperature: f32,
     /// Structured tool definitions (OpenAI format). When present, the backend
@@ -126,7 +126,8 @@ impl RpcChatBackend {
 #[async_trait::async_trait]
 impl ChatBackend for RpcChatBackend {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ChatResponse, AppError> {
-        let messages: Vec<serde_json::Value> = request.messages
+        let messages: Vec<serde_json::Value> = request
+            .messages
             .iter()
             .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
             .collect();
@@ -144,7 +145,8 @@ impl ChatBackend for RpcChatBackend {
             "id": 1,
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.rpc_url)
             .json(&body)
             .send()
@@ -157,11 +159,15 @@ impl ChatBackend for RpcChatBackend {
             .map_err(|e| AppError::Network(format!("Chat response parse failed: {}", e)))?;
 
         if let Some(error) = json.get("error") {
-            let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("RPC error");
+            let msg = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("RPC error");
             return Err(AppError::Network(msg.to_string()));
         }
 
-        let result = json.get("result")
+        let result = json
+            .get("result")
             .ok_or_else(|| AppError::Network("No result in chat response".to_string()))?;
 
         let content = result
@@ -170,7 +176,8 @@ impl ChatBackend for RpcChatBackend {
             .unwrap_or("No response from model.")
             .to_string();
 
-        let model = result.get("model")
+        let model = result
+            .get("model")
             .and_then(|m| m.as_str())
             .unwrap_or(&request.model)
             .to_string();
@@ -248,7 +255,8 @@ impl OpenAICompatibleBackend {
 #[async_trait::async_trait]
 impl ChatBackend for OpenAICompatibleBackend {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ChatResponse, AppError> {
-        let messages: Vec<serde_json::Value> = request.messages
+        let messages: Vec<serde_json::Value> = request
+            .messages
             .iter()
             .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
             .collect();
@@ -266,7 +274,8 @@ impl ChatBackend for OpenAICompatibleBackend {
             }
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.api_url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
@@ -281,7 +290,10 @@ impl ChatBackend for OpenAICompatibleBackend {
             .map_err(|e| AppError::Network(format!("OpenAI response parse failed: {}", e)))?;
 
         if let Some(error) = json.get("error") {
-            let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("API error");
+            let msg = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("API error");
             return Err(AppError::Network(msg.to_string()));
         }
 
@@ -291,7 +303,8 @@ impl ChatBackend for OpenAICompatibleBackend {
             .unwrap_or("No response.")
             .to_string();
 
-        let model = json.get("model")
+        let model = json
+            .get("model")
             .and_then(|m| m.as_str())
             .unwrap_or(&request.model)
             .to_string();
@@ -306,13 +319,21 @@ impl ChatBackend for OpenAICompatibleBackend {
             .pointer("/choices/0/message/tool_calls")
             .and_then(|tc| tc.as_array())
             .map(|calls| {
-                calls.iter().filter_map(|call| {
-                    let id = call.get("id")?.as_str()?.to_string();
-                    let name = call.pointer("/function/name")?.as_str()?.to_string();
-                    let args_str = call.pointer("/function/arguments")?.as_str()?;
-                    let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                    Some(NormalizedToolCall { id, name, arguments })
-                }).collect()
+                calls
+                    .iter()
+                    .filter_map(|call| {
+                        let id = call.get("id")?.as_str()?.to_string();
+                        let name = call.pointer("/function/name")?.as_str()?.to_string();
+                        let args_str = call.pointer("/function/arguments")?.as_str()?;
+                        let arguments =
+                            serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                        Some(NormalizedToolCall {
+                            id,
+                            name,
+                            arguments,
+                        })
+                    })
+                    .collect()
             })
             .unwrap_or_default();
 
@@ -352,7 +373,10 @@ pub struct FallbackChatBackend {
 
 impl FallbackChatBackend {
     pub fn new(primary: Arc<dyn ChatBackend>) -> Self {
-        Self { primary, fallback: None }
+        Self {
+            primary,
+            fallback: None,
+        }
     }
 
     pub fn with_fallback(mut self, fallback: Arc<dyn ChatBackend>) -> Self {
@@ -378,8 +402,8 @@ impl ChatBackend for FallbackChatBackend {
     }
 
     async fn is_connected(&self) -> bool {
-        self.primary.is_connected().await ||
-            self.fallback.as_ref().map_or(false, |_| {
+        self.primary.is_connected().await
+            || self.fallback.as_ref().map_or(false, |_| {
                 // Can't easily call async in map_or, just return true if fallback exists
                 true
             })
@@ -484,7 +508,11 @@ impl ChatService {
     }
 
     /// Create with injected backend and explicit model name.
-    pub fn with_backend_and_model(events: Arc<EventBus>, backend: Arc<dyn ChatBackend>, model: &str) -> Self {
+    pub fn with_backend_and_model(
+        events: Arc<EventBus>,
+        backend: Arc<dyn ChatBackend>,
+        model: &str,
+    ) -> Self {
         Self {
             events,
             backend,
@@ -538,11 +566,17 @@ impl ChatService {
     pub fn pick_best_model(models: &[String]) -> Option<String> {
         // Prefer small/fast models explicitly — order matters
         let fast_models = [
-            "qwen2.5:1.5b", "qwen2.5:3b", "qwen2.5:7b",
-            "mistral:7b", "mistral:latest",
-            "llama3.1:8b", "llama3.2:3b",
-            "phi3:3.8b", "phi:latest",
-            "gemma:2b", "gemma:7b",
+            "qwen2.5:1.5b",
+            "qwen2.5:3b",
+            "qwen2.5:7b",
+            "mistral:7b",
+            "mistral:latest",
+            "llama3.1:8b",
+            "llama3.2:3b",
+            "phi3:3.8b",
+            "phi:latest",
+            "gemma:2b",
+            "gemma:7b",
         ];
         for fast in &fast_models {
             if let Some(m) = models.iter().find(|m| m.to_lowercase().contains(fast)) {
@@ -570,9 +604,13 @@ impl ChatService {
         // 1. Try Ollama (preferred — GPU-accelerated, manages models)
         let ollama_models = Self::detect_ollama_models().await;
         if !ollama_models.is_empty() {
-            let best = Self::pick_best_model(&ollama_models)
-                .unwrap_or_else(|| ollama_models[0].clone());
-            tracing::info!("Detected Ollama with {} models, selected: {}", ollama_models.len(), best);
+            let best =
+                Self::pick_best_model(&ollama_models).unwrap_or_else(|| ollama_models[0].clone());
+            tracing::info!(
+                "Detected Ollama with {} models, selected: {}",
+                ollama_models.len(),
+                best
+            );
             return DetectedBackend {
                 display_name: format!("{} (Ollama)", best),
                 model_id: best,
@@ -604,8 +642,7 @@ impl ChatService {
             files.into_iter().next()
         }
 
-        let model_dir = dirs::data_local_dir()
-            .map(|d| d.join("citrate").join("models"));
+        let model_dir = dirs::data_local_dir().map(|d| d.join("citrate").join("models"));
         if let Some(ref dir) = model_dir {
             if dir.exists() {
                 if let Some(first) = pick_local_gguf(dir) {
@@ -662,7 +699,13 @@ impl ChatService {
     /// against the `eth_getBalance` result before passing it here.
     /// Feeding raw grains caused the "18 trailing zeros" chat bug — the
     /// LLM echoed the 25-digit integer back as the user's balance.
-    pub async fn set_context(&self, address: &str, balance: &str, network: &str, block_height: u64) {
+    pub async fn set_context(
+        &self,
+        address: &str,
+        balance: &str,
+        network: &str,
+        block_height: u64,
+    ) {
         let chain_id = crate::chain_id_for_network(network);
         let prompt = format!(
             "You are a Citrate blockchain assistant running natively on the Citrate network.\n\
@@ -709,7 +752,8 @@ impl ChatService {
             request_messages.push(("system".to_string(), system.clone()));
         }
         // Rolling window: only include last 10 messages to limit context growth
-        let relevant: Vec<_> = messages.iter()
+        let relevant: Vec<_> = messages
+            .iter()
             .filter(|m| m.role == "user" || m.role == "assistant")
             .collect();
         let window_start = relevant.len().saturating_sub(10);
@@ -762,7 +806,8 @@ impl ChatService {
         F: Fn(String, serde_json::Value) -> Fut,
         Fut: std::future::Future<Output = Result<String, String>>,
     {
-        self.send_message_with_tools_streaming(user_message, tool_defs, tool_executor, |_| {}).await
+        self.send_message_with_tools_streaming(user_message, tool_defs, tool_executor, |_| {})
+            .await
     }
 
     /// Like send_message_with_tools, but calls `on_chunk` with intermediate content
@@ -801,7 +846,10 @@ impl ChatService {
         loop {
             iteration += 1;
             if iteration > max_iterations {
-                tracing::warn!("Chat: tool loop exceeded {} iterations, stopping", max_iterations);
+                tracing::warn!(
+                    "Chat: tool loop exceeded {} iterations, stopping",
+                    max_iterations
+                );
                 break;
             }
 
@@ -815,7 +863,8 @@ impl ChatService {
                 request_messages.push(("system".to_string(), system.clone()));
             }
             // Rolling window: last 10 messages to limit context growth
-            let relevant: Vec<_> = messages.iter()
+            let relevant: Vec<_> = messages
+                .iter()
                 .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "tool")
                 .collect();
             let window_start = relevant.len().saturating_sub(10);
@@ -829,7 +878,11 @@ impl ChatService {
                 messages: request_messages,
                 max_tokens: self.max_tokens,
                 temperature: self.temperature,
-                tools: if tool_defs.is_empty() { None } else { Some(tool_defs.clone()) },
+                tools: if tool_defs.is_empty() {
+                    None
+                } else {
+                    Some(tool_defs.clone())
+                },
             };
 
             let response = self.backend.chat_completion(request).await?;
@@ -861,7 +914,11 @@ impl ChatService {
                 };
 
                 // Notify listener of tool execution progress
-                on_chunk(&format!("[Tool: {} → {}]", call.name, if success { "ok" } else { "failed" }));
+                on_chunk(&format!(
+                    "[Tool: {} → {}]",
+                    call.name,
+                    if success { "ok" } else { "failed" }
+                ));
 
                 // Add tool result to conversation
                 let tool_msg = ChatMessage {
@@ -872,7 +929,11 @@ impl ChatService {
                     tool_action: Some(ToolAction {
                         tool_type: call.name.clone(),
                         params: serde_json::to_string(&call.arguments).unwrap_or_default(),
-                        status: if success { "completed".to_string() } else { "failed".to_string() },
+                        status: if success {
+                            "completed".to_string()
+                        } else {
+                            "failed".to_string()
+                        },
                         result: Some(result_content),
                     }),
                 };
@@ -946,10 +1007,7 @@ impl ChatService {
     ) -> Self {
         let primary = Arc::new(RpcChatBackend::new(rpc_url));
         let fallback = Arc::new(OpenAICompatibleBackend::new(api_url, api_key));
-        let backend = Arc::new(
-            FallbackChatBackend::new(primary)
-                .with_fallback(fallback)
-        );
+        let backend = Arc::new(FallbackChatBackend::new(primary).with_fallback(fallback));
         Self {
             events,
             backend,

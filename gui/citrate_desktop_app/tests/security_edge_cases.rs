@@ -12,11 +12,9 @@
 
 use citrate_desktop_app::error::AppError;
 use citrate_desktop_app::event_bus::{AppEvent, EventBus};
+use citrate_desktop_app::services::node_service::{NodeBackend, NodeService, NodeStatus};
 use citrate_desktop_app::services::wallet_service::{
     Account, CreateAccountResult, WalletBackend, WalletService,
-};
-use citrate_desktop_app::services::node_service::{
-    NodeBackend, NodeService, NodeStatus,
 };
 use citrate_desktop_app::{AppConfig, AppCore};
 use std::sync::Arc;
@@ -28,12 +26,24 @@ struct LocalTestNodeBackend;
 
 #[async_trait::async_trait]
 impl NodeBackend for LocalTestNodeBackend {
-    async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> { Ok(()) }
-    async fn stop_node(&self) -> Result<(), AppError> { Ok(()) }
-    async fn get_block_height(&self) -> u64 { 0 }
-    async fn get_peer_count(&self) -> u32 { 0 }
-    async fn get_mempool_size(&self) -> usize { 0 }
-    async fn get_balance(&self, _: &[u8; 20]) -> String { "0".to_string() }
+    async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn stop_node(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn get_block_height(&self) -> u64 {
+        0
+    }
+    async fn get_peer_count(&self) -> u32 {
+        0
+    }
+    async fn get_mempool_size(&self) -> usize {
+        0
+    }
+    async fn get_balance(&self, _: &[u8; 20]) -> String {
+        "0".to_string()
+    }
 }
 
 /// Helper: create an AppCore with test node backend (no real storage/networking)
@@ -41,23 +51,64 @@ fn test_app_core() -> AppCore {
     let config = Arc::new(RwLock::new(AppConfig::default()));
     let events = Arc::new(EventBus::new());
     let node = Arc::new(NodeService::with_backend(
-        config.clone(), events.clone(), Arc::new(LocalTestNodeBackend),
+        config.clone(),
+        events.clone(),
+        Arc::new(LocalTestNodeBackend),
     ));
-    let wallet = Arc::new(citrate_desktop_app::services::WalletService::new(events.clone()));
-    let chat = Arc::new(citrate_desktop_app::services::ChatService::new(events.clone(), "https://rpc.citrate.ai"));
-    let models = Arc::new(citrate_desktop_app::services::ModelService::new(events.clone(), "https://rpc.citrate.ai"));
-    let blocks = Arc::new(citrate_desktop_app::services::BlockService::new(events.clone(), "https://rpc.citrate.ai"));
-    let learning = Arc::new(citrate_desktop_app::services::LearningService::new(events.clone(), "https://rpc.citrate.ai"));
-    let compute = Arc::new(citrate_desktop_app::services::ComputeService::new(events.clone(), "https://rpc.citrate.ai"));
-    let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new("test-session", None));
+    let wallet = Arc::new(citrate_desktop_app::services::WalletService::new(
+        events.clone(),
+    ));
+    let chat = Arc::new(citrate_desktop_app::services::ChatService::new(
+        events.clone(),
+        "https://rpc.citrate.ai",
+    ));
+    let models = Arc::new(citrate_desktop_app::services::ModelService::new(
+        events.clone(),
+        "https://rpc.citrate.ai",
+    ));
+    let blocks = Arc::new(citrate_desktop_app::services::BlockService::new(
+        events.clone(),
+        "https://rpc.citrate.ai",
+    ));
+    let learning = Arc::new(citrate_desktop_app::services::LearningService::new(
+        events.clone(),
+        "https://rpc.citrate.ai",
+    ));
+    let compute = Arc::new(citrate_desktop_app::services::ComputeService::new(
+        events.clone(),
+        "https://rpc.citrate.ai",
+    ));
+    let trail = Arc::new(citrate_desktop_app::trail::TrailRecorder::new(
+        "test-session",
+        None,
+    ));
     let approvals = Arc::new(citrate_agent_core::delegation::PendingApprovalStore::new());
     let tool_registry = Arc::new(citrate_agent_core::tool::ToolRegistry::new());
-    let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(tool_registry.clone()));
-    let mcp_host = Arc::new(citrate_desktop_app::services::mcp_host::McpHostService::new(mcp.clone()));
-    let session_policy = Arc::new(RwLock::new(
-        citrate_agent_core::canonical::PolicyProfile::Guided
+    let mcp = Arc::new(citrate_agent_core::mcp_server::McpServer::new(
+        tool_registry.clone(),
     ));
-    AppCore { node, wallet, mcp, mcp_host, session_policy, chat, models, blocks, learning, compute, events, trail, approvals, tool_registry, config }
+    let mcp_host =
+        Arc::new(citrate_desktop_app::services::mcp_host::McpHostService::new(mcp.clone()));
+    let session_policy = Arc::new(RwLock::new(
+        citrate_agent_core::canonical::PolicyProfile::Guided,
+    ));
+    AppCore {
+        node,
+        wallet,
+        mcp,
+        mcp_host,
+        session_policy,
+        chat,
+        models,
+        blocks,
+        learning,
+        compute,
+        events,
+        trail,
+        approvals,
+        tool_registry,
+        config,
+    }
 }
 
 /// Local test wallet backend for integration tests.
@@ -66,19 +117,34 @@ struct LocalTestWalletBackend;
 
 #[async_trait::async_trait]
 impl WalletBackend for LocalTestWalletBackend {
-    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(Vec::new()) }
-    async fn create_wallet(&self, _password: &str, _label: &str) -> Result<CreateAccountResult, AppError> {
+    async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+        Ok(Vec::new())
+    }
+    async fn create_wallet(
+        &self,
+        _password: &str,
+        _label: &str,
+    ) -> Result<CreateAccountResult, AppError> {
         Ok(CreateAccountResult {
             address: "0x0000000000000000000000000000000000000000".to_string(),
             mnemonic: "test mnemonic words for development only not real".to_string(),
-            public_key: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            public_key: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
         })
     }
     async fn unlock(&self, _address: &str, password: &str) -> Result<bool, AppError> {
         Ok(password.len() >= 8)
     }
-    async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-    async fn send_transaction(&self, _from: &str, _to: &str, _value: &str, _password: &str) -> Result<String, AppError> {
+    async fn lock(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn send_transaction(
+        &self,
+        _from: &str,
+        _to: &str,
+        _value: &str,
+        _password: &str,
+    ) -> Result<String, AppError> {
         Ok("0x0000000000000000000000000000000000000000000000000000000000000000".to_string())
     }
 }
@@ -104,7 +170,10 @@ async fn test_address_with_html_injection() {
 #[tokio::test]
 async fn test_address_with_null_bytes() {
     let core = AppCore::new();
-    let result = core.node.get_balance("0x0000\x00000000000000000000000000000000000000").await;
+    let result = core
+        .node
+        .get_balance("0x0000\x00000000000000000000000000000000000000")
+        .await;
     assert!(result.is_err(), "Null bytes in address must be rejected");
 }
 
@@ -118,28 +187,40 @@ async fn test_address_with_unicode() {
 #[tokio::test]
 async fn test_address_with_newlines() {
     let core = AppCore::new();
-    let result = core.node.get_balance("0xb5ddd4eb356ddf3b\nf51eb3aec1ed28213be59129").await;
+    let result = core
+        .node
+        .get_balance("0xb5ddd4eb356ddf3b\nf51eb3aec1ed28213be59129")
+        .await;
     assert!(result.is_err(), "Newlines in address must be rejected");
 }
 
 #[tokio::test]
 async fn test_address_all_zeros() {
     let core = AppCore::new();
-    let result = core.node.get_balance("0x0000000000000000000000000000000000000000").await;
+    let result = core
+        .node
+        .get_balance("0x0000000000000000000000000000000000000000")
+        .await;
     assert!(result.is_ok(), "Zero address should be valid hex");
 }
 
 #[tokio::test]
 async fn test_address_all_ff() {
     let core = AppCore::new();
-    let result = core.node.get_balance("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").await;
+    let result = core
+        .node
+        .get_balance("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+        .await;
     assert!(result.is_ok(), "All-F address should be valid hex");
 }
 
 #[tokio::test]
 async fn test_address_mixed_case() {
     let core = AppCore::new();
-    let result = core.node.get_balance("0xB5dDd4eB356dDf3Bf51eB3AeC1eD28213bE59129").await;
+    let result = core
+        .node
+        .get_balance("0xB5dDd4eB356dDf3Bf51eB3AeC1eD28213bE59129")
+        .await;
     assert!(result.is_ok(), "Mixed case hex should be accepted");
 }
 
@@ -185,7 +266,10 @@ async fn test_password_with_emoji() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
     let result = svc.create_wallet("🔑🔐🔒🔓🔏🔎🔍🗝️").await;
-    assert!(result.is_ok(), "Emoji password should be accepted (8+ chars)");
+    assert!(
+        result.is_ok(),
+        "Emoji password should be accepted (8+ chars)"
+    );
 }
 
 #[tokio::test]
@@ -246,7 +330,9 @@ async fn test_send_without_session_is_blocked() {
 async fn test_send_after_lock_is_blocked() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     svc.lock().await.expect("lock succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "1000", "pwd").await;
     match result {
@@ -260,7 +346,9 @@ async fn test_rapid_lock_unlock_cycles() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
     for _ in 0..100 {
-        svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+        svc.unlock("0xabc", "password123")
+            .await
+            .expect("async operation succeeded");
         assert!(svc.get_session_status().await.is_active);
         svc.lock().await.expect("lock succeeded");
         assert!(!svc.get_session_status().await.is_active);
@@ -271,7 +359,9 @@ async fn test_rapid_lock_unlock_cycles() {
 async fn test_double_lock_is_safe() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     svc.lock().await.expect("lock succeeded");
     svc.lock().await.expect("lock succeeded"); // double lock should not panic
     assert!(!svc.get_session_status().await.is_active);
@@ -281,8 +371,12 @@ async fn test_double_lock_is_safe() {
 async fn test_double_unlock_is_safe() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     assert!(svc.get_session_status().await.is_active);
 }
 
@@ -313,10 +407,9 @@ async fn test_concurrent_event_publish() {
     }
 
     let mut count = 0;
-    while let Ok(Ok(_)) = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv(),
-    ).await {
+    while let Ok(Ok(_)) =
+        tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await
+    {
         count += 1;
     }
     assert_eq!(count, 50, "All 50 concurrent events should be received");
@@ -351,7 +444,9 @@ async fn test_concurrent_balance_queries() {
     for _ in 0..20 {
         let node = node.clone();
         handles.push(tokio::spawn(async move {
-            let result = node.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await;
+            let result = node
+                .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+                .await;
             assert!(result.is_ok());
         }));
     }
@@ -368,7 +463,9 @@ async fn test_concurrent_balance_queries() {
 async fn test_send_zero_amount() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "0", "pwd").await;
     // Zero amount should be allowed (gas-only tx)
     assert!(result.is_ok());
@@ -378,19 +475,28 @@ async fn test_send_zero_amount() {
 async fn test_send_max_u256_amount() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     let max_u256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
-    let result = svc.send_transaction("0xfrom", "0xto", max_u256, "pwd").await;
+    let result = svc
+        .send_transaction("0xfrom", "0xto", max_u256, "pwd")
+        .await;
     // FUA-GUI-03 (WP 6.4b): values beyond u128 are refused at the re-auth
     // chokepoint (fail closed) — and they certainly must not crash.
-    assert!(result.is_err(), "beyond-u128 value must be refused, not passed through");
+    assert!(
+        result.is_err(),
+        "beyond-u128 value must be refused, not passed through"
+    );
 }
 
 #[tokio::test]
 async fn test_send_negative_amount() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "-1000", "pwd").await;
     // FUA-GUI-03 (WP 6.4b): non-parseable (negative) values FAIL CLOSED at
     // the re-auth chokepoint instead of relying on the backend to catch them.
@@ -401,8 +507,12 @@ async fn test_send_negative_amount() {
 async fn test_send_non_numeric_amount() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
-    let result = svc.send_transaction("0xfrom", "0xto", "not_a_number", "pwd").await;
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
+    let result = svc
+        .send_transaction("0xfrom", "0xto", "not_a_number", "pwd")
+        .await;
     // FUA-GUI-03 (WP 6.4b): the chokepoint validates — no fail-open pass-through.
     assert!(result.is_err(), "non-numeric value must be refused");
 }
@@ -411,7 +521,9 @@ async fn test_send_non_numeric_amount() {
 async fn test_send_empty_amount() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
-    svc.unlock("0xabc", "password123").await.expect("async operation succeeded");
+    svc.unlock("0xabc", "password123")
+        .await
+        .expect("async operation succeeded");
     let result = svc.send_transaction("0xfrom", "0xto", "", "pwd").await;
     // FUA-GUI-03 (WP 6.4b): an empty amount is not a wei value — refused.
     assert!(result.is_err(), "empty amount must be refused");
@@ -492,7 +604,9 @@ fn test_config_empty_bootnodes() {
 
 #[test]
 fn test_config_many_bootnodes() {
-    let nodes: Vec<String> = (0..100).map(|i| format!("node{}@1.2.3.4:{}", i, 30000 + i)).collect();
+    let nodes: Vec<String> = (0..100)
+        .map(|i| format!("node{}@1.2.3.4:{}", i, 30000 + i))
+        .collect();
     let config = AppConfig {
         bootnodes: nodes.clone(),
         ..AppConfig::default()
@@ -516,11 +630,21 @@ async fn test_backend_start_failure_propagates() {
         async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
             Err(AppError::Node("port already in use".into()))
         }
-        async fn stop_node(&self) -> Result<(), AppError> { Ok(()) }
-        async fn get_block_height(&self) -> u64 { 0 }
-        async fn get_peer_count(&self) -> u32 { 0 }
-        async fn get_mempool_size(&self) -> usize { 0 }
-        async fn get_balance(&self, _: &[u8; 20]) -> String { "0".into() }
+        async fn stop_node(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn get_block_height(&self) -> u64 {
+            0
+        }
+        async fn get_peer_count(&self) -> u32 {
+            0
+        }
+        async fn get_mempool_size(&self) -> usize {
+            0
+        }
+        async fn get_balance(&self, _: &[u8; 20]) -> String {
+            "0".into()
+        }
     }
 
     let config = Arc::new(RwLock::new(AppConfig::default()));
@@ -542,14 +666,24 @@ async fn test_backend_stop_failure_propagates() {
 
     #[async_trait::async_trait]
     impl NodeBackend for FailStop {
-        async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> { Ok(()) }
+        async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
         async fn stop_node(&self) -> Result<(), AppError> {
             Err(AppError::Node("process not responding".into()))
         }
-        async fn get_block_height(&self) -> u64 { 0 }
-        async fn get_peer_count(&self) -> u32 { 0 }
-        async fn get_mempool_size(&self) -> usize { 0 }
-        async fn get_balance(&self, _: &[u8; 20]) -> String { "0".into() }
+        async fn get_block_height(&self) -> u64 {
+            0
+        }
+        async fn get_peer_count(&self) -> u32 {
+            0
+        }
+        async fn get_mempool_size(&self) -> usize {
+            0
+        }
+        async fn get_balance(&self, _: &[u8; 20]) -> String {
+            "0".into()
+        }
     }
 
     let config = Arc::new(RwLock::new(AppConfig::default()));
@@ -570,22 +704,39 @@ async fn test_wallet_backend_unlock_error_propagates() {
 
     #[async_trait::async_trait]
     impl WalletBackend for ErrorUnlock {
-        async fn load_accounts(&self) -> Result<Vec<Account>, AppError> { Ok(vec![]) }
+        async fn load_accounts(&self) -> Result<Vec<Account>, AppError> {
+            Ok(vec![])
+        }
         async fn create_wallet(&self, _: &str, _: &str) -> Result<CreateAccountResult, AppError> {
-            Ok(CreateAccountResult { address: "0x".into(), mnemonic: "w".into(), public_key: "k".into() })
+            Ok(CreateAccountResult {
+                address: "0x".into(),
+                mnemonic: "w".into(),
+                public_key: "k".into(),
+            })
         }
         async fn unlock(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Err(AppError::Storage("keystore corrupted".into()))
         }
-        async fn lock(&self) -> Result<(), AppError> { Ok(()) }
-        async fn send_transaction(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, AppError> {
+        async fn lock(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn send_transaction(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<String, AppError> {
             Ok("0x".into())
         }
     }
 
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(ErrorUnlock));
-    let err = svc.unlock("0xabc", "password123").await.expect_err("expected error");
+    let err = svc
+        .unlock("0xabc", "password123")
+        .await
+        .expect_err("expected error");
     match err {
         AppError::Storage(msg) => assert!(msg.contains("corrupted")),
         other => panic!("Expected Storage error, got {:?}", other),
@@ -602,7 +753,10 @@ async fn test_full_lifecycle_create_unlock_send_lock() {
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
 
     // Create wallet
-    let result = svc.create_wallet("strongpassword123").await.expect("create wallet");
+    let result = svc
+        .create_wallet("strongpassword123")
+        .await
+        .expect("create wallet");
     assert!(!result.address.is_empty());
 
     // Verify not first run
@@ -613,7 +767,10 @@ async fn test_full_lifecycle_create_unlock_send_lock() {
     assert!(status.is_active);
 
     // Send
-    let tx = svc.send_transaction("0xfrom", "0xto", "1000", "pwd").await.expect("send");
+    let tx = svc
+        .send_transaction("0xfrom", "0xto", "1000", "pwd")
+        .await
+        .expect("send");
     assert!(!tx.is_empty());
 
     // Lock
@@ -632,10 +789,15 @@ async fn test_events_flow_during_lifecycle() {
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
 
     svc.unlock("0x", "password123").await.expect("unlock");
-    svc.send_transaction("0xfrom", "0xto", "1", "p").await.expect("send");
+    svc.send_transaction("0xfrom", "0xto", "1", "p")
+        .await
+        .expect("send");
 
     let event = rx.recv().await.expect("event received");
-    assert!(matches!(event, AppEvent::TransactionConfirmed { success: true, .. }));
+    assert!(matches!(
+        event,
+        AppEvent::TransactionConfirmed { success: true, .. }
+    ));
 }
 
 #[tokio::test]
@@ -643,12 +805,16 @@ async fn test_multiple_wallets_independent() {
     let events = Arc::new(EventBus::new());
     let svc = WalletService::with_backend(events, Arc::new(LocalTestWalletBackend));
 
-    svc.create_wallet("strongpassword1!").await.expect("async operation succeeded");
+    svc.create_wallet("strongpassword1!")
+        .await
+        .expect("async operation succeeded");
     let accounts1 = svc.list_accounts().await;
     assert_eq!(accounts1.len(), 1);
 
     // Creating another wallet adds to the list
-    svc.create_wallet("strongpassword2!").await.expect("async operation succeeded");
+    svc.create_wallet("strongpassword2!")
+        .await
+        .expect("async operation succeeded");
     let accounts2 = svc.list_accounts().await;
     assert_eq!(accounts2.len(), 2);
 }
@@ -721,8 +887,14 @@ async fn test_event_bus_overflow_recovery() {
     }
     // Should have gotten a lag notification plus remaining events
     assert!(lagged > 0, "Should have lagged from buffer overflow");
-    assert!(received > 0, "Should have received events after lag recovery");
-    assert!(received < 300, "Should have missed some events due to overflow");
+    assert!(
+        received > 0,
+        "Should have received events after lag recovery"
+    );
+    assert!(
+        received < 300,
+        "Should have missed some events due to overflow"
+    );
 }
 
 #[tokio::test]
@@ -752,8 +924,15 @@ fn test_error_matches_exhaustively() {
         AppError::Network("".into()),
         AppError::Config("".into()),
         AppError::ChainQuery("".into()),
-        AppError::ContractCall { contract: "".into(), method: "".into(), reason: "".into() },
-        AppError::InsufficientFunds { have: "".into(), need: "".into() },
+        AppError::ContractCall {
+            contract: "".into(),
+            method: "".into(),
+            reason: "".into(),
+        },
+        AppError::InsufficientFunds {
+            have: "".into(),
+            need: "".into(),
+        },
         AppError::InvalidAddress("".into()),
         AppError::SessionExpired,
         AppError::RateLimited("".into()),
@@ -770,30 +949,68 @@ fn test_error_matches_exhaustively() {
 
     for err in errors {
         match &err {
-            AppError::Node(s) => { let _ = s; }
-            AppError::Wallet(s) => { let _ = s; }
-            AppError::Storage(s) => { let _ = s; }
-            AppError::Network(s) => { let _ = s; }
-            AppError::Config(s) => { let _ = s; }
-            AppError::ChainQuery(s) => { let _ = s; }
-            AppError::ContractCall { contract, method, reason } => {
+            AppError::Node(s) => {
+                let _ = s;
+            }
+            AppError::Wallet(s) => {
+                let _ = s;
+            }
+            AppError::Storage(s) => {
+                let _ = s;
+            }
+            AppError::Network(s) => {
+                let _ = s;
+            }
+            AppError::Config(s) => {
+                let _ = s;
+            }
+            AppError::ChainQuery(s) => {
+                let _ = s;
+            }
+            AppError::ContractCall {
+                contract,
+                method,
+                reason,
+            } => {
                 let _ = (contract, method, reason);
             }
             AppError::InsufficientFunds { have, need } => {
                 let _ = (have, need);
             }
-            AppError::InvalidAddress(s) => { let _ = s; }
+            AppError::InvalidAddress(s) => {
+                let _ = s;
+            }
             AppError::SessionExpired => {}
-            AppError::RateLimited(s) => { let _ = s; }
-            AppError::ModelNotLoaded(s) => { let _ = s; }
-            AppError::Editor(s) => { let _ = s; }
-            AppError::Terminal(s) => { let _ = s; }
-            AppError::Git(s) => { let _ = s; }
-            AppError::Compiler(s) => { let _ = s; }
-            AppError::FileSystem(s) => { let _ = s; }
-            AppError::BufferNotFound(s) => { let _ = s; }
-            AppError::SessionNotFound(s) => { let _ = s; }
-            AppError::Internal(e) => { let _ = e; }
+            AppError::RateLimited(s) => {
+                let _ = s;
+            }
+            AppError::ModelNotLoaded(s) => {
+                let _ = s;
+            }
+            AppError::Editor(s) => {
+                let _ = s;
+            }
+            AppError::Terminal(s) => {
+                let _ = s;
+            }
+            AppError::Git(s) => {
+                let _ = s;
+            }
+            AppError::Compiler(s) => {
+                let _ = s;
+            }
+            AppError::FileSystem(s) => {
+                let _ = s;
+            }
+            AppError::BufferNotFound(s) => {
+                let _ = s;
+            }
+            AppError::SessionNotFound(s) => {
+                let _ = s;
+            }
+            AppError::Internal(e) => {
+                let _ = e;
+            }
         }
         // Every variant must produce a non-empty display string
         assert!(!err.to_string().is_empty());

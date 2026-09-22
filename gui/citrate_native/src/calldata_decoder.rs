@@ -186,7 +186,9 @@ mod tests {
     #[test]
     fn erc20_transfer_resolves() {
         // 0xa9059cbb = keccak256("transfer(address,uint256)")[..4]
-        let result = decode_selector("0xa9059cbb000000000000000000000000abcd000000000000000000000000000000000000");
+        let result = decode_selector(
+            "0xa9059cbb000000000000000000000000abcd000000000000000000000000000000000000",
+        );
         match result {
             SelectorMatch::Known { canonical, .. } => {
                 assert_eq!(canonical, "transfer(address,uint256)");
@@ -198,7 +200,8 @@ mod tests {
     #[test]
     fn bfr_record_resolves() {
         // record(bytes32,bytes32,bytes32,bytes32,uint8,string,string,bytes32,string)
-        let sel = compute("record(bytes32,bytes32,bytes32,bytes32,uint8,string,string,bytes32,string)");
+        let sel =
+            compute("record(bytes32,bytes32,bytes32,bytes32,uint8,string,string,bytes32,string)");
         let hex_input = format!("0x{}{}", hex::encode(sel), "00".repeat(32));
         match decode_selector(&hex_input) {
             SelectorMatch::Known { canonical, .. } => {
@@ -231,7 +234,10 @@ mod tests {
             SelectorMatch::Known { canonical, .. } => {
                 assert_eq!(canonical, "registerModel(bytes32,string)");
             }
-            other => panic!("expected Known(registerModel(bytes32,string)), got {:?}", other),
+            other => panic!(
+                "expected Known(registerModel(bytes32,string)), got {:?}",
+                other
+            ),
         }
     }
 

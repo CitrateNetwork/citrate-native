@@ -18,8 +18,10 @@ use std::collections::HashMap;
 
 /// The same vendored table `marketplace_client.rs` embeds. Loading it from
 /// the manifest path keeps this test pinned to the bytes that ship.
-const ADDRESS_TABLE_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/generated/addresses.json"));
+const ADDRESS_TABLE_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/generated/addresses.json"
+));
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +66,10 @@ async fn every_vendored_address_has_deployed_code() {
     };
     let table: CanonicalTable = serde_json::from_str(ADDRESS_TABLE_JSON)
         .expect("vendored src/generated/addresses.json parses");
-    assert_eq!(table.chain_id, 40204, "vendored table is not for chain 40204");
+    assert_eq!(
+        table.chain_id, 40204,
+        "vendored table is not for chain 40204"
+    );
 
     let client = reqwest::Client::new();
 

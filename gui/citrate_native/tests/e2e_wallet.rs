@@ -314,10 +314,7 @@ async fn test_create_wallet_unlock_send_tx_publishes_event() {
         .await
         .expect("send should succeed when unlocked");
 
-    assert!(
-        !tx_hash.is_empty(),
-        "Transaction hash should not be empty"
-    );
+    assert!(!tx_hash.is_empty(), "Transaction hash should not be empty");
     assert!(
         tx_hash.starts_with("0x"),
         "Transaction hash should start with 0x"
@@ -335,15 +332,9 @@ async fn test_create_wallet_unlock_send_tx_publishes_event() {
             ..
         } => {
             assert!(success, "Transaction should be marked successful");
-            assert_eq!(
-                hash, tx_hash,
-                "Event tx_hash should match returned hash"
-            );
+            assert_eq!(hash, tx_hash, "Event tx_hash should match returned hash");
         }
-        other => panic!(
-            "Expected TransactionConfirmed event, got {:?}",
-            other
-        ),
+        other => panic!("Expected TransactionConfirmed event, got {:?}", other),
     }
 }
 
@@ -368,11 +359,7 @@ async fn test_import_mnemonic_account_appears() {
     );
 
     let accounts = h.wallet.list_accounts().await;
-    assert_eq!(
-        accounts.len(),
-        1,
-        "Should have one account after import"
-    );
+    assert_eq!(accounts.len(), 1, "Should have one account after import");
     assert_eq!(
         accounts[0].label, "Imported Account",
         "Imported account should have 'Imported Account' label"
@@ -403,15 +390,9 @@ async fn test_import_mnemonic_too_short_rejected() {
 async fn test_import_mnemonic_empty_rejected() {
     let h = TestHarness::new();
 
-    let result = h
-        .wallet
-        .import_from_mnemonic("", "strongpassword123")
-        .await;
+    let result = h.wallet.import_from_mnemonic("", "strongpassword123").await;
 
-    assert!(
-        result.is_err(),
-        "Empty mnemonic should be rejected"
-    );
+    assert!(result.is_err(), "Empty mnemonic should be rejected");
 }
 
 #[tokio::test]
@@ -419,10 +400,7 @@ async fn test_import_mnemonic_short_password_rejected() {
     let h = TestHarness::new();
 
     let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    let result = h
-        .wallet
-        .import_from_mnemonic(mnemonic, "short")
-        .await;
+    let result = h.wallet.import_from_mnemonic(mnemonic, "short").await;
 
     assert!(
         result.is_err(),
@@ -452,10 +430,7 @@ async fn test_lock_then_operations_fail() {
 
     // Verify session is inactive
     let status = h.wallet.get_session_status().await;
-    assert!(
-        !status.is_active,
-        "Session should be inactive after lock"
-    );
+    assert!(!status.is_active, "Session should be inactive after lock");
 
     // Send should fail with SessionExpired
     let send_result = h
@@ -470,10 +445,7 @@ async fn test_lock_then_operations_fail() {
 
     match send_result {
         Err(AppError::SessionExpired) => { /* expected */ }
-        other => panic!(
-            "Expected SessionExpired error after lock, got {:?}",
-            other
-        ),
+        other => panic!("Expected SessionExpired error after lock, got {:?}", other),
     }
 }
 
@@ -540,7 +512,10 @@ async fn test_multiple_accounts_created_sequentially() {
 
     // First account should have its own address
     assert_eq!(accounts[0].address, first.address);
-    assert!(accounts[0].is_default, "First created account should be default");
+    assert!(
+        accounts[0].is_default,
+        "First created account should be default"
+    );
 
     // Second account should have a different address
     assert_eq!(accounts[1].address, second.address);
@@ -620,7 +595,10 @@ async fn test_unlock_empty_password_rejected() {
     let h = TestHarness::new();
 
     let result = h.wallet.unlock("0xabc", "").await;
-    assert!(result.is_err(), "Empty password should be rejected for unlock");
+    assert!(
+        result.is_err(),
+        "Empty password should be rejected for unlock"
+    );
 }
 
 #[tokio::test]
@@ -629,10 +607,7 @@ async fn test_unlock_wrong_password_rejected() {
 
     // The E2eWalletBackend rejects passwords shorter than 8 chars
     let result = h.wallet.unlock("0xabc", "wrong").await;
-    assert!(
-        result.is_err(),
-        "Wrong/short password should fail unlock"
-    );
+    assert!(result.is_err(), "Wrong/short password should fail unlock");
 }
 
 // ============================================================================
@@ -664,7 +639,11 @@ async fn test_multiple_lock_unlock_cycles() {
             .unwrap_or_else(|_| panic!("lock cycle {} should succeed", i));
 
         let status = h.wallet.get_session_status().await;
-        assert!(!status.is_active, "Session should be inactive after lock in cycle {}", i);
+        assert!(
+            !status.is_active,
+            "Session should be inactive after lock in cycle {}",
+            i
+        );
     }
 }
 
@@ -674,7 +653,7 @@ async fn test_multiple_lock_unlock_cycles() {
 
 #[tokio::test]
 async fn test_wei_to_salt_conversion_in_display_pipeline() {
-    use citrate_wallet_core::format::{wei_to_salt, format_salt_display};
+    use citrate_wallet_core::format::{format_salt_display, wei_to_salt};
 
     // Simulate the pipeline: backend returns wei string, UI converts to SALT display
     let wei_values: Vec<(&str, &str, &str)> = vec![
@@ -766,7 +745,10 @@ async fn test_send_multiple_transactions_publishes_multiple_events() {
             AppEvent::TransactionConfirmed { success, .. } => {
                 assert!(success, "Transaction {} should be successful", i);
             }
-            other => panic!("Expected TransactionConfirmed for tx {}, got {:?}", i, other),
+            other => panic!(
+                "Expected TransactionConfirmed for tx {}, got {:?}",
+                i, other
+            ),
         }
     }
 }
@@ -929,7 +911,10 @@ async fn test_session_status_fields_after_unlock() {
 
     // After unlock
     h.wallet
-        .unlock("0x0000000000000000000000000000000000000001", "strongpassword123")
+        .unlock(
+            "0x0000000000000000000000000000000000000001",
+            "strongpassword123",
+        )
         .await
         .expect("unlock should succeed");
     let after = h.wallet.get_session_status().await;

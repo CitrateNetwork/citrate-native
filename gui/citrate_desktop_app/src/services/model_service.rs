@@ -36,7 +36,8 @@ pub struct InferenceResult {
 pub trait ModelBackend: Send + Sync {
     async fn list_models(&self) -> Result<Vec<ModelInfo>, AppError>;
     async fn get_model(&self, model_id: &str) -> Result<ModelInfo, AppError>;
-    async fn run_inference(&self, model_id: &str, input: &str) -> Result<InferenceResult, AppError>;
+    async fn run_inference(&self, model_id: &str, input: &str)
+        -> Result<InferenceResult, AppError>;
 }
 
 /// Real backend calling chain RPC.
@@ -67,23 +68,53 @@ impl ModelBackend for RpcModelBackend {
 
         match self.client.post(&self.rpc_url).json(&body).send().await {
             Ok(response) => {
-                let json: serde_json::Value = response.json().await
+                let json: serde_json::Value = response
+                    .json()
+                    .await
                     .map_err(|e| AppError::Network(format!("Model list parse failed: {}", e)))?;
 
                 if let Some(models) = json.pointer("/result/models").and_then(|m| m.as_array()) {
-                    Ok(models.iter().filter_map(|m| {
-                        Some(ModelInfo {
-                            id: m.get("id")?.as_str()?.to_string(),
-                            name: m.get("name")?.as_str()?.to_string(),
-                            version: m.get("version").and_then(|v| v.as_str()).unwrap_or("1.0").to_string(),
-                            description: m.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-                            framework: m.get("framework").and_then(|f| f.as_str()).unwrap_or("gguf").to_string(),
-                            size_bytes: m.get("size_bytes").and_then(|s| s.as_u64()).unwrap_or(0),
-                            total_inferences: m.get("total_inferences").and_then(|t| t.as_u64()).unwrap_or(0),
-                            success_rate: m.get("success_rate").and_then(|s| s.as_f64()).unwrap_or(0.0),
-                            owner: m.get("owner").and_then(|o| o.as_str()).unwrap_or("").to_string(),
+                    Ok(models
+                        .iter()
+                        .filter_map(|m| {
+                            Some(ModelInfo {
+                                id: m.get("id")?.as_str()?.to_string(),
+                                name: m.get("name")?.as_str()?.to_string(),
+                                version: m
+                                    .get("version")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("1.0")
+                                    .to_string(),
+                                description: m
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                framework: m
+                                    .get("framework")
+                                    .and_then(|f| f.as_str())
+                                    .unwrap_or("gguf")
+                                    .to_string(),
+                                size_bytes: m
+                                    .get("size_bytes")
+                                    .and_then(|s| s.as_u64())
+                                    .unwrap_or(0),
+                                total_inferences: m
+                                    .get("total_inferences")
+                                    .and_then(|t| t.as_u64())
+                                    .unwrap_or(0),
+                                success_rate: m
+                                    .get("success_rate")
+                                    .and_then(|s| s.as_f64())
+                                    .unwrap_or(0.0),
+                                owner: m
+                                    .get("owner")
+                                    .and_then(|o| o.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            })
                         })
-                    }).collect())
+                        .collect())
                 } else {
                     // RPC returned but no models — registry may not be deployed
                     Ok(vec![])
@@ -99,12 +130,17 @@ impl ModelBackend for RpcModelBackend {
 
     async fn get_model(&self, model_id: &str) -> Result<ModelInfo, AppError> {
         let models = self.list_models().await?;
-        models.into_iter()
+        models
+            .into_iter()
             .find(|m| m.id == model_id)
             .ok_or_else(|| AppError::ModelNotLoaded(model_id.to_string()))
     }
 
-    async fn run_inference(&self, model_id: &str, input: &str) -> Result<InferenceResult, AppError> {
+    async fn run_inference(
+        &self,
+        model_id: &str,
+        input: &str,
+    ) -> Result<InferenceResult, AppError> {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "citrate_chatCompletion",
@@ -117,14 +153,21 @@ impl ModelBackend for RpcModelBackend {
             "id": 1,
         });
 
-        let response = self.client.post(&self.rpc_url)
-            .json(&body).send().await
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| AppError::Network(format!("Inference RPC failed: {}", e)))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Inference parse failed: {}", e)))?;
 
-        let content = json.pointer("/result/choices/0/message/content")
+        let content = json
+            .pointer("/result/choices/0/message/content")
             .and_then(|c| c.as_str())
             .unwrap_or("No output")
             .to_string();
@@ -276,7 +319,11 @@ impl ModelService {
         self.backend.get_model(model_id).await
     }
 
-    pub async fn run_inference(&self, model_id: &str, input: &str) -> Result<InferenceResult, AppError> {
+    pub async fn run_inference(
+        &self,
+        model_id: &str,
+        input: &str,
+    ) -> Result<InferenceResult, AppError> {
         self.backend.run_inference(model_id, input).await
     }
 
@@ -343,18 +390,26 @@ impl ModelService {
             "id": 1,
         });
 
-        let response = self.client.post(&self.rpc_url)
-            .json(&body).send().await
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| AppError::Network(format!("Receipt poll failed: {}", e)))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Receipt parse failed: {}", e)))?;
 
         if json.get("result").is_some() && !json["result"].is_null() {
-            let status = json["result"]["status"].as_str()
+            let status = json["result"]["status"]
+                .as_str()
                 .map(|s| s == "0x1")
                 .unwrap_or(false);
-            let block = json["result"]["blockNumber"].as_str()
+            let block = json["result"]["blockNumber"]
+                .as_str()
                 .and_then(|b| u64::from_str_radix(b.trim_start_matches("0x"), 16).ok())
                 .unwrap_or(0);
 
@@ -396,11 +451,17 @@ impl ModelService {
             "id": 1,
         });
 
-        let response = self.client.post(&self.rpc_url)
-            .json(&body).send().await
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| AppError::Network(format!("Readback failed: {}", e)))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| AppError::Network(format!("Readback parse failed: {}", e)))?;
 
         let result = &json["result"];
@@ -414,7 +475,11 @@ impl ModelService {
         }
 
         let observed_owner = result["owner"].as_str().unwrap_or("").to_string();
-        let observed_cid = result.get("cid").and_then(|c| c.as_str()).unwrap_or("").to_string();
+        let observed_cid = result
+            .get("cid")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
 
         let mut record = self.publish_record.write().await;
         if let Some(ref mut r) = *record {
@@ -422,16 +487,25 @@ impl ModelService {
             r.readback_cid = Some(observed_cid.clone());
 
             // Verify owner matches
-            if !expected_owner.is_empty() && observed_owner.to_lowercase() != expected_owner.to_lowercase() {
+            if !expected_owner.is_empty()
+                && observed_owner.to_lowercase() != expected_owner.to_lowercase()
+            {
                 r.state = ModelPublishState::Failed;
-                r.last_error = Some(format!("Owner mismatch: expected {} got {}", expected_owner, observed_owner));
+                r.last_error = Some(format!(
+                    "Owner mismatch: expected {} got {}",
+                    expected_owner, observed_owner
+                ));
                 return Ok(ModelPublishState::Failed);
             }
 
             // Verify CID matches (if we have one)
-            if !expected_cid.is_empty() && !observed_cid.is_empty() && observed_cid != expected_cid {
+            if !expected_cid.is_empty() && !observed_cid.is_empty() && observed_cid != expected_cid
+            {
                 r.state = ModelPublishState::Failed;
-                r.last_error = Some(format!("CID mismatch: expected {} got {}", expected_cid, observed_cid));
+                r.last_error = Some(format!(
+                    "CID mismatch: expected {} got {}",
+                    expected_cid, observed_cid
+                ));
                 return Ok(ModelPublishState::Failed);
             }
 
@@ -444,7 +518,11 @@ impl ModelService {
 
     /// Get current publish state.
     pub async fn publish_state(&self) -> Option<String> {
-        self.publish_record.read().await.as_ref().map(|r| r.state.as_str().to_string())
+        self.publish_record
+            .read()
+            .await
+            .as_ref()
+            .map(|r| r.state.as_str().to_string())
     }
 
     /// Get current publish record (for UI display).
@@ -487,7 +565,10 @@ mod tests {
     #[tokio::test]
     async fn test_run_inference() {
         let svc = test_service();
-        let result = svc.run_inference("test-model", "hello").await.expect("inference");
+        let result = svc
+            .run_inference("test-model", "hello")
+            .await
+            .expect("inference");
         assert!(!result.output.is_empty());
         assert_eq!(result.model_id, "test-model");
     }
@@ -507,7 +588,8 @@ mod tests {
     #[tokio::test]
     async fn test_publish_init_sets_hashed() {
         let svc = test_service();
-        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner")
+            .await;
         let state = svc.publish_state().await;
         assert_eq!(state, Some("hashed".to_string()));
     }
@@ -515,7 +597,8 @@ mod tests {
     #[tokio::test]
     async fn test_publish_mark_pinned() {
         let svc = test_service();
-        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner")
+            .await;
         svc.mark_pinned("QmTestCid123").await;
         let state = svc.publish_state().await;
         assert_eq!(state, Some("pinned".to_string()));
@@ -526,7 +609,8 @@ mod tests {
     #[tokio::test]
     async fn test_publish_mark_submitted() {
         let svc = test_service();
-        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "abcdef1234567890", 1024, "0xowner")
+            .await;
         svc.mark_pinned("QmTestCid123").await;
         svc.mark_submitted("0xtxhash123").await;
         let state = svc.publish_state().await;
@@ -542,7 +626,8 @@ mod tests {
         assert!(svc.publish_state().await.is_none());
 
         // Init
-        svc.init_publish("/tmp/model.gguf", "aabbccdd", 2048, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "aabbccdd", 2048, "0xowner")
+            .await;
         assert_eq!(svc.publish_state().await, Some("hashed".to_string()));
 
         // Pin
@@ -559,7 +644,8 @@ mod tests {
     #[tokio::test]
     async fn test_publish_artifact_identity() {
         let svc = test_service();
-        svc.init_publish("/tmp/qwen.gguf", "deadbeef12345678", 4096, "0xowner").await;
+        svc.init_publish("/tmp/qwen.gguf", "deadbeef12345678", 4096, "0xowner")
+            .await;
         let record = svc.publish_record().await.expect("record");
         assert_eq!(record.artifact.file_name, "qwen.gguf");
         assert_eq!(record.artifact.file_size_bytes, 4096);
@@ -572,10 +658,12 @@ mod tests {
     #[tokio::test]
     async fn test_same_hash_same_identity() {
         let svc = test_service();
-        svc.init_publish("/tmp/model_a.gguf", "same_hash_123", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model_a.gguf", "same_hash_123", 1024, "0xowner")
+            .await;
         let id_a = svc.publish_record().await.expect("a").model_id;
 
-        svc.init_publish("/tmp/model_b.gguf", "same_hash_123", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model_b.gguf", "same_hash_123", 1024, "0xowner")
+            .await;
         let id_b = svc.publish_record().await.expect("b").model_id;
 
         assert_eq!(id_a, id_b, "same hash must produce same model_id");
@@ -584,10 +672,12 @@ mod tests {
     #[tokio::test]
     async fn test_different_hash_different_identity() {
         let svc = test_service();
-        svc.init_publish("/tmp/model.gguf", "hash_aaaa", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "hash_aaaa", 1024, "0xowner")
+            .await;
         let id_a = svc.publish_record().await.expect("a").model_id;
 
-        svc.init_publish("/tmp/model.gguf", "hash_bbbb", 1024, "0xowner").await;
+        svc.init_publish("/tmp/model.gguf", "hash_bbbb", 1024, "0xowner")
+            .await;
         let id_b = svc.publish_record().await.expect("b").model_id;
 
         assert_ne!(id_a, id_b, "different hash must produce different model_id");

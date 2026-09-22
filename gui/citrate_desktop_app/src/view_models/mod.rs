@@ -24,9 +24,9 @@ pub struct ShellViewModel {
 pub struct OnboardingViewModel {
     pub current_step: u32,
     pub total_steps: u32,
-    pub persona: Option<String>,       // home, teacher, developer
+    pub persona: Option<String>, // home, teacher, developer
     pub wallet_created: bool,
-    pub mnemonic: Option<String>,      // shown once
+    pub mnemonic: Option<String>, // shown once
     pub error: Option<String>,
 }
 
@@ -42,7 +42,7 @@ pub struct WalletViewModel {
 pub struct AccountViewModel {
     pub address: String,
     pub label: String,
-    pub balance_display: String,  // "123.4567 SALT"
+    pub balance_display: String, // "123.4567 SALT"
     pub is_default: bool,
 }
 
@@ -56,7 +56,7 @@ pub struct DagViewModel {
 
 /// Single block for display
 pub struct BlockViewModel {
-    pub hash_short: String,       // "0xb3af...2a6a"
+    pub hash_short: String, // "0xb3af...2a6a"
     pub height: u64,
     pub timestamp_display: String, // "2:34:56 PM"
     pub tx_count: usize,
@@ -232,15 +232,13 @@ mod tests {
     #[test]
     fn test_dag_view_model_with_blocks() {
         let vm = DagViewModel {
-            blocks: vec![
-                BlockViewModel {
-                    hash_short: "0xb3af...2a6a".to_string(),
-                    height: 100,
-                    timestamp_display: "2:34:56 PM".to_string(),
-                    tx_count: 5,
-                    selected_parent_short: "0xd1ee...ff32".to_string(),
-                },
-            ],
+            blocks: vec![BlockViewModel {
+                hash_short: "0xb3af...2a6a".to_string(),
+                height: 100,
+                timestamp_display: "2:34:56 PM".to_string(),
+                tx_count: 5,
+                selected_parent_short: "0xd1ee...ff32".to_string(),
+            }],
             height: 100,
             loading: false,
             error: None,

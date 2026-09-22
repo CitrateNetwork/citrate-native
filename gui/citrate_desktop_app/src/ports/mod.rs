@@ -141,16 +141,25 @@ mod tests {
 
     impl InMemoryKV {
         fn new() -> Self {
-            Self { data: Mutex::new(HashMap::new()) }
+            Self {
+                data: Mutex::new(HashMap::new()),
+            }
         }
     }
 
     impl KeyValueStore for InMemoryKV {
         fn get(&self, key: &str) -> Option<String> {
-            self.data.lock().expect("mutex not poisoned").get(key).cloned()
+            self.data
+                .lock()
+                .expect("mutex not poisoned")
+                .get(key)
+                .cloned()
         }
         fn set(&self, key: &str, value: &str) {
-            self.data.lock().expect("mutex not poisoned").insert(key.to_string(), value.to_string());
+            self.data
+                .lock()
+                .expect("mutex not poisoned")
+                .insert(key.to_string(), value.to_string());
         }
         fn delete(&self, key: &str) {
             self.data.lock().expect("mutex not poisoned").remove(key);
@@ -164,16 +173,25 @@ mod tests {
 
     impl InMemorySecrets {
         fn new() -> Self {
-            Self { data: Mutex::new(HashMap::new()) }
+            Self {
+                data: Mutex::new(HashMap::new()),
+            }
         }
     }
 
     impl SecretStore for InMemorySecrets {
         fn get_secret(&self, key: &str) -> Option<String> {
-            self.data.lock().expect("mutex not poisoned").get(key).cloned()
+            self.data
+                .lock()
+                .expect("mutex not poisoned")
+                .get(key)
+                .cloned()
         }
         fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
-            self.data.lock().expect("mutex not poisoned").insert(key.to_string(), value.to_string());
+            self.data
+                .lock()
+                .expect("mutex not poisoned")
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
         fn delete_secret(&self, key: &str) -> Result<(), String> {
@@ -181,7 +199,10 @@ mod tests {
             Ok(())
         }
         fn has_secret(&self, key: &str) -> bool {
-            self.data.lock().expect("mutex not poisoned").contains_key(key)
+            self.data
+                .lock()
+                .expect("mutex not poisoned")
+                .contains_key(key)
         }
     }
 
@@ -277,8 +298,13 @@ mod tests {
     #[test]
     fn test_secret_set_and_get() {
         let store = InMemorySecrets::new();
-        store.set_secret("api_key", "sk-12345").expect("test assertion");
-        assert_eq!(store.get_secret("api_key").expect("test assertion"), "sk-12345");
+        store
+            .set_secret("api_key", "sk-12345")
+            .expect("test assertion");
+        assert_eq!(
+            store.get_secret("api_key").expect("test assertion"),
+            "sk-12345"
+        );
     }
 
     #[test]
@@ -316,9 +342,15 @@ mod tests {
     #[test]
     fn test_secret_multiple() {
         let store = InMemorySecrets::new();
-        store.set_secret("wallet_password", "pass123").expect("test assertion");
-        store.set_secret("api_key", "key456").expect("test assertion");
-        store.set_secret("rpc_token", "tok789").expect("test assertion");
+        store
+            .set_secret("wallet_password", "pass123")
+            .expect("test assertion");
+        store
+            .set_secret("api_key", "key456")
+            .expect("test assertion");
+        store
+            .set_secret("rpc_token", "tok789")
+            .expect("test assertion");
         assert!(store.has_secret("wallet_password"));
         assert!(store.has_secret("api_key"));
         assert!(store.has_secret("rpc_token"));

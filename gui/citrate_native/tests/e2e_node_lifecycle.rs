@@ -87,18 +87,15 @@ impl NodeBackend for E2eNodeBackend {
     }
 
     async fn get_block_height(&self) -> u64 {
-        self.block_height
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.block_height.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn get_peer_count(&self) -> u32 {
-        self.peer_count
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.peer_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn get_mempool_size(&self) -> usize {
-        self.mempool_size
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.mempool_size.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn get_balance(&self, address: &[u8; 20]) -> String {
@@ -176,10 +173,7 @@ async fn test_start_node_sets_running_status() {
 
     // Before start
     let status = node.get_status().await;
-    assert!(
-        !status.running,
-        "Node should not be running before start"
-    );
+    assert!(!status.running, "Node should not be running before start");
 
     // Start
     node.start().await.expect("node start should succeed");
@@ -212,10 +206,7 @@ async fn test_start_node_publishes_running_event() {
         AppEvent::NodeStatusChanged { running, .. } => {
             assert!(running, "Event should indicate running=true");
         }
-        other => panic!(
-            "Expected NodeStatusChanged event, got {:?}",
-            other
-        ),
+        other => panic!("Expected NodeStatusChanged event, got {:?}", other),
     }
 }
 
@@ -248,10 +239,7 @@ async fn test_stop_node_publishes_stopped_event() {
     node.start().await.expect("node start should succeed");
 
     // Consume the start event
-    let _start_event = rx
-        .recv()
-        .await
-        .expect("should receive start event");
+    let _start_event = rx.recv().await.expect("should receive start event");
 
     node.stop().await.expect("node stop should succeed");
 
@@ -263,10 +251,7 @@ async fn test_stop_node_publishes_stopped_event() {
         AppEvent::NodeStatusChanged { running, .. } => {
             assert!(!running, "Event should indicate running=false");
         }
-        other => panic!(
-            "Expected NodeStatusChanged event on stop, got {:?}",
-            other
-        ),
+        other => panic!("Expected NodeStatusChanged event on stop, got {:?}", other),
     }
 }
 
@@ -377,11 +362,7 @@ async fn test_refresh_status_skipped_when_stopped() {
     node.refresh_status().await;
 
     // No event should be published
-    let result = tokio::time::timeout(
-        std::time::Duration::from_millis(50),
-        rx.recv(),
-    )
-    .await;
+    let result = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
     assert!(
         result.is_err(),
         "No event should be published when node is stopped"
@@ -396,26 +377,22 @@ async fn test_refresh_status_skipped_when_stopped() {
 async fn test_get_recent_blocks_format() {
     let blocks = vec![
         BlockSummary {
-            hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-                .to_string(),
+            hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
             height: 100,
             timestamp: 1711700000,
             tx_count: 5,
-            selected_parent:
-                "0x1111111111111111111111111111111111111111111111111111111111111111"
-                    .to_string(),
+            selected_parent: "0x1111111111111111111111111111111111111111111111111111111111111111"
+                .to_string(),
             blue_score: 98,
             proposer: String::new(),
         },
         BlockSummary {
-            hash: "0xfeedface0000000000000000000000000000000000000000000000000000dead"
-                .to_string(),
+            hash: "0xfeedface0000000000000000000000000000000000000000000000000000dead".to_string(),
             height: 99,
             timestamp: 1711699998,
             tx_count: 0,
-            selected_parent:
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-                    .to_string(),
+            selected_parent: "0x2222222222222222222222222222222222222222222222222222222222222222"
+                .to_string(),
             blue_score: 97,
             proposer: String::new(),
         },
@@ -437,23 +414,20 @@ async fn test_get_recent_blocks_format() {
         "Block hash should start with 0x"
     );
     assert_eq!(recent[0].height, 100);
-    assert!(
-        recent[0].timestamp > 0,
-        "Timestamp should be non-zero"
-    );
+    assert!(recent[0].timestamp > 0, "Timestamp should be non-zero");
     assert_eq!(recent[0].tx_count, 5);
     assert!(
         !recent[0].selected_parent.is_empty(),
         "Selected parent should not be empty"
     );
-    assert!(
-        recent[0].blue_score > 0,
-        "Blue score should be non-zero"
-    );
+    assert!(recent[0].blue_score > 0, "Blue score should be non-zero");
 
     // Verify second block
     assert_eq!(recent[1].height, 99);
-    assert_eq!(recent[1].tx_count, 0, "Block with no transactions should have tx_count=0");
+    assert_eq!(
+        recent[1].tx_count, 0,
+        "Block with no transactions should have tx_count=0"
+    );
 }
 
 #[tokio::test]
@@ -494,11 +468,7 @@ async fn test_get_recent_blocks_respects_count_limit() {
         .await
         .expect("get_recent_blocks should succeed");
 
-    assert_eq!(
-        recent.len(),
-        5,
-        "Should return at most the requested count"
-    );
+    assert_eq!(recent.len(), 5, "Should return at most the requested count");
 }
 
 // ============================================================================
@@ -566,9 +536,7 @@ async fn test_get_balance_valid_address() {
         .await
         .expect("balance query should succeed for valid address");
 
-    let wei: u128 = result
-        .parse()
-        .expect("balance should be parseable as u128");
+    let wei: u128 = result.parse().expect("balance should be parseable as u128");
     assert_eq!(wei, 1_000_000_000_000_000_000u128);
 }
 
@@ -580,10 +548,7 @@ async fn test_get_balance_invalid_address_rejected() {
     let result = node.get_balance("0xbad").await;
     match result {
         Err(AppError::InvalidAddress(_)) => { /* expected */ }
-        other => panic!(
-            "Expected InvalidAddress for short address, got {:?}",
-            other
-        ),
+        other => panic!("Expected InvalidAddress for short address, got {:?}", other),
     }
 
     // Invalid hex
@@ -592,10 +557,7 @@ async fn test_get_balance_invalid_address_rejected() {
         .await;
     match result {
         Err(AppError::InvalidAddress(_)) => { /* expected */ }
-        other => panic!(
-            "Expected InvalidAddress for invalid hex, got {:?}",
-            other
-        ),
+        other => panic!("Expected InvalidAddress for invalid hex, got {:?}", other),
     }
 }
 
@@ -609,9 +571,7 @@ async fn test_get_balance_without_0x_prefix() {
         .await
         .expect("balance query should succeed without 0x prefix");
 
-    let wei: u128 = result
-        .parse()
-        .expect("balance should be parseable as u128");
+    let wei: u128 = result.parse().expect("balance should be parseable as u128");
     assert_eq!(wei, 1_000_000_000_000_000_000u128);
 }
 
@@ -633,10 +593,7 @@ async fn test_node_start_failure_propagates_error() {
                 msg
             );
         }
-        other => panic!(
-            "Expected Node error from failing backend, got {:?}",
-            other
-        ),
+        other => panic!("Expected Node error from failing backend, got {:?}", other),
     }
 
     // Status should still be stopped after failed start
@@ -722,14 +679,12 @@ fn derive_connection_string(status: &NodeStatus) -> String {
 #[tokio::test]
 async fn test_block_summary_fields_for_ui_display() {
     let block = BlockSummary {
-        hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-            .to_string(),
+        hash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
         height: 42,
         timestamp: 1711700000,
         tx_count: 3,
-        selected_parent:
-            "0x1111111111111111111111111111111111111111111111111111111111111111"
-                .to_string(),
+        selected_parent: "0x1111111111111111111111111111111111111111111111111111111111111111"
+            .to_string(),
         blue_score: 40,
         proposer: String::new(),
     };
@@ -753,8 +708,7 @@ async fn test_block_summary_fields_for_ui_display() {
 
 #[tokio::test]
 async fn test_block_hash_truncation_for_display() {
-    let long_hash =
-        "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+    let long_hash = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
     let truncated = truncate_hash(long_hash);
     assert_eq!(
         truncated, "0xabcdef12...7890",
@@ -763,7 +717,10 @@ async fn test_block_hash_truncation_for_display() {
 
     let short_hash = "0xabcdef";
     let result = truncate_hash(short_hash);
-    assert_eq!(result, "0xabcdef", "Short hash should pass through unchanged");
+    assert_eq!(
+        result, "0xabcdef",
+        "Short hash should pass through unchanged"
+    );
 }
 
 fn truncate_hash(hash: &str) -> String {
@@ -785,10 +742,7 @@ async fn test_full_node_lifecycle() {
 
     // 1. Start
     node.start().await.expect("node start should succeed");
-    let start_event = rx
-        .recv()
-        .await
-        .expect("should receive start event");
+    let start_event = rx.recv().await.expect("should receive start event");
     match start_event {
         AppEvent::NodeStatusChanged { running, .. } => assert!(running),
         other => panic!("Expected start event, got {:?}", other),
@@ -836,7 +790,9 @@ async fn test_events_ordered_through_lifecycle() {
 
     // Collect all events
     let mut received = Vec::new();
-    while let Ok(Ok(event)) = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+    while let Ok(Ok(event)) =
+        tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await
+    {
         received.push(event);
     }
 

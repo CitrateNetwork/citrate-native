@@ -6,7 +6,7 @@
 //! See .agentile/audits/2026-03/2026-03-31-agent-ecosystem-strategy/ for rationale.
 
 use crate::event_bus::{AppEvent, EventBus};
-use citrate_agent_core::canonical::{TrailEvent, LogseqProjection};
+use citrate_agent_core::canonical::{LogseqProjection, TrailEvent};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -36,7 +36,11 @@ impl TrailRecorder {
 
     /// Record a trail event
     pub async fn record(&self, event: TrailEvent) {
-        tracing::debug!("Trail: {} — {}", event.event_type, event.tool_name.as_deref().unwrap_or(""));
+        tracing::debug!(
+            "Trail: {} — {}",
+            event.event_type,
+            event.tool_name.as_deref().unwrap_or("")
+        );
         self.events.write().await.push(event);
     }
 
@@ -44,121 +48,138 @@ impl TrailRecorder {
     pub async fn record_app_event(&self, app_event: &AppEvent) {
         let now = chrono::Utc::now().to_rfc3339();
         let trail_event = match app_event {
-            AppEvent::TransactionConfirmed { tx_hash, block_height, success } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "transaction_confirmed".to_string(),
-                    tool_name: Some("send_tx".to_string()),
-                    data: serde_json::json!({
-                        "tx_hash": tx_hash,
-                        "block_height": block_height,
-                        "success": success,
-                    }),
-                    risk_level: Some("high".to_string()),
-                    approved: Some(true),
-                    duration_ms: None,
-                }
-            }
-            AppEvent::NodeStatusChanged { running, block_height, peer_count, syncing } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "node_status".to_string(),
-                    tool_name: None,
-                    data: serde_json::json!({
-                        "running": running,
-                        "block_height": block_height,
-                        "peer_count": peer_count,
-                        "syncing": syncing,
-                    }),
-                    risk_level: None,
-                    approved: None,
-                    duration_ms: None,
-                }
-            }
-            AppEvent::BalanceUpdated { address, balance_wei } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "balance_updated".to_string(),
-                    tool_name: None,
-                    data: serde_json::json!({
-                        "address": address,
-                        "balance_wei": balance_wei,
-                    }),
-                    risk_level: None,
-                    approved: None,
-                    duration_ms: None,
-                }
-            }
-            AppEvent::ToolCallRequested { tool_name, risk_level, target } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "tool_call_requested".to_string(),
-                    tool_name: Some(tool_name.clone()),
-                    data: serde_json::json!({
-                        "risk_level": risk_level,
-                        "target": target,
-                    }),
-                    risk_level: Some(risk_level.clone()),
-                    approved: None,
-                    duration_ms: None,
-                }
-            }
-            AppEvent::ToolCallApproved { tool_name, request_id } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "tool_call_approved".to_string(),
-                    tool_name: Some(tool_name.clone()),
-                    data: serde_json::json!({ "request_id": request_id }),
-                    risk_level: Some("high".to_string()),
-                    approved: Some(true),
-                    duration_ms: None,
-                }
-            }
-            AppEvent::ToolCallDenied { tool_name, request_id } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "tool_call_denied".to_string(),
-                    tool_name: Some(tool_name.clone()),
-                    data: serde_json::json!({ "request_id": request_id }),
-                    risk_level: Some("high".to_string()),
-                    approved: Some(false),
-                    duration_ms: None,
-                }
-            }
-            AppEvent::ToolCallCompleted { tool_name, success, duration_ms, result_summary } => {
-                TrailEvent {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    session_id: self.session_id.clone(),
-                    timestamp: now,
-                    event_type: "tool_call_completed".to_string(),
-                    tool_name: Some(tool_name.clone()),
-                    data: serde_json::json!({
-                        "success": success,
-                        "result_summary": result_summary,
-                    }),
-                    risk_level: Some("high".to_string()),
-                    approved: Some(true),
-                    duration_ms: Some(*duration_ms),
-                }
-            }
+            AppEvent::TransactionConfirmed {
+                tx_hash,
+                block_height,
+                success,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "transaction_confirmed".to_string(),
+                tool_name: Some("send_tx".to_string()),
+                data: serde_json::json!({
+                    "tx_hash": tx_hash,
+                    "block_height": block_height,
+                    "success": success,
+                }),
+                risk_level: Some("high".to_string()),
+                approved: Some(true),
+                duration_ms: None,
+            },
+            AppEvent::NodeStatusChanged {
+                running,
+                block_height,
+                peer_count,
+                syncing,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "node_status".to_string(),
+                tool_name: None,
+                data: serde_json::json!({
+                    "running": running,
+                    "block_height": block_height,
+                    "peer_count": peer_count,
+                    "syncing": syncing,
+                }),
+                risk_level: None,
+                approved: None,
+                duration_ms: None,
+            },
+            AppEvent::BalanceUpdated {
+                address,
+                balance_wei,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "balance_updated".to_string(),
+                tool_name: None,
+                data: serde_json::json!({
+                    "address": address,
+                    "balance_wei": balance_wei,
+                }),
+                risk_level: None,
+                approved: None,
+                duration_ms: None,
+            },
+            AppEvent::ToolCallRequested {
+                tool_name,
+                risk_level,
+                target,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "tool_call_requested".to_string(),
+                tool_name: Some(tool_name.clone()),
+                data: serde_json::json!({
+                    "risk_level": risk_level,
+                    "target": target,
+                }),
+                risk_level: Some(risk_level.clone()),
+                approved: None,
+                duration_ms: None,
+            },
+            AppEvent::ToolCallApproved {
+                tool_name,
+                request_id,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "tool_call_approved".to_string(),
+                tool_name: Some(tool_name.clone()),
+                data: serde_json::json!({ "request_id": request_id }),
+                risk_level: Some("high".to_string()),
+                approved: Some(true),
+                duration_ms: None,
+            },
+            AppEvent::ToolCallDenied {
+                tool_name,
+                request_id,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "tool_call_denied".to_string(),
+                tool_name: Some(tool_name.clone()),
+                data: serde_json::json!({ "request_id": request_id }),
+                risk_level: Some("high".to_string()),
+                approved: Some(false),
+                duration_ms: None,
+            },
+            AppEvent::ToolCallCompleted {
+                tool_name,
+                success,
+                duration_ms,
+                result_summary,
+            } => TrailEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: self.session_id.clone(),
+                timestamp: now,
+                event_type: "tool_call_completed".to_string(),
+                tool_name: Some(tool_name.clone()),
+                data: serde_json::json!({
+                    "success": success,
+                    "result_summary": result_summary,
+                }),
+                risk_level: Some("high".to_string()),
+                approved: Some(true),
+                duration_ms: Some(*duration_ms),
+            },
             // T2-12: chat messages flow through the trail too. Operators
             // reviewing the audit log see the conversation that prompted
             // each tool call, not just the tool calls in isolation. We
             // truncate the content to 2KB to keep the trail size sane —
             // the full message lives in the in-memory chat history.
-            AppEvent::ChatMessage { role, content, chars } => {
+            AppEvent::ChatMessage {
+                role,
+                content,
+                chars,
+            } => {
                 let truncated = if content.len() > 2048 {
                     format!("{}…", &content[..2048])
                 } else {
@@ -213,7 +234,10 @@ impl TrailRecorder {
         std::fs::create_dir_all(&journal_dir)?;
 
         let mut content = String::new();
-        content.push_str(&format!("- **Citrate Agent Session** ({})\n", self.session_id));
+        content.push_str(&format!(
+            "- **Citrate Agent Session** ({})\n",
+            self.session_id
+        ));
         content.push_str(&format!("  - Events: {}\n", events.len()));
 
         for event in events.iter() {
@@ -221,7 +245,11 @@ impl TrailRecorder {
             let risk = event.risk_level.as_deref().unwrap_or("—");
             content.push_str(&format!(
                 "  - `{}` {} (risk: {}) {}\n",
-                event.timestamp.split('T').next_back().unwrap_or(&event.timestamp),
+                event
+                    .timestamp
+                    .split('T')
+                    .next_back()
+                    .unwrap_or(&event.timestamp),
                 event.event_type,
                 risk,
                 tool,
@@ -239,7 +267,11 @@ impl TrailRecorder {
         };
         std::fs::write(&journal_path, &full_content)?;
 
-        tracing::info!("Trail: wrote LogSeq journal to {:?} ({} events)", journal_path, events.len());
+        tracing::info!(
+            "Trail: wrote LogSeq journal to {:?} ({} events)",
+            journal_path,
+            events.len()
+        );
 
         let event_ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
 
@@ -254,10 +286,7 @@ impl TrailRecorder {
 
     /// Start a background task that subscribes to the event bus
     /// and records trail events automatically.
-    pub fn start_subscriber(
-        self: Arc<Self>,
-        events: Arc<EventBus>,
-    ) -> tokio::task::JoinHandle<()> {
+    pub fn start_subscriber(self: Arc<Self>, events: Arc<EventBus>) -> tokio::task::JoinHandle<()> {
         let mut rx = events.subscribe();
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
@@ -382,21 +411,27 @@ mod tests {
     async fn test_full_tool_lifecycle_trail() {
         let recorder = TrailRecorder::new("test-session", None);
         // Simulate full lifecycle: request → approve → complete
-        recorder.record_app_event(&AppEvent::ToolCallRequested {
-            tool_name: "send_tx".to_string(),
-            risk_level: "high".to_string(),
-            target: "0xdead".to_string(),
-        }).await;
-        recorder.record_app_event(&AppEvent::ToolCallApproved {
-            tool_name: "send_tx".to_string(),
-            request_id: "req-789".to_string(),
-        }).await;
-        recorder.record_app_event(&AppEvent::ToolCallCompleted {
-            tool_name: "send_tx".to_string(),
-            success: true,
-            duration_ms: 2000,
-            result_summary: "Transaction sent".to_string(),
-        }).await;
+        recorder
+            .record_app_event(&AppEvent::ToolCallRequested {
+                tool_name: "send_tx".to_string(),
+                risk_level: "high".to_string(),
+                target: "0xdead".to_string(),
+            })
+            .await;
+        recorder
+            .record_app_event(&AppEvent::ToolCallApproved {
+                tool_name: "send_tx".to_string(),
+                request_id: "req-789".to_string(),
+            })
+            .await;
+        recorder
+            .record_app_event(&AppEvent::ToolCallCompleted {
+                tool_name: "send_tx".to_string(),
+                success: true,
+                duration_ms: 2000,
+                result_summary: "Transaction sent".to_string(),
+            })
+            .await;
         assert_eq!(recorder.event_count().await, 3);
         let events = recorder.get_events().await;
         assert_eq!(events[0].event_type, "tool_call_requested");

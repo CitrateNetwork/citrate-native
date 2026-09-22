@@ -60,7 +60,10 @@ fn is_acceptable_authority_url(url: &str) -> bool {
         let host = if let Some(after) = authority.strip_prefix('[') {
             after.split_once(']').map(|(h, _)| h).unwrap_or(after)
         } else {
-            authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority)
+            authority
+                .rsplit_once(':')
+                .map(|(h, _)| h)
+                .unwrap_or(authority)
         };
         return host == "127.0.0.1"
             || host == "localhost"
@@ -156,7 +159,10 @@ fn parse_entitlement(v: &serde_json::Value) -> Option<Entitlement> {
     }
     Some(Entitlement {
         tier: tier.to_string(),
-        citrate_role: o.get("citrateRole").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        citrate_role: o
+            .get("citrateRole")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string()),
         expires_at: o.get("expiresAt").and_then(|x| x.as_i64()),
     })
 }
@@ -242,14 +248,24 @@ impl CitrateLinkService {
             .as_ref()
             .map(|e| e.effective_tier(now_unix).to_string())
             .unwrap_or_else(default_tier);
-        let citrate_role = login.entitlement.as_ref().and_then(|e| e.citrate_role.clone());
+        let citrate_role = login
+            .entitlement
+            .as_ref()
+            .and_then(|e| e.citrate_role.clone());
         let kyc_status = login.kyc_status.clone().unwrap_or_default();
 
-        let user_id = citrate_aa::account_id_to_user_id(&sub)
-            .map_err(|e| AppError::Wallet(format!("cannot derive AA userId from subject {}: {}", sub, e)))?;
-        let smart_wallet =
-            citrate_aa::predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &user_id)
-                .map_err(|e| AppError::Wallet(format!("address prediction failed: {}", e)))?;
+        let user_id = citrate_aa::account_id_to_user_id(&sub).map_err(|e| {
+            AppError::Wallet(format!(
+                "cannot derive AA userId from subject {}: {}",
+                sub, e
+            ))
+        })?;
+        let smart_wallet = citrate_aa::predict_wallet_address(
+            addresses::FACTORY,
+            addresses::WALLET_IMPL,
+            &user_id,
+        )
+        .map_err(|e| AppError::Wallet(format!("address prediction failed: {}", e)))?;
 
         // Cross-check the authority's own view of the address.
         if let Some(claimed) = &login.wallet_address {
@@ -262,9 +278,15 @@ impl CitrateLinkService {
         }
 
         let deployed_code = self
-            .rpc_call(&self.wallet.get_rpc_url(), "eth_getCode", serde_json::json!([smart_wallet, "latest"]))
+            .rpc_call(
+                &self.wallet.get_rpc_url(),
+                "eth_getCode",
+                serde_json::json!([smart_wallet, "latest"]),
+            )
             .await?;
-        let already_deployed = deployed_code.as_str().is_some_and(|c| c != "0x" && c != "0x0");
+        let already_deployed = deployed_code
+            .as_str()
+            .is_some_and(|c| c != "0x" && c != "0x0");
 
         let mut pending_root_enroll = false;
         let mut deployed = already_deployed;
@@ -340,7 +362,10 @@ impl CitrateLinkService {
             _ => {
                 return Err(AppError::Wallet(format!(
                     "enroll-validator failed: {}",
-                    enroll.reason.or(enroll.error).unwrap_or_else(|| status.to_string())
+                    enroll
+                        .reason
+                        .or(enroll.error)
+                        .unwrap_or_else(|| status.to_string())
                 )))
             }
         };
@@ -418,7 +443,9 @@ impl CitrateLinkService {
             .await?;
         let nonce = parse_quantity(&nonce_hex)?;
 
-        let gas_price_hex = self.rpc_call(&rpc_url, "eth_gasPrice", serde_json::json!([])).await?;
+        let gas_price_hex = self
+            .rpc_call(&rpc_url, "eth_gasPrice", serde_json::json!([]))
+            .await?;
         let gas_price = parse_quantity(&gas_price_hex)?;
 
         let call_data = citrate_aa::encode_execute_single(to, value_wei, &data)
@@ -478,8 +505,14 @@ impl CitrateLinkService {
             .await
             .map_err(|e| AppError::Network(format!("bundler bad response: {}", e)))?;
         if let Some(err) = body.get("error") {
-            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
-            return Err(AppError::Network(format!("bundler rejected the UserOperation: {}", msg)));
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::Network(format!(
+                "bundler rejected the UserOperation: {}",
+                msg
+            )));
         }
         body.get("result")
             .and_then(|r| r.as_str())
@@ -515,7 +548,9 @@ impl CitrateLinkService {
 
         let (code, returned_state) = accept_oidc_callback(listener).await?;
         if returned_state != state {
-            return Err(AppError::Wallet("OIDC state mismatch — aborting (possible CSRF)".to_string()));
+            return Err(AppError::Wallet(
+                "OIDC state mismatch — aborting (possible CSRF)".to_string(),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -547,7 +582,10 @@ impl CitrateLinkService {
             _ => {
                 return Err(AppError::Wallet(format!(
                     "token exchange failed: {}",
-                    tokens.error_description.or(tokens.error).unwrap_or_else(|| "unknown".to_string())
+                    tokens
+                        .error_description
+                        .or(tokens.error)
+                        .unwrap_or_else(|| "unknown".to_string())
                 )))
             }
         };
@@ -571,7 +609,13 @@ impl CitrateLinkService {
             .map(|s| s.to_string());
         let entitlement = claims.get(ENTITLEMENT_CLAIM).and_then(parse_entitlement);
 
-        Ok(OidcLogin { access_token, sub, wallet_address, kyc_status, entitlement })
+        Ok(OidcLogin {
+            access_token,
+            sub,
+            wallet_address,
+            kyc_status,
+            entitlement,
+        })
     }
 
     /// Open the hosted Account Hub (KYC / tier upgrade) in the system browser —
@@ -619,10 +663,11 @@ async fn accept_oidc_callback(listener: TcpListener) -> Result<(String, String),
     // The browser may probe with favicon requests etc. — accept until we
     // see the /auth/callback GET, bounded to a handful of connections.
     for _ in 0..8 {
-        let (mut stream, _) = tokio::time::timeout(std::time::Duration::from_secs(300), listener.accept())
-            .await
-            .map_err(|_| AppError::Network("sign-in timed out (5 minutes)".to_string()))?
-            .map_err(|e| AppError::Network(format!("loopback accept: {}", e)))?;
+        let (mut stream, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(300), listener.accept())
+                .await
+                .map_err(|_| AppError::Network("sign-in timed out (5 minutes)".to_string()))?
+                .map_err(|e| AppError::Network(format!("loopback accept: {}", e)))?;
         let mut buf = vec![0u8; 8192];
         let n = stream
             .read(&mut buf)
@@ -656,7 +701,11 @@ async fn accept_oidc_callback(listener: TcpListener) -> Result<(String, String),
             let _ = stream.write_all(response.as_bytes()).await;
             match (code, state) {
                 (Some(c), Some(s)) => return Ok((c, s)),
-                _ => return Err(AppError::Wallet("authority redirected without a code".to_string())),
+                _ => {
+                    return Err(AppError::Wallet(
+                        "authority redirected without a code".to_string(),
+                    ))
+                }
             }
         }
         // Not the callback (favicon, probe) — 404 it and keep listening.
@@ -725,7 +774,8 @@ fn decode_jwt_payload(jwt: &str) -> Result<serde_json::Value, AppError> {
         .nth(1)
         .ok_or_else(|| AppError::Wallet("malformed JWT".to_string()))?;
     let bytes = b64url_decode(payload)?;
-    serde_json::from_slice(&bytes).map_err(|e| AppError::Wallet(format!("JWT payload not JSON: {}", e)))
+    serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Wallet(format!("JWT payload not JSON: {}", e)))
 }
 
 fn random_b64url(len: usize) -> String {
@@ -747,7 +797,9 @@ fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{:02X}", b)),
         }
     }
@@ -818,7 +870,9 @@ fn open_in_browser(url: &str) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
     let cmd = std::process::Command::new("xdg-open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let cmd = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    let cmd = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
     cmd.map(|_| ())
         .map_err(|e| AppError::Wallet(format!("cannot open the browser for sign-in: {}", e)))
 }
@@ -831,7 +885,9 @@ mod tests {
     #[test]
     fn natb026_authority_url_scheme_check() {
         assert!(is_acceptable_authority_url("https://auth.citrate.ai"));
-        assert!(is_acceptable_authority_url("https://bundler.citrate.ai/rpc"));
+        assert!(is_acceptable_authority_url(
+            "https://bundler.citrate.ai/rpc"
+        ));
         assert!(is_acceptable_authority_url("http://127.0.0.1:8080"));
         assert!(is_acceptable_authority_url("http://localhost:3000/auth"));
         assert!(is_acceptable_authority_url("http://[::1]:9000"));
@@ -839,7 +895,9 @@ mod tests {
         // unauthenticated), userinfo confused-deputy, and non-http schemes.
         assert!(!is_acceptable_authority_url("http://evil.example"));
         assert!(!is_acceptable_authority_url("http://auth.citrate.ai"));
-        assert!(!is_acceptable_authority_url("http://127.0.0.1@evil.example"));
+        assert!(!is_acceptable_authority_url(
+            "http://127.0.0.1@evil.example"
+        ));
         assert!(!is_acceptable_authority_url("ftp://127.0.0.1"));
         assert!(!is_acceptable_authority_url("javascript:alert(1)"));
         assert!(!is_acceptable_authority_url("https://"));
@@ -892,7 +950,10 @@ mod tests {
     #[test]
     fn url_helpers_round_trip() {
         let uri = "http://127.0.0.1:7777/auth/callback";
-        assert_eq!(urlencode(uri), "http%3A%2F%2F127.0.0.1%3A7777%2Fauth%2Fcallback");
+        assert_eq!(
+            urlencode(uri),
+            "http%3A%2F%2F127.0.0.1%3A7777%2Fauth%2Fcallback"
+        );
         assert_eq!(urldecode(&urlencode(uri)), uri);
         assert_eq!(urldecode("a%2Bb+c"), "a+b c");
     }
@@ -903,7 +964,8 @@ mod tests {
         let path = dir.join("citrate_link.json");
         let link = CitrateLink {
             sub: "0d1f02f1-1f5a-4f5e-9c2e-7b8d1a2b3c4d".to_string(),
-            user_id_hex: "0x23691dc9a1d9d7ffa4787edf129321063826c584f406598e645141dba9db32d8".to_string(),
+            user_id_hex: "0x23691dc9a1d9d7ffa4787edf129321063826c584f406598e645141dba9db32d8"
+                .to_string(),
             smart_wallet: "0x05d25d894e88b288f3f7508ce6523d79dee5de28".to_string(),
             eoa: "0x8ba1f109551bd432803012645ac136ddd64dba72".to_string(),
             deployed: true,
@@ -948,14 +1010,21 @@ mod tests {
         // ladder + expiry collapse.
         assert!(tier_rank("commercial.kyc") > tier_rank("commercial"));
         assert_eq!(tier_rank("public"), 0);
-        let expired = Entitlement { tier: "academic".into(), expires_at: Some(50), citrate_role: None };
+        let expired = Entitlement {
+            tier: "academic".into(),
+            expires_at: Some(50),
+            citrate_role: None,
+        };
         assert_eq!(expired.effective_tier(100), "public");
         assert_eq!(expired.effective_tier(10), "academic");
     }
 
     #[test]
     fn account_hub_url_builds() {
-        assert_eq!(account_hub_url("https://auth.citrate.ai", None), "https://auth.citrate.ai/account");
+        assert_eq!(
+            account_hub_url("https://auth.citrate.ai", None),
+            "https://auth.citrate.ai/account"
+        );
         assert_eq!(
             account_hub_url("https://auth.citrate.ai/", Some("https://citrate.ai")),
             "https://auth.citrate.ai/account?return_to=https%3A%2F%2Fcitrate.ai"
@@ -969,12 +1038,18 @@ mod tests {
 
         let client = tokio::spawn(async move {
             // A favicon probe first (must be ignored), then the real callback.
-            let mut s1 = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
-            s1.write_all(b"GET /favicon.ico HTTP/1.1\r\n\r\n").await.expect("write");
+            let mut s1 = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect");
+            s1.write_all(b"GET /favicon.ico HTTP/1.1\r\n\r\n")
+                .await
+                .expect("write");
             let mut sink = Vec::new();
             let _ = s1.read_to_end(&mut sink).await;
 
-            let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.expect("connect");
+            let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect");
             s2.write_all(b"GET /auth/callback?code=abc%2B123&state=st_42 HTTP/1.1\r\n\r\n")
                 .await
                 .expect("write");
@@ -983,7 +1058,9 @@ mod tests {
             String::from_utf8_lossy(&page).into_owned()
         });
 
-        let (code, state) = accept_oidc_callback(listener).await.expect("callback parsed");
+        let (code, state) = accept_oidc_callback(listener)
+            .await
+            .expect("callback parsed");
         assert_eq!(code, "abc+123");
         assert_eq!(state, "st_42");
         let page = client.await.expect("client task");

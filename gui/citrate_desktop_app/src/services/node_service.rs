@@ -112,10 +112,9 @@ fn open_storage_with_key(
                     .with_encryption(EncryptionAtRestConfig::with_raw_key(k));
                 StorageManager::with_config(data_dir, cfg)
             }
-            None => StorageManager::new(
-                data_dir,
-                citrate_storage::pruning::PruningConfig::default(),
-            ),
+            None => {
+                StorageManager::new(data_dir, citrate_storage::pruning::PruningConfig::default())
+            }
         }
     };
 
@@ -442,7 +441,6 @@ impl EmbeddedNodeBackend {
             encryption_at_rest: std::sync::atomic::AtomicBool::new(true),
         }
     }
-
 }
 
 impl Default for EmbeddedNodeBackend {
@@ -472,8 +470,8 @@ impl EmbeddedNodeBackend {
 impl NodeBackend for EmbeddedNodeBackend {
     async fn start_node(&self, chain_id: u64, data_dir: &str) -> Result<(), AppError> {
         use citrate_network::{
-            NoiseKeypair, NetworkTransport, PeerManager, PeerManagerConfig,
-            Discovery, DiscoveryConfig, transport::HandshakeParams,
+            transport::HandshakeParams, Discovery, DiscoveryConfig, NetworkTransport, NoiseKeypair,
+            PeerManager, PeerManagerConfig,
         };
         use std::time::Duration;
 
@@ -488,9 +486,14 @@ impl NodeBackend for EmbeddedNodeBackend {
         }
 
         // Reset shutdown flag for fresh start
-        self.shutdown.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown
+            .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        tracing::info!("Starting embedded node: chain_id={}, data_dir={}", chain_id, data_dir);
+        tracing::info!(
+            "Starting embedded node: chain_id={}, data_dir={}",
+            chain_id,
+            data_dir
+        );
 
         // 1. Ensure data directory exists
         std::fs::create_dir_all(data_dir)
@@ -512,7 +515,8 @@ impl NodeBackend for EmbeddedNodeBackend {
             .load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
             "Initializing RocksDB storage at {} (encryption at rest: {})",
-            data_dir, encrypt
+            data_dir,
+            encrypt
         );
         let storage = open_storage(data_dir, encrypt)?;
 
@@ -546,9 +550,7 @@ impl NodeBackend for EmbeddedNodeBackend {
             );
 
             // Step 2: Initialize shared genesis state (accounts + model)
-            let executor = Arc::new(citrate_execution::executor::Executor::new(
-                state_db.clone(),
-            ));
+            let executor = Arc::new(citrate_execution::executor::Executor::new(state_db.clone()));
             let genesis_config = if chain_id == 40204 {
                 citrate_economics::genesis::GenesisConfig::testnet_beta()
             } else {
@@ -563,7 +565,8 @@ impl NodeBackend for EmbeddedNodeBackend {
             genesis.state_root = citrate_consensus::types::Hash::new(state_root_bytes);
 
             // Step 4: Recalculate block hash with state root included
-            genesis.header.block_hash = citrate_economics::genesis::calculate_canonical_block_hash(&genesis);
+            genesis.header.block_hash =
+                citrate_economics::genesis::calculate_canonical_block_hash(&genesis);
 
             // Store genesis block
             if let Err(e) = storage.blocks.put_block(&genesis) {
@@ -579,12 +582,20 @@ impl NodeBackend for EmbeddedNodeBackend {
         // 5. Compute head info for handshake
         let head_height = storage.blocks.get_latest_height().unwrap_or(0);
         let head_hash = if head_height > 0 {
-            storage.blocks.get_block_by_height(head_height).ok().flatten()
+            storage
+                .blocks
+                .get_block_by_height(head_height)
+                .ok()
+                .flatten()
                 .unwrap_or_default()
         } else {
             citrate_consensus::types::Hash::default()
         };
-        let genesis_hash = storage.blocks.get_block_by_height(0).ok().flatten()
+        let genesis_hash = storage
+            .blocks
+            .get_block_by_height(0)
+            .ok()
+            .flatten()
             .unwrap_or_default();
         let network_id = chain_id as u32;
 
@@ -605,12 +616,11 @@ impl NodeBackend for EmbeddedNodeBackend {
         let noise_key_path = std::path::Path::new(data_dir).join("noise.key");
         let noise_master = load_or_create_storage_key()
             .map_err(|e| AppError::Node(format!("Failed to source noise-seal master key: {e}")))?;
-        let noise_key_bytes = load_or_create_sealed_noise_key(
-            &noise_key_path,
-            &noise_master,
-            || NoiseKeypair::generate().to_bytes(),
-        )
-        .map_err(|e| AppError::Node(format!("Failed to load/seal noise key: {e}")))?;
+        let noise_key_bytes =
+            load_or_create_sealed_noise_key(&noise_key_path, &noise_master, || {
+                NoiseKeypair::generate().to_bytes()
+            })
+            .map_err(|e| AppError::Node(format!("Failed to load/seal noise key: {e}")))?;
         let noise_keypair = NoiseKeypair::from_bytes(&noise_key_bytes)
             .map_err(|e| AppError::Node(format!("Failed to parse noise key: {}", e)))?;
         let local_peer_id = noise_keypair.derive_peer_id();
@@ -630,11 +640,13 @@ impl NodeBackend for EmbeddedNodeBackend {
                 head_height,
                 head_hash,
             },
-        ).with_noise(noise_keypair);
+        )
+        .with_noise(noise_keypair);
 
         // 9. Start TCP listener — try configured port, fall back to OS-assigned
         let listen_result = {
-            let primary: std::net::SocketAddr = "0.0.0.0:30304".parse()
+            let primary: std::net::SocketAddr = "0.0.0.0:30304"
+                .parse()
                 .map_err(|e| AppError::Node(format!("Invalid listen address: {}", e)))?;
             match transport.start_listener(primary).await {
                 Ok(()) => {
@@ -643,10 +655,12 @@ impl NodeBackend for EmbeddedNodeBackend {
                 }
                 Err(e) => {
                     tracing::warn!("Port 30304 busy ({}), trying OS-assigned port", e);
-                    let fallback: std::net::SocketAddr = "0.0.0.0:0".parse()
+                    let fallback: std::net::SocketAddr = "0.0.0.0:0"
+                        .parse()
                         .map_err(|e| AppError::Node(format!("Invalid listen address: {}", e)))?;
-                    transport.start_listener(fallback).await
-                        .map_err(|e| AppError::Node(format!("P2P listener failed on fallback: {}", e)))
+                    transport.start_listener(fallback).await.map_err(|e| {
+                        AppError::Node(format!("P2P listener failed on fallback: {}", e))
+                    })
                 }
             }
         };
@@ -676,7 +690,11 @@ impl NodeBackend for EmbeddedNodeBackend {
             // then pushed blocks the app stored unconditionally. Only an
             // unpinned (bare host:port) bootnode falls back to `connect_to`.
             let connect_result = match &pinned_identity {
-                Some(expected_id) => transport.connect_to_trusted(addr, expected_id.clone()).await,
+                Some(expected_id) => {
+                    transport
+                        .connect_to_trusted(addr, expected_id.clone())
+                        .await
+                }
                 None => transport.connect_to(addr).await,
             };
             match connect_result {
@@ -685,7 +703,11 @@ impl NodeBackend for EmbeddedNodeBackend {
                     tracing::info!(
                         "=== CONNECTED to bootnode {} (Noise encrypted{}) ===",
                         addr,
-                        if pinned_identity.is_some() { ", identity-pinned" } else { "" }
+                        if pinned_identity.is_some() {
+                            ", identity-pinned"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 Err(e) => {
@@ -694,7 +716,10 @@ impl NodeBackend for EmbeddedNodeBackend {
                 }
             }
         }
-        tracing::info!("Bootnode connection phase complete: {} connected", connected_count);
+        tracing::info!(
+            "Bootnode connection phase complete: {} connected",
+            connected_count
+        );
 
         // Request blocks from connected peers to start syncing
         if connected_count > 0 {
@@ -813,7 +838,9 @@ impl NodeBackend for EmbeddedNodeBackend {
                         }
                     }
                 }
-                let _ = pm_loop.broadcast(&citrate_network::NetworkMessage::GetPeers).await;
+                let _ = pm_loop
+                    .broadcast(&citrate_network::NetworkMessage::GetPeers)
+                    .await;
             }
             tracing::info!("Discovery loop stopped");
         });
@@ -829,7 +856,8 @@ impl NodeBackend for EmbeddedNodeBackend {
         *self.storage.write().await = Some(storage);
         *self.peer_manager.write().await = Some(peer_manager);
         *self.state_db.write().await = Some(state_db);
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         // 13. Auto-start IPFS daemon for model/artifact storage
         tracing::info!("Starting IPFS daemon...");
@@ -846,7 +874,10 @@ impl NodeBackend for EmbeddedNodeBackend {
             }
             Err(e) => {
                 // IPFS failure is non-blocking — node works without it, just can't store models
-                tracing::warn!("IPFS daemon failed to start: {} — model storage unavailable", e);
+                tracing::warn!(
+                    "IPFS daemon failed to start: {} — model storage unavailable",
+                    e
+                );
             }
         }
 
@@ -860,8 +891,10 @@ impl NodeBackend for EmbeddedNodeBackend {
         let _lifecycle_guard = self.lifecycle.lock().await;
 
         // Signal background tasks to stop via flag AND instant notification
-        self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         // Wake all background tasks immediately (no more waiting for 10s interval)
         self.shutdown_notify.notify_waiters();
 
@@ -883,10 +916,7 @@ impl NodeBackend for EmbeddedNodeBackend {
         {
             let mut tasks = self.background_tasks.lock().await;
             for handle in tasks.drain(..) {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    handle,
-                ).await {
+                match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => tracing::warn!("Background task panicked: {}", e),
                     Err(_) => {
@@ -916,7 +946,8 @@ impl NodeBackend for EmbeddedNodeBackend {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         // Reset shutdown flag so start_node works again
-        self.shutdown.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown
+            .store(false, std::sync::atomic::Ordering::SeqCst);
 
         tracing::info!("Embedded node stopped (storage released, ready for restart)");
         Ok(())
@@ -970,10 +1001,12 @@ impl NodeBackend for EmbeddedNodeBackend {
             "id": 1,
         });
         let client = reqwest::Client::new();
-        match client.post("https://rpc.citrate.ai")
+        match client
+            .post("https://rpc.citrate.ai")
             .json(&body)
             .timeout(std::time::Duration::from_secs(5))
-            .send().await
+            .send()
+            .await
         {
             Ok(resp) => {
                 if let Ok(json) = resp.json::<serde_json::Value>().await {
@@ -1004,7 +1037,11 @@ impl NodeBackend for EmbeddedNodeBackend {
         if height == 0 {
             return Vec::new();
         }
-        let start = if height > count as u64 { height - count as u64 + 1 } else { 1 };
+        let start = if height > count as u64 {
+            height - count as u64 + 1
+        } else {
+            1
+        };
         let mut blocks = Vec::new();
         for h in (start..=height).rev() {
             // Data source: RocksDB via citrate_storage::BlockStore
@@ -1019,7 +1056,10 @@ impl NodeBackend for EmbeddedNodeBackend {
                         height: h,
                         timestamp: block.header.timestamp,
                         tx_count: block.transactions.len(),
-                        selected_parent: format!("0x{}", block.header.selected_parent_hash.to_hex()),
+                        selected_parent: format!(
+                            "0x{}",
+                            block.header.selected_parent_hash.to_hex()
+                        ),
                         blue_score: block.header.blue_score,
                         proposer: proposer_hex,
                     });
@@ -1077,8 +1117,8 @@ impl NodeBackend for EmbeddedNodeBackend {
 
         let derive_addr = |pk: &citrate_consensus::types::PublicKey| -> String {
             let bytes = pk.as_bytes();
-            let is_evm = bytes[20..].iter().all(|&b| b == 0)
-                && !bytes[..20].iter().all(|&b| b == 0);
+            let is_evm =
+                bytes[20..].iter().all(|&b| b == 0) && !bytes[..20].iter().all(|&b| b == 0);
             if is_evm {
                 format!("0x{}", hex::encode(&bytes[..20]))
             } else {
@@ -1090,11 +1130,7 @@ impl NodeBackend for EmbeddedNodeBackend {
 
         let mut out = Vec::with_capacity(block.transactions.len());
         for tx in &block.transactions {
-            let receipt = storage
-                .transactions
-                .get_receipt(&tx.hash)
-                .ok()
-                .flatten();
+            let receipt = storage.transactions.get_receipt(&tx.hash).ok().flatten();
             let (status, gas_used, eff_gas) = match &receipt {
                 Some(r) => (
                     if r.status {
@@ -1169,7 +1205,9 @@ impl NodeBackend for EmbeddedNodeBackend {
                             }
                         };
                         let from = derive_addr(&tx.from);
-                        let to = tx.to.as_ref()
+                        let to = tx
+                            .to
+                            .as_ref()
                             .map(derive_addr)
                             .unwrap_or_else(|| "contract creation".to_string());
                         let from_match = from.to_lowercase() == addr_lower;
@@ -1177,7 +1215,11 @@ impl NodeBackend for EmbeddedNodeBackend {
                         if from_match || to_match {
                             txs.push(TxSummary {
                                 hash: format!("0x{}", tx.hash.to_hex()),
-                                tx_type: if from_match { "send".to_string() } else { "receive".to_string() },
+                                tx_type: if from_match {
+                                    "send".to_string()
+                                } else {
+                                    "receive".to_string()
+                                },
                                 amount: citrate_wallet_core::format::wei_to_salt(tx.value),
                                 counterparty: if from_match { to.clone() } else { from.clone() },
                                 status: "confirmed".to_string(),
@@ -1200,12 +1242,24 @@ pub struct TestNodeBackend;
 #[cfg(test)]
 #[async_trait::async_trait]
 impl NodeBackend for TestNodeBackend {
-    async fn start_node(&self, _chain_id: u64, _data_dir: &str) -> Result<(), AppError> { Ok(()) }
-    async fn stop_node(&self) -> Result<(), AppError> { Ok(()) }
-    async fn get_block_height(&self) -> u64 { 0 }
-    async fn get_peer_count(&self) -> u32 { 0 }
-    async fn get_mempool_size(&self) -> usize { 0 }
-    async fn get_balance(&self, _address: &[u8; 20]) -> String { "0".to_string() }
+    async fn start_node(&self, _chain_id: u64, _data_dir: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn stop_node(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn get_block_height(&self) -> u64 {
+        0
+    }
+    async fn get_peer_count(&self) -> u32 {
+        0
+    }
+    async fn get_mempool_size(&self) -> usize {
+        0
+    }
+    async fn get_balance(&self, _address: &[u8; 20]) -> String {
+        "0".to_string()
+    }
 }
 
 /// Node lifecycle and chain queries.
@@ -1249,12 +1303,18 @@ impl NodeService {
     /// Start the embedded node
     pub async fn start(&self) -> Result<(), AppError> {
         let config = self.config.read().await;
-        tracing::info!("Starting node for network={}, chain_id={}", config.network, config.chain_id);
+        tracing::info!(
+            "Starting node for network={}, chain_id={}",
+            config.network,
+            config.chain_id
+        );
 
         // ENCRYPT-S1 WP-1: apply the config's at-rest posture before start.
         self.backend.set_encryption(config.encryption_at_rest).await;
 
-        self.backend.start_node(config.chain_id, &config.data_dir).await?;
+        self.backend
+            .start_node(config.chain_id, &config.data_dir)
+            .await?;
 
         let mut status = self.status.write().await;
         status.running = true;
@@ -1319,8 +1379,8 @@ impl NodeService {
         if addr.len() != 40 {
             return Err(AppError::InvalidAddress(address.to_string()));
         }
-        let addr_bytes = hex::decode(addr)
-            .map_err(|_| AppError::InvalidAddress(address.to_string()))?;
+        let addr_bytes =
+            hex::decode(addr).map_err(|_| AppError::InvalidAddress(address.to_string()))?;
         let mut addr_20 = [0u8; 20];
         addr_20.copy_from_slice(&addr_bytes);
         Ok(self.backend.get_balance(&addr_20).await)
@@ -1350,7 +1410,11 @@ impl NodeService {
     }
 
     /// Get recent transactions for an address via the backend.
-    pub async fn get_transactions_for_address(&self, address: &str, limit: usize) -> Vec<TxSummary> {
+    pub async fn get_transactions_for_address(
+        &self,
+        address: &str,
+        limit: usize,
+    ) -> Vec<TxSummary> {
         self.backend.get_transactions_for(address, limit).await
     }
 }
@@ -1374,7 +1438,10 @@ mod encryption_tests {
             self.data.lock().unwrap().get(key).cloned()
         }
         fn set_secret(&self, key: &str, value: &str) -> Result<(), String> {
-            self.data.lock().unwrap().insert(key.to_string(), value.to_string());
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
         fn delete_secret(&self, key: &str) -> Result<(), String> {
@@ -1390,13 +1457,9 @@ mod encryption_tests {
     /// rocksdb crate — bypasses the storage layer's cipher entirely, so we
     /// see exactly what hit the disk. Mirrors the chain repo's probe.
     fn raw_read(path: &std::path::Path, cf: &str, key: &[u8]) -> Option<Vec<u8>> {
-        let db = rocksdb::DB::open_cf_for_read_only(
-            &rocksdb::Options::default(),
-            path,
-            [cf],
-            false,
-        )
-        .expect("raw read-only open should succeed");
+        let db =
+            rocksdb::DB::open_cf_for_read_only(&rocksdb::Options::default(), path, [cf], false)
+                .expect("raw read-only open should succeed");
         let handle = db.cf_handle(cf).expect("cf handle");
         db.get_cf(&handle, key).expect("raw get should succeed")
     }
@@ -1431,10 +1494,14 @@ mod encryption_tests {
         // Raw on-disk bytes must be sealed, differ from plaintext, and not
         // contain the plaintext marker anywhere.
         let raw = raw_read(tmp.path(), "metadata", key).expect("raw bytes present");
-        assert!(is_sealed(&raw), "on-disk value must carry the at-rest envelope prefix");
+        assert!(
+            is_sealed(&raw),
+            "on-disk value must carry the at-rest envelope prefix"
+        );
         assert_ne!(raw, plaintext, "on-disk value must not equal plaintext");
         assert!(
-            raw.windows(plaintext.len()).all(|w| w != plaintext.as_slice()),
+            raw.windows(plaintext.len())
+                .all(|w| w != plaintext.as_slice()),
             "plaintext marker must not appear in the ciphertext"
         );
     }
@@ -1466,8 +1533,8 @@ mod encryption_tests {
 
         // 3. And a plaintext open of the now-encrypted dir must itself be
         //    recovered by wipe-and-resync (reverse mismatch).
-        let storage = open_storage_with_key(dir, None)
-            .expect("reverse mismatch should wipe-and-resync");
+        let storage =
+            open_storage_with_key(dir, None).expect("reverse mismatch should wipe-and-resync");
         assert!(!storage.is_encryption_enabled());
     }
 
@@ -1495,8 +1562,12 @@ mod encryption_tests {
                 *self.set_calls.lock().unwrap() += 1;
                 Ok(())
             }
-            fn delete_secret(&self, _key: &str) -> Result<(), String> { Ok(()) }
-            fn has_secret(&self, _key: &str) -> bool { true }
+            fn delete_secret(&self, _key: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn has_secret(&self, _key: &str) -> bool {
+                true
+            }
         }
 
         let store = FlakySecrets {
@@ -1504,7 +1575,10 @@ mod encryption_tests {
             set_calls: Mutex::new(0),
         };
         let result = load_or_create_storage_key_from(&store);
-        assert!(result.is_err(), "transient read error must abort, not regenerate");
+        assert!(
+            result.is_err(),
+            "transient read error must abort, not regenerate"
+        );
         assert_eq!(
             *store.set_calls.lock().unwrap(),
             0,
@@ -1521,8 +1595,12 @@ mod encryption_tests {
         assert!(store.has_secret(NODE_STORAGE_KEYRING_ACCOUNT));
 
         // Second "boot" (same store = same keyring) must read the SAME key.
-        let second = load_or_create_storage_key_from(&store).expect("second load reads the same key");
-        assert_eq!(first, second, "keyring-sourced key must be stable across restarts");
+        let second =
+            load_or_create_storage_key_from(&store).expect("second load reads the same key");
+        assert_eq!(
+            first, second,
+            "keyring-sourced key must be stable across restarts"
+        );
 
         // And that stable key decrypts a DB it created: write encrypted,
         // drop, reopen with the same key, read back.
@@ -1577,9 +1655,14 @@ mod noise_seal_tests {
             .expect("first boot");
         assert_eq!(a, identity);
         let on_disk = std::fs::read(&path).expect("read");
-        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "on disk must be sealed");
         assert!(
-            on_disk.windows(identity.len()).all(|w| w != identity.as_slice()),
+            on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()),
+            "on disk must be sealed"
+        );
+        assert!(
+            on_disk
+                .windows(identity.len())
+                .all(|w| w != identity.as_slice()),
             "plaintext identity must not appear on disk"
         );
 
@@ -1609,7 +1692,10 @@ mod noise_seal_tests {
 
         // File is now sealed, and decrypts back to the same identity.
         let on_disk = std::fs::read(&path).expect("read");
-        assert!(on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()), "migrated to sealed");
+        assert!(
+            on_disk.starts_with(NOISE_SEAL_MAGIC.as_slice()),
+            "migrated to sealed"
+        );
         assert_eq!(open_noise_key(&master, &on_disk).expect("open"), identity);
     }
 }
@@ -1679,7 +1765,9 @@ mod tests {
     #[tokio::test]
     async fn test_valid_address_accepted() {
         let svc = test_service();
-        let result = svc.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await;
+        let result = svc
+            .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+            .await;
         assert!(result.is_ok());
     }
 
@@ -1687,7 +1775,10 @@ mod tests {
     async fn test_config_has_bootnode() {
         let svc = test_service();
         let config = svc.config.read().await;
-        assert!(!config.bootnodes.is_empty(), "Default config must include testnet bootnode");
+        assert!(
+            !config.bootnodes.is_empty(),
+            "Default config must include testnet bootnode"
+        );
         // Default bootnodes are DNS hostnames (boot{1,2,3}.citrate.ai,
         // rpc.citrate.ai), resolved via citrate_network::resolve_bootnode —
         // the literal VPS IP was retired in the bootnode-DNS migration.
@@ -1744,7 +1835,11 @@ mod tests {
 
         let event = rx.recv().await.expect("event received");
         match event {
-            AppEvent::NodeStatusChanged { running, peer_count, .. } => {
+            AppEvent::NodeStatusChanged {
+                running,
+                peer_count,
+                ..
+            } => {
                 assert!(!running);
                 assert_eq!(peer_count, 0);
             }
@@ -1763,10 +1858,7 @@ mod tests {
         svc.refresh_status().await;
 
         // No event should be published
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            rx.recv(),
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
         assert!(result.is_err(), "No event expected when node is stopped");
     }
 
@@ -1785,14 +1877,18 @@ mod tests {
     #[tokio::test]
     async fn test_address_with_0x_prefix() {
         let svc = test_service();
-        let result = svc.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await;
+        let result = svc
+            .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+            .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_address_without_0x_prefix() {
         let svc = test_service();
-        let result = svc.get_balance("b5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await;
+        let result = svc
+            .get_balance("b5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+            .await;
         assert!(result.is_ok());
     }
 
@@ -1806,14 +1902,18 @@ mod tests {
     #[tokio::test]
     async fn test_address_too_long() {
         let svc = test_service();
-        let result = svc.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129FF").await;
+        let result = svc
+            .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129FF")
+            .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_address_invalid_hex() {
         let svc = test_service();
-        let result = svc.get_balance("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG").await;
+        let result = svc
+            .get_balance("0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG")
+            .await;
         assert!(result.is_err());
     }
 
@@ -1840,12 +1940,24 @@ mod tests {
 
         #[async_trait::async_trait]
         impl NodeBackend for CustomBackend {
-            async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> { Ok(()) }
-            async fn stop_node(&self) -> Result<(), AppError> { Ok(()) }
-            async fn get_block_height(&self) -> u64 { 42 }
-            async fn get_peer_count(&self) -> u32 { 7 }
-            async fn get_mempool_size(&self) -> usize { 3 }
-            async fn get_balance(&self, _: &[u8; 20]) -> String { "1000000".to_string() }
+            async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn stop_node(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn get_block_height(&self) -> u64 {
+                42
+            }
+            async fn get_peer_count(&self) -> u32 {
+                7
+            }
+            async fn get_mempool_size(&self) -> usize {
+                3
+            }
+            async fn get_balance(&self, _: &[u8; 20]) -> String {
+                "1000000".to_string()
+            }
         }
 
         let config = Arc::new(RwLock::new(AppConfig::default()));
@@ -1853,7 +1965,10 @@ mod tests {
         let svc = NodeService::with_backend(config, events, Arc::new(CustomBackend));
         svc.start().await.expect("start succeeded");
 
-        let balance = svc.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await.expect("async operation succeeded");
+        let balance = svc
+            .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+            .await
+            .expect("async operation succeeded");
         assert_eq!(balance, "1000000");
     }
 
@@ -1865,15 +1980,27 @@ mod tests {
 
         #[async_trait::async_trait]
         impl NodeBackend for ChangingBackend {
-            async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> { Ok(()) }
-            async fn stop_node(&self) -> Result<(), AppError> { Ok(()) }
+            async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn stop_node(&self) -> Result<(), AppError> {
+                Ok(())
+            }
             async fn get_block_height(&self) -> u64 {
                 // Returns 1, 2, 3, ... (starts at 1 so first refresh sees a change from 0)
-                self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+                self.call_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1
             }
-            async fn get_peer_count(&self) -> u32 { 1 }
-            async fn get_mempool_size(&self) -> usize { 0 }
-            async fn get_balance(&self, _: &[u8; 20]) -> String { "0".to_string() }
+            async fn get_peer_count(&self) -> u32 {
+                1
+            }
+            async fn get_mempool_size(&self) -> usize {
+                0
+            }
+            async fn get_balance(&self, _: &[u8; 20]) -> String {
+                "0".to_string()
+            }
         }
 
         let config = Arc::new(RwLock::new(AppConfig::default()));
@@ -1963,14 +2090,20 @@ mod tests {
             bootnode.starts_with("noise_"),
             "Bootnode should carry a noise identity prefix"
         );
-        assert!(bootnode.contains("citrate.ai"), "Bootnode should point to citrate.ai infra");
+        assert!(
+            bootnode.contains("citrate.ai"),
+            "Bootnode should point to citrate.ai infra"
+        );
         assert!(bootnode.contains(":30303"), "Bootnode should specify port");
     }
 
     #[tokio::test]
     async fn test_balance_returns_stub_zero() {
         let svc = test_service();
-        let balance = svc.get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129").await.expect("async operation succeeded");
+        let balance = svc
+            .get_balance("0xb5ddd4eb356ddf3bf51eb3aec1ed28213be59129")
+            .await
+            .expect("async operation succeeded");
         assert_eq!(balance, "0");
     }
 
@@ -1986,10 +2119,18 @@ mod tests {
             async fn stop_node(&self) -> Result<(), AppError> {
                 Err(AppError::Node("failed to stop".into()))
             }
-            async fn get_block_height(&self) -> u64 { 0 }
-            async fn get_peer_count(&self) -> u32 { 0 }
-            async fn get_mempool_size(&self) -> usize { 0 }
-            async fn get_balance(&self, _: &[u8; 20]) -> String { "0".into() }
+            async fn get_block_height(&self) -> u64 {
+                0
+            }
+            async fn get_peer_count(&self) -> u32 {
+                0
+            }
+            async fn get_mempool_size(&self) -> usize {
+                0
+            }
+            async fn get_balance(&self, _: &[u8; 20]) -> String {
+                "0".into()
+            }
         }
 
         let config = Arc::new(RwLock::new(AppConfig::default()));

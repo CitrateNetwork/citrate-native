@@ -203,7 +203,7 @@ mod account_conversion {
 // ============================================================================
 
 mod balance_formatting {
-    use citrate_wallet_core::format::{wei_to_salt, format_salt_display};
+    use citrate_wallet_core::format::{format_salt_display, wei_to_salt};
 
     /// The background thread reads a wei string from the node backend,
     /// parses it as u128, and then calls wei_to_salt. Test that pipeline.
@@ -238,10 +238,7 @@ mod balance_formatting {
     #[test]
     fn display_format_with_unit() {
         assert_eq!(format_salt_display(0), "0 SALT");
-        assert_eq!(
-            format_salt_display(1_000_000_000_000_000_000u128),
-            "1 SALT"
-        );
+        assert_eq!(format_salt_display(1_000_000_000_000_000_000u128), "1 SALT");
     }
 
     /// Large balances get comma separators.
@@ -257,7 +254,7 @@ mod balance_formatting {
 // ============================================================================
 
 mod background_thread_types {
-    use citrate_desktop_app::services::node_service::{NodeStatus, BlockSummary};
+    use citrate_desktop_app::services::node_service::{BlockSummary, NodeStatus};
 
     /// NodeStatus must be Send + Clone (used across thread boundary + invoke_from_event_loop).
     #[test]
@@ -357,11 +354,7 @@ mod background_thread_types {
     #[test]
     fn tx_count_formatting() {
         let format_txcount = |count: usize| -> String {
-            format!(
-                "{} txn{}",
-                count,
-                if count == 1 { "" } else { "s" }
-            )
+            format!("{} txn{}", count, if count == 1 { "" } else { "s" })
         };
 
         assert_eq!(format_txcount(0), "0 txns");

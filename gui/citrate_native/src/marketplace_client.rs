@@ -52,17 +52,15 @@ static CANONICAL: LazyLock<CanonicalTable> = LazyLock::new(|| {
 
 /// Flat name → 'static-leaked address map combining `contracts` +
 /// `aaStack`. Box::leak-ed so the public API can return `&'static str`.
-static NAME_TO_ADDRESS: LazyLock<HashMap<&'static str, &'static str>> =
-    LazyLock::new(|| {
-        let mut book =
-            HashMap::with_capacity(CANONICAL.contracts.len() + CANONICAL.aa_stack.len());
-        for (name, addr) in CANONICAL.contracts.iter().chain(CANONICAL.aa_stack.iter()) {
-            let n: &'static str = Box::leak(name.clone().into_boxed_str());
-            let a: &'static str = Box::leak(addr.clone().into_boxed_str());
-            book.insert(n, a);
-        }
-        book
-    });
+static NAME_TO_ADDRESS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let mut book = HashMap::with_capacity(CANONICAL.contracts.len() + CANONICAL.aa_stack.len());
+    for (name, addr) in CANONICAL.contracts.iter().chain(CANONICAL.aa_stack.iter()) {
+        let n: &'static str = Box::leak(name.clone().into_boxed_str());
+        let a: &'static str = Box::leak(addr.clone().into_boxed_str());
+        book.insert(n, a);
+    }
+    book
+});
 
 /// Sorted list of every contract name in the canonical table, leaked
 /// to 'static so the public API stays zero-allocation per call.
@@ -141,7 +139,7 @@ pub fn encode_model_count() -> Vec<u8> {
 
 /// Encode `getModelAt(uint256 index) → bytes32 modelId`. Returns
 /// the ID of the Nth model in registration order.
-#[allow(dead_code)]  // Used by future ModelRegistry browser (T2-6 forward infra)
+#[allow(dead_code)] // Used by future ModelRegistry browser (T2-6 forward infra)
 pub fn encode_get_model_at(index: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(36);
     out.extend_from_slice(&selector("getModelAt(uint256)"));
@@ -152,7 +150,7 @@ pub fn encode_get_model_at(index: u64) -> Vec<u8> {
 }
 
 /// Decode a 32-byte bytes32 result into a hex string with 0x prefix.
-#[allow(dead_code)]  // Used by future ModelRegistry browser (T2-6 forward infra)
+#[allow(dead_code)] // Used by future ModelRegistry browser (T2-6 forward infra)
 pub fn decode_bytes32(hex_result: &str) -> Option<String> {
     let s = hex_result.strip_prefix("0x").unwrap_or(hex_result);
     let bytes = hex::decode(s).ok()?;
@@ -284,17 +282,17 @@ pub fn encode_stakes(pool_id: u64, addr: &str) -> Option<Vec<u8>> {
 /// T2-8: Parsed Pool struct from `getPool(uint256)` return.
 /// Maps directly to `LearningPool.Pool` in the Solidity source.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]  // consumed by the Learning panel hydration
+#[allow(dead_code)] // consumed by the Learning panel hydration
 pub struct PoolInfo {
     pub id: u64,
     pub name: String,
     pub description: String,
-    pub creator: String,     // 0x-prefixed EIP-55 checksum-less hex
-    pub state: u8,           // 0=Active, 1=Closed, 2=ActiveCycle
-    pub access: u8,          // 0=Open, 1=InviteOnly, 2=ApplicationRequired
+    pub creator: String, // 0x-prefixed EIP-55 checksum-less hex
+    pub state: u8,       // 0=Active, 1=Closed, 2=ActiveCycle
+    pub access: u8,      // 0=Open, 1=InviteOnly, 2=ApplicationRequired
     pub min_stake_wei: u128,
     pub member_count: u64,
-    pub created_at: u64,     // unix seconds
+    pub created_at: u64, // unix seconds
 }
 
 /// Encode `getPool(uint256 poolId) → Pool` view call.
@@ -365,9 +363,13 @@ pub fn decode_pool_info(hex_result: &str) -> Option<PoolInfo> {
     // Helper: read a length-prefixed UTF-8 string at `tuple_start + offset`
     let read_string = |offset: usize| -> Option<String> {
         let pos = tuple_start + offset;
-        if bytes.len() < pos + 32 { return None; }
+        if bytes.len() < pos + 32 {
+            return None;
+        }
         let len = u64::from_be_bytes(bytes[pos + 24..pos + 32].try_into().ok()?) as usize;
-        if bytes.len() < pos + 32 + len { return None; }
+        if bytes.len() < pos + 32 + len {
+            return None;
+        }
         let raw = &bytes[pos + 32..pos + 32 + len];
         // UTF-8 decode — lossy fallback so a broken string doesn't nuke
         // the whole row.
@@ -415,9 +417,8 @@ pub fn encode_create_pool(
     let name_offset: u64 = head_size;
     let desc_offset: u64 = head_size + 32 + name_padded_len as u64;
 
-    let mut out = Vec::with_capacity(
-        4 + head_size as usize + 32 + name_padded_len + 32 + desc_padded_len
-    );
+    let mut out =
+        Vec::with_capacity(4 + head_size as usize + 32 + name_padded_len + 32 + desc_padded_len);
     out.extend_from_slice(&sel);
 
     // Head slot 0: name offset
@@ -549,11 +550,7 @@ pub fn wei_to_salt_display(wei: u128) -> String {
 /// Issue an eth_call and return the hex result string (with 0x
 /// prefix). Returns Ok("0x") if the node replies with empty data,
 /// Err on transport or RPC-level errors.
-pub async fn eth_call(
-    rpc_url: &str,
-    to: &str,
-    data: &[u8],
-) -> Result<String, String> {
+pub async fn eth_call(rpc_url: &str, to: &str, data: &[u8]) -> Result<String, String> {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -635,7 +632,7 @@ fn topic_job_failed() -> [u8; 32] {
 pub struct ActivityEntry {
     pub job_id: u64,
     pub block_number: u64,
-    pub status: String,  // "Assigned", "Completed", or "Failed"
+    pub status: String, // "Assigned", "Completed", or "Failed"
 }
 
 /// Fetch recent activity from ComputeMarketplace. Returns an empty
@@ -674,9 +671,13 @@ pub async fn fetch_recent_activity(
         .send()
         .await
         .map_err(|e| format!("rpc transport: {}", e))?;
-    let bn_json: serde_json::Value = bn_resp.json().await
+    let bn_json: serde_json::Value = bn_resp
+        .json()
+        .await
         .map_err(|e| format!("rpc decode: {}", e))?;
-    let latest_hex = bn_json.get("result").and_then(|v| v.as_str())
+    let latest_hex = bn_json
+        .get("result")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| "missing block number".to_string())?;
     let latest = u64::from_str_radix(latest_hex.trim_start_matches("0x"), 16)
         .map_err(|e| format!("bad block number: {}", e))?;
@@ -703,12 +704,15 @@ pub async fn fetch_recent_activity(
         .send()
         .await
         .map_err(|e| format!("rpc transport: {}", e))?;
-    let json: serde_json::Value = resp.json().await
+    let json: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("rpc decode: {}", e))?;
     if let Some(err) = json.get("error") {
         return Err(format!("rpc error: {}", err));
     }
-    let logs = json.get("result")
+    let logs = json
+        .get("result")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "missing logs array".to_string())?;
 
@@ -716,31 +720,49 @@ pub async fn fetch_recent_activity(
     let t_c = topic_job_completed();
     let t_f = topic_job_failed();
 
-    let mut entries: Vec<ActivityEntry> = logs.iter().filter_map(|log| {
-        let topics = log.get("topics")?.as_array()?;
-        if topics.len() < 3 { return None; }
-        let topic0_hex = topics[0].as_str()?.trim_start_matches("0x");
-        let topic0 = hex::decode(topic0_hex).ok()?;
-        if topic0.len() != 32 { return None; }
-        let topic0_arr: [u8; 32] = topic0.try_into().ok()?;
-        let status = if topic0_arr == t_a { "Assigned" }
-            else if topic0_arr == t_c { "Completed" }
-            else if topic0_arr == t_f { "Failed" }
-            else { return None; };
+    let mut entries: Vec<ActivityEntry> = logs
+        .iter()
+        .filter_map(|log| {
+            let topics = log.get("topics")?.as_array()?;
+            if topics.len() < 3 {
+                return None;
+            }
+            let topic0_hex = topics[0].as_str()?.trim_start_matches("0x");
+            let topic0 = hex::decode(topic0_hex).ok()?;
+            if topic0.len() != 32 {
+                return None;
+            }
+            let topic0_arr: [u8; 32] = topic0.try_into().ok()?;
+            let status = if topic0_arr == t_a {
+                "Assigned"
+            } else if topic0_arr == t_c {
+                "Completed"
+            } else if topic0_arr == t_f {
+                "Failed"
+            } else {
+                return None;
+            };
 
-        // topic[1] is the indexed jobId (uint256 → u64 via last 8 bytes).
-        let job_id_hex = topics[1].as_str()?.trim_start_matches("0x");
-        let job_id_bytes = hex::decode(job_id_hex).ok()?;
-        if job_id_bytes.len() != 32 { return None; }
-        let mut job_id_buf = [0u8; 8];
-        job_id_buf.copy_from_slice(&job_id_bytes[24..32]);
-        let job_id = u64::from_be_bytes(job_id_buf);
+            // topic[1] is the indexed jobId (uint256 → u64 via last 8 bytes).
+            let job_id_hex = topics[1].as_str()?.trim_start_matches("0x");
+            let job_id_bytes = hex::decode(job_id_hex).ok()?;
+            if job_id_bytes.len() != 32 {
+                return None;
+            }
+            let mut job_id_buf = [0u8; 8];
+            job_id_buf.copy_from_slice(&job_id_bytes[24..32]);
+            let job_id = u64::from_be_bytes(job_id_buf);
 
-        let block_hex = log.get("blockNumber")?.as_str()?.trim_start_matches("0x");
-        let block_number = u64::from_str_radix(block_hex, 16).ok()?;
+            let block_hex = log.get("blockNumber")?.as_str()?.trim_start_matches("0x");
+            let block_number = u64::from_str_radix(block_hex, 16).ok()?;
 
-        Some(ActivityEntry { job_id, block_number, status: status.to_string() })
-    }).collect();
+            Some(ActivityEntry {
+                job_id,
+                block_number,
+                status: status.to_string(),
+            })
+        })
+        .collect();
 
     // Descending by block number — newest first.
     entries.sort_by(|a, b| b.block_number.cmp(&a.block_number));
@@ -876,7 +898,10 @@ mod tests {
         // First 12 bytes zero
         assert!(padded[..12].iter().all(|&b| b == 0));
         // Last 20 bytes = address
-        assert_eq!(hex::encode(&padded[12..]), "1234567890abcdef1234567890abcdef12345678");
+        assert_eq!(
+            hex::encode(&padded[12..]),
+            "1234567890abcdef1234567890abcdef12345678"
+        );
     }
 
     #[test]
@@ -967,7 +992,10 @@ mod tests {
         assert_eq!(data.len(), 36);
         // pool id 7 in the last byte of the second word
         assert_eq!(data[35], 7);
-        assert!(data[4..35].iter().all(|&b| b == 0), "id should be left-padded with zeros");
+        assert!(
+            data[4..35].iter().all(|&b| b == 0),
+            "id should be left-padded with zeros"
+        );
     }
 
     #[test]
@@ -977,7 +1005,10 @@ mod tests {
         // 4 + 32 (poolId) + 32 (address) = 68
         assert_eq!(data.len(), 68);
         assert_eq!(data[35], 3);
-        assert_eq!(hex::encode(&data[48..68]), "1234567890abcdef1234567890abcdef12345678");
+        assert_eq!(
+            hex::encode(&data[48..68]),
+            "1234567890abcdef1234567890abcdef12345678"
+        );
     }
 
     #[test]
@@ -1166,24 +1197,24 @@ mod tests {
         // desc_offset = 288 + 64 = 352
         let mut hex_s = String::from("0x");
         hex_s.push_str(&format!("{:064x}", 0x20)); // outer offset
-        // Head
-        hex_s.push_str(&format!("{:064x}", 7u64));    // id
-        hex_s.push_str(&format!("{:064x}", 288u64));  // name_offset
-        hex_s.push_str(&format!("{:064x}", 352u64));  // desc_offset
-        // creator
+                                                   // Head
+        hex_s.push_str(&format!("{:064x}", 7u64)); // id
+        hex_s.push_str(&format!("{:064x}", 288u64)); // name_offset
+        hex_s.push_str(&format!("{:064x}", 352u64)); // desc_offset
+                                                     // creator
         hex_s.push_str("000000000000000000000000");
         hex_s.push_str("1234567890123456789012345678901234567890");
-        hex_s.push_str(&format!("{:064x}", 0u64));    // state
-        hex_s.push_str(&format!("{:064x}", 0u64));    // access
+        hex_s.push_str(&format!("{:064x}", 0u64)); // state
+        hex_s.push_str(&format!("{:064x}", 0u64)); // access
         hex_s.push_str(&format!("{:064x}", MIN_PROVIDER_STAKE_WEI));
-        hex_s.push_str(&format!("{:064x}", 3u64));    // memberCount
+        hex_s.push_str(&format!("{:064x}", 3u64)); // memberCount
         hex_s.push_str(&format!("{:064x}", 1700000000u64));
         // Tail: name
-        hex_s.push_str(&format!("{:064x}", 6u64));    // name length
+        hex_s.push_str(&format!("{:064x}", 6u64)); // name length
         hex_s.push_str("4d79506f6f6c"); // "MyPool" hex
         hex_s.push_str(&"0".repeat(52)); // pad to 32
-        // Tail: description
-        hex_s.push_str(&format!("{:064x}", 11u64));   // desc length
+                                         // Tail: description
+        hex_s.push_str(&format!("{:064x}", 11u64)); // desc length
         hex_s.push_str("4120636f6f6c20706f6f6c"); // "A cool pool" hex
         hex_s.push_str(&"0".repeat(42)); // pad to 32
 
@@ -1299,16 +1330,12 @@ mod tests {
                 serde_json::Value::Object(m) => {
                     m.values().for_each(|v| collect_book_values(v, out))
                 }
-                serde_json::Value::Array(a) => {
-                    a.iter().for_each(|v| collect_book_values(v, out))
-                }
+                serde_json::Value::Array(a) => a.iter().for_each(|v| collect_book_values(v, out)),
                 _ => {}
             }
         }
         fn is_addr_literal(s: &str) -> bool {
-            s.len() == 42
-                && s.starts_with("0x")
-                && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
+            s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
         }
         // Extract exactly-40-hex 0x literals (longer hex runs — tx
         // hashes, topics, bytes32 — are skipped).
@@ -1350,20 +1377,17 @@ mod tests {
         collect_book_values(&book, &mut book_values);
         assert!(!book_values.is_empty(), "book has no addresses at all?");
 
-        let src_root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
         rs_files(&src_root, &mut files);
         assert!(!files.is_empty(), "no .rs files under {src_root:?}?");
 
         let mut offenders = Vec::new();
         for path in &files {
-            let text = std::fs::read_to_string(path)
-                .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+            let text =
+                std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
             for lit in extract_addr_literals(&text) {
-                if !book_values.contains(&lit)
-                    && !ALLOWED_FIXTURES.contains(&lit.as_str())
-                {
+                if !book_values.contains(&lit) && !ALLOWED_FIXTURES.contains(&lit.as_str()) {
                     offenders.push(format!("{} in {}", lit, path.display()));
                 }
             }

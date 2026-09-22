@@ -14,12 +14,12 @@
 
 slint::include_modules!();
 
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Once;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::PhysicalSize;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Once;
 
 thread_local! {
     static WINDOW: Rc<MinimalSoftwareWindow> =
@@ -67,8 +67,7 @@ fn save_snapshot(app: &App, name: &str) {
                 chunk[3] = 255;
             }
             let path = screenshots_dir().join(format!("{}.png", name));
-            let img = image::RgbaImage::from_raw(width, height, pixels)
-                .expect("valid RGBA buffer");
+            let img = image::RgbaImage::from_raw(width, height, pixels).expect("valid RGBA buffer");
             img.save(&path).expect("save PNG");
             eprintln!("  [SCREENSHOT] {:?} ({}x{})", path, width, height);
         }
@@ -99,9 +98,13 @@ fn e2e_all_surfaces() {
         ($name:expr, $body:block) => {{
             eprint!("  CHECK: {} ... ", $name);
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
-                Ok(_) => { eprintln!("OK"); passed += 1; }
+                Ok(_) => {
+                    eprintln!("OK");
+                    passed += 1;
+                }
                 Err(e) => {
-                    let msg = e.downcast_ref::<String>()
+                    let msg = e
+                        .downcast_ref::<String>()
                         .map(|s| s.as_str())
                         .or_else(|| e.downcast_ref::<&str>().copied())
                         .unwrap_or("unknown panic");
@@ -300,8 +303,16 @@ fn e2e_all_surfaces() {
         set_window_size(1200, 800);
         app.global::<Theme>().set_dark_mode(true);
         for tab in [
-            "dashboard", "wallet", "dag", "chat", "models",
-            "compute", "storage", "learning", "operations", "settings",
+            "dashboard",
+            "wallet",
+            "dag",
+            "chat",
+            "models",
+            "compute",
+            "storage",
+            "learning",
+            "operations",
+            "settings",
         ] {
             app.set_active_tab(tab.into());
             assert_eq!(app.get_active_tab().to_string(), tab);
@@ -337,8 +348,12 @@ fn e2e_all_surfaces() {
     });
 
     // ── Summary ──
-    eprintln!("\n=== Results: {} passed, {} failed out of {} total ===\n",
-        passed, failed, passed + failed);
+    eprintln!(
+        "\n=== Results: {} passed, {} failed out of {} total ===\n",
+        passed,
+        failed,
+        passed + failed
+    );
 
     // List all screenshots
     let dir = screenshots_dir();
@@ -348,7 +363,11 @@ fn e2e_all_surfaces() {
         eprintln!("Screenshots ({}):", files.len());
         for entry in &files {
             if let Ok(meta) = entry.metadata() {
-                eprintln!("  {} ({} KB)", entry.file_name().to_string_lossy(), meta.len() / 1024);
+                eprintln!(
+                    "  {} ({} KB)",
+                    entry.file_name().to_string_lossy(),
+                    meta.len() / 1024
+                );
             }
         }
     }

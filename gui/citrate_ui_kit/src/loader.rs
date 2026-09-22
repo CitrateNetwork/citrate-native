@@ -157,8 +157,15 @@ pub fn resample(pts: &[Pt], n: usize) -> Vec<Pt> {
         }
         let a = pts[i];
         let b = pts[(i + 1) % len];
-        let f = if seg[i] > 0.0 { (dist - acc) / seg[i] } else { 0.0 };
-        out.push(Pt { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+        let f = if seg[i] > 0.0 {
+            (dist - acc) / seg[i]
+        } else {
+            0.0
+        };
+        out.push(Pt {
+            x: a.x + (b.x - a.x) * f,
+            y: a.y + (b.y - a.y) * f,
+        });
     }
     out
 }
@@ -177,12 +184,24 @@ pub fn build_arc(r: f64, sweep_deg: f64, t_max: f64, n: usize) -> (Vec<Polar>, f
         let s = k as f64 / M as f64;
         let ang = -sweep / 2.0 + sweep * s;
         let ro = r + thick(s) / 2.0;
-        dense.push(Pt { x: ro * ang.cos(), y: ro * ang.sin() });
+        dense.push(Pt {
+            x: ro * ang.cos(),
+            y: ro * ang.sin(),
+        });
     }
     let ang1 = sweep / 2.0;
-    let rad = Pt { x: ang1.cos(), y: ang1.sin() };
-    let tan = Pt { x: -ang1.sin(), y: ang1.cos() };
-    let cc = Pt { x: r * ang1.cos(), y: r * ang1.sin() };
+    let rad = Pt {
+        x: ang1.cos(),
+        y: ang1.sin(),
+    };
+    let tan = Pt {
+        x: -ang1.sin(),
+        y: ang1.cos(),
+    };
+    let cc = Pt {
+        x: r * ang1.cos(),
+        y: r * ang1.sin(),
+    };
     let cr = t_max / 2.0;
     for k in 1..CAP {
         let phi = std::f64::consts::PI * k as f64 / CAP as f64;
@@ -195,13 +214,19 @@ pub fn build_arc(r: f64, sweep_deg: f64, t_max: f64, n: usize) -> (Vec<Polar>, f
         let s = k as f64 / M as f64;
         let ang = -sweep / 2.0 + sweep * s;
         let ri = r - thick(s) / 2.0;
-        dense.push(Pt { x: ri * ang.cos(), y: ri * ang.sin() });
+        dense.push(Pt {
+            x: ri * ang.cos(),
+            y: ri * ang.sin(),
+        });
     }
     let res = resample(&dense, n);
     let sign = signed_area(&res);
     let polar = res
         .iter()
-        .map(|p| Polar { rad: p.x.hypot(p.y), ang: p.y.atan2(p.x) })
+        .map(|p| Polar {
+            rad: p.x.hypot(p.y),
+            ang: p.y.atan2(p.x),
+        })
         .collect();
     (polar, sign)
 }
@@ -372,7 +397,14 @@ pub fn sample_svg_outline(d: &str) -> Result<Vec<Pt>, String> {
             b'M' => {
                 let x = next_number(&mut pos).ok_or("expected number after M")?;
                 let y = next_number(&mut pos).ok_or("expected number after M")?;
-                cur = if rel { Pt { x: cur.x + x, y: cur.y + y } } else { Pt { x, y } };
+                cur = if rel {
+                    Pt {
+                        x: cur.x + x,
+                        y: cur.y + y,
+                    }
+                } else {
+                    Pt { x, y }
+                };
                 start = cur;
                 out.push(cur);
                 prev_cubic_ctrl = None;
@@ -381,21 +413,34 @@ pub fn sample_svg_outline(d: &str) -> Result<Vec<Pt>, String> {
             b'L' => {
                 let x = next_number(&mut pos).ok_or("expected number after L")?;
                 let y = next_number(&mut pos).ok_or("expected number after L")?;
-                cur = if rel { Pt { x: cur.x + x, y: cur.y + y } } else { Pt { x, y } };
+                cur = if rel {
+                    Pt {
+                        x: cur.x + x,
+                        y: cur.y + y,
+                    }
+                } else {
+                    Pt { x, y }
+                };
                 out.push(cur);
                 prev_cubic_ctrl = None;
                 prev_quad_ctrl = None;
             }
             b'H' => {
                 let x = next_number(&mut pos).ok_or("expected number after H")?;
-                cur = Pt { x: if rel { cur.x + x } else { x }, y: cur.y };
+                cur = Pt {
+                    x: if rel { cur.x + x } else { x },
+                    y: cur.y,
+                };
                 out.push(cur);
                 prev_cubic_ctrl = None;
                 prev_quad_ctrl = None;
             }
             b'V' => {
                 let y = next_number(&mut pos).ok_or("expected number after V")?;
-                cur = Pt { x: cur.x, y: if rel { cur.y + y } else { y } };
+                cur = Pt {
+                    x: cur.x,
+                    y: if rel { cur.y + y } else { y },
+                };
                 out.push(cur);
                 prev_cubic_ctrl = None;
                 prev_quad_ctrl = None;
@@ -404,11 +449,21 @@ pub fn sample_svg_outline(d: &str) -> Result<Vec<Pt>, String> {
                 let c1 = if upper == b'C' {
                     let x1 = next_number(&mut pos).ok_or("expected number in C")?;
                     let y1 = next_number(&mut pos).ok_or("expected number in C")?;
-                    if rel { Pt { x: cur.x + x1, y: cur.y + y1 } } else { Pt { x: x1, y: y1 } }
+                    if rel {
+                        Pt {
+                            x: cur.x + x1,
+                            y: cur.y + y1,
+                        }
+                    } else {
+                        Pt { x: x1, y: y1 }
+                    }
                 } else {
                     // Smooth: reflect the previous cubic control about `cur`.
                     match prev_cubic_ctrl {
-                        Some(pc) => Pt { x: 2.0 * cur.x - pc.x, y: 2.0 * cur.y - pc.y },
+                        Some(pc) => Pt {
+                            x: 2.0 * cur.x - pc.x,
+                            y: 2.0 * cur.y - pc.y,
+                        },
                         None => cur,
                     }
                 };
@@ -416,8 +471,22 @@ pub fn sample_svg_outline(d: &str) -> Result<Vec<Pt>, String> {
                 let y2 = next_number(&mut pos).ok_or("expected number in C/S")?;
                 let x = next_number(&mut pos).ok_or("expected number in C/S")?;
                 let y = next_number(&mut pos).ok_or("expected number in C/S")?;
-                let c2 = if rel { Pt { x: cur.x + x2, y: cur.y + y2 } } else { Pt { x: x2, y: y2 } };
-                let end = if rel { Pt { x: cur.x + x, y: cur.y + y } } else { Pt { x, y } };
+                let c2 = if rel {
+                    Pt {
+                        x: cur.x + x2,
+                        y: cur.y + y2,
+                    }
+                } else {
+                    Pt { x: x2, y: y2 }
+                };
+                let end = if rel {
+                    Pt {
+                        x: cur.x + x,
+                        y: cur.y + y,
+                    }
+                } else {
+                    Pt { x, y }
+                };
                 flatten_cubic(&mut out, cur, c1, c2, end);
                 prev_cubic_ctrl = Some(c2);
                 prev_quad_ctrl = None;
@@ -427,16 +496,33 @@ pub fn sample_svg_outline(d: &str) -> Result<Vec<Pt>, String> {
                 let c = if upper == b'Q' {
                     let x1 = next_number(&mut pos).ok_or("expected number in Q")?;
                     let y1 = next_number(&mut pos).ok_or("expected number in Q")?;
-                    if rel { Pt { x: cur.x + x1, y: cur.y + y1 } } else { Pt { x: x1, y: y1 } }
+                    if rel {
+                        Pt {
+                            x: cur.x + x1,
+                            y: cur.y + y1,
+                        }
+                    } else {
+                        Pt { x: x1, y: y1 }
+                    }
                 } else {
                     match prev_quad_ctrl {
-                        Some(pc) => Pt { x: 2.0 * cur.x - pc.x, y: 2.0 * cur.y - pc.y },
+                        Some(pc) => Pt {
+                            x: 2.0 * cur.x - pc.x,
+                            y: 2.0 * cur.y - pc.y,
+                        },
                         None => cur,
                     }
                 };
                 let x = next_number(&mut pos).ok_or("expected number in Q/T")?;
                 let y = next_number(&mut pos).ok_or("expected number in Q/T")?;
-                let end = if rel { Pt { x: cur.x + x, y: cur.y + y } } else { Pt { x, y } };
+                let end = if rel {
+                    Pt {
+                        x: cur.x + x,
+                        y: cur.y + y,
+                    }
+                } else {
+                    Pt { x, y }
+                };
                 flatten_quad(&mut out, cur, c, end);
                 prev_quad_ctrl = Some(c);
                 prev_cubic_ctrl = None;
@@ -573,16 +659,31 @@ impl MorphEngine {
                     })
                     .collect();
                 let offset = align_offset(&src, &arc, slot[idx], cx, cy);
-                Facet { src, src_polar, order: order[idx], slot_deg: slot[idx], offset }
+                Facet {
+                    src,
+                    src_polar,
+                    order: order[idx],
+                    slot_deg: slot[idx],
+                    offset,
+                }
             })
             .collect();
 
-        Self { cfg, cx, cy, arc, facets }
+        Self {
+            cfg,
+            cx,
+            cy,
+            arc,
+            facets,
+        }
     }
 
     /// Centroid of the assembled mark (viewBox space).
     pub fn centroid(&self) -> Pt {
-        Pt { x: self.cx, y: self.cy }
+        Pt {
+            x: self.cx,
+            y: self.cy,
+        }
     }
 
     pub fn config(&self) -> &MorphConfig {
@@ -642,7 +743,10 @@ impl MorphEngine {
                     let mut da = ar - hp.ang;
                     da = da.sin().atan2(da.cos());
                     let a = hp.ang + da * ep;
-                    pts.push(Pt { x: self.cx + r * a.cos(), y: self.cy + r * a.sin() });
+                    pts.push(Pt {
+                        x: self.cx + r * a.cos(),
+                        y: self.cy + r * a.sin(),
+                    });
                 }
                 pts
             })
@@ -706,8 +810,11 @@ impl LoaderHandle {
 /// as the loader should animate.
 pub fn start_loader(cfg: MorphConfig) -> LoaderHandle {
     let engine = MorphEngine::new(cfg);
-    let initial: Vec<slint::SharedString> =
-        engine.frame_commands(0.0).into_iter().map(slint::SharedString::from).collect();
+    let initial: Vec<slint::SharedString> = engine
+        .frame_commands(0.0)
+        .into_iter()
+        .map(slint::SharedString::from)
+        .collect();
     let model = std::rc::Rc::new(slint::VecModel::from(initial));
 
     let timer = slint::Timer::default();
@@ -758,7 +865,10 @@ mod tests {
         let mut prev = 0.0;
         for i in 0..=1000 {
             let v = smootherstep(i as f64 / 1000.0);
-            assert!(v >= prev - EPS, "ease not monotonic at step {i}: {v} < {prev}");
+            assert!(
+                v >= prev - EPS,
+                "ease not monotonic at step {i}: {v} < {prev}"
+            );
             prev = v;
         }
     }
@@ -775,7 +885,10 @@ mod tests {
         let step = 40.0 / N_POINTS as f64;
         let last = out[N_POINTS - 1];
         let close = (last.x - out[0].x).hypot(last.y - out[0].y);
-        assert!(close > 0.0 && close <= step + EPS, "closing gap {close} vs step {step}");
+        assert!(
+            close > 0.0 && close <= step + EPS,
+            "closing gap {close} vs step {step}"
+        );
         // Consecutive spacing is uniform (square has no curvature shortcuts
         // except at corners, where chord ≤ arc).
         for w in out.windows(2) {
@@ -807,9 +920,18 @@ mod tests {
                 max_y = max_y.max(p.y);
             }
         }
-        assert!(min_x >= VIEWBOX_X && max_x <= VIEWBOX_X + VIEWBOX_W, "x span {min_x}..{max_x}");
-        assert!(min_y >= VIEWBOX_Y && max_y <= VIEWBOX_Y + VIEWBOX_H, "y span {min_y}..{max_y}");
-        assert!(max_x - min_x > 40.0 && max_y - min_y > 40.0, "mark suspiciously small");
+        assert!(
+            min_x >= VIEWBOX_X && max_x <= VIEWBOX_X + VIEWBOX_W,
+            "x span {min_x}..{max_x}"
+        );
+        assert!(
+            min_y >= VIEWBOX_Y && max_y <= VIEWBOX_Y + VIEWBOX_H,
+            "y span {min_y}..{max_y}"
+        );
+        assert!(
+            max_x - min_x > 40.0 && max_y - min_y > 40.0,
+            "mark suspiciously small"
+        );
         let c = engine.centroid();
         assert!((c.x - 61.63).abs() < 8.0, "centroid x {}", c.x);
         assert!(c.y > min_y && c.y < max_y, "centroid y {}", c.y);
@@ -831,7 +953,10 @@ mod tests {
                     assert!(
                         (p.x - h.x).abs() < 1e-6 && (p.y - h.y).abs() < 1e-6,
                         "facet {i} pt {k} at t={t_ms}: ({}, {}) != home ({}, {})",
-                        p.x, p.y, h.x, h.y
+                        p.x,
+                        p.y,
+                        h.x,
+                        h.y
                     );
                 }
             }
@@ -917,7 +1042,11 @@ mod tests {
             let cmds = engine.frame_commands(t_ms);
             assert_eq!(cmds.len(), FACET_COUNT);
             for d in &cmds {
-                assert!(d.starts_with('M'), "missing moveto: {}", &d[..20.min(d.len())]);
+                assert!(
+                    d.starts_with('M'),
+                    "missing moveto: {}",
+                    &d[..20.min(d.len())]
+                );
                 assert!(d.ends_with('Z'), "missing closepath");
                 assert_eq!(d.matches('L').count(), N_POINTS - 1);
             }

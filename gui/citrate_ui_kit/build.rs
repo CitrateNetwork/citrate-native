@@ -15,7 +15,9 @@ fn main() {
     //
     // Cargo turns `cargo:UI_KIT=...` into the `DEP_CITRATE_UI_KIT_UI_KIT`
     // env var visible to dependents' build.rs (requires `links = ...`).
-    let lib_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("ui").join("lib.slint");
+    let lib_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("ui")
+        .join("lib.slint");
     println!("cargo:UI_KIT={}", lib_path.display());
     println!("cargo:rerun-if-changed=ui");
 }

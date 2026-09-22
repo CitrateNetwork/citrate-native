@@ -20,9 +20,7 @@
 //!   cargo test -p citrate-desktop-app --test relay_e2e -- --nocapture
 //! ```
 
-use citrate_desktop_app::services::relay_service::{
-    NodeAgentClient, RelayValidator, RequestQueue,
-};
+use citrate_desktop_app::services::relay_service::{NodeAgentClient, RelayValidator, RequestQueue};
 
 // Canonical chain-40204 contracts (mirror the gui_native address book +
 // citrate-chain DEPLOYED_ADDRESSES.md).
@@ -36,7 +34,10 @@ fn agent_url() -> Option<String> {
     if std::env::var("CITRATE_RELAY_E2E").is_err() {
         return None;
     }
-    Some(std::env::var("CITRATE_NODE_AGENT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:19600".into()))
+    Some(
+        std::env::var("CITRATE_NODE_AGENT_ADDR")
+            .unwrap_or_else(|_| "http://127.0.0.1:19600".into()),
+    )
 }
 
 #[tokio::test]
@@ -59,7 +60,12 @@ async fn e2e_lists_and_validates_the_live_queue() {
     let validator = RelayValidator::new(CHAIN_ID, MARKETPLACE, ACCOUNTING, HEARTBEAT_MONITOR);
     for r in &requests {
         match validator.validate(r) {
-            Ok(vw) => eprintln!("  ✓ would sign {} (id {}, {} bytes calldata)", vw.intent, vw.id, vw.calldata.len()),
+            Ok(vw) => eprintln!(
+                "  ✓ would sign {} (id {}, {} bytes calldata)",
+                vw.intent,
+                vw.id,
+                vw.calldata.len()
+            ),
             Err(reason) => eprintln!("  ✗ id {} refused: {reason:?}", r.id),
         }
     }
