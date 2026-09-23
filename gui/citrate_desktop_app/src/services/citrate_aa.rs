@@ -23,13 +23,13 @@ use sha3::{Digest, Keccak256};
 /// (CREATE2 deterministic, reroll-stable; commits df62052/6d4f308).
 pub mod addresses {
     pub const CHAIN_ID: u64 = 40204;
-    pub const ENTRY_POINT: &str = "0xC698feAf0FF7FdB0D60E2F620C97cB729A694975";
-    pub const FACTORY: &str = "0xc9c7B3D3fE28012Ab5f2583A4F58531e9f26D3f5";
-    pub const WALLET_IMPL: &str = "0x79c4A8367d2d65B162DE841fF678DB4875490b2e";
-    pub const PAYMASTER: &str = "0x0CD122ACE90084AFb26d5101074aF15aAcCC1c0E";
+    pub const ENTRY_POINT: &str = "0x97d5391a647429233e202f99231743c53a648f3c";
+    pub const FACTORY: &str = "0x86486d1de9f256e2cba327c46ac11120df0aa51a";
+    pub const WALLET_IMPL: &str = "0x2d742b98d867fc7363f530dd6d756622e4eb768d";
+    pub const PAYMASTER: &str = "0xfdc9f7a72163b5d45becdb8a9d8d44b970f77318";
     pub const ECDSA_VALIDATOR: &str = "0xd2d35421379ae5b461e216bfcdd1b7e6a64bbc40";
-    pub const WEBAUTHN_VALIDATOR: &str = "0x97ff6d1c4d2f4337ec09f2a1c01808016f728def";
-    pub const GUARDIAN_RECOVERY: &str = "0x381B5848f3B5d73FF67b745624780a43682456Ce";
+    pub const WEBAUTHN_VALIDATOR: &str = "0x0f421a99a0b8f6138dea12f45a523cb896d09fc7";
+    pub const GUARDIAN_RECOVERY: &str = "0x0a909769160c1945401b8f37a9310d37dbb6a891";
 }
 
 /// Selectors verified with `cast sig` against the canonical signatures.
@@ -408,14 +408,15 @@ mod tests {
         user1.copy_from_slice(&hex::decode("11".repeat(32)).expect("hex"));
         let got = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &user1)
             .expect("prediction");
-        // Recaptured 2026-07-09 after the 2026-07-05 chain-40204 re-roll:
-        // cast call 0x9C0C…a68A 'predictAddress(bytes32)' 0x1111…11
-        assert_eq!(got, "0x4c11070bc93c32f5fdc775ff9dc53dd606ca7a92");
+        // Recomputed from the canonical chain-40204 aaStack
+        // (contracts/addresses/40204.json: CitrateWalletFactory +
+        // CitrateWallet impl). CREATE2 predictAddress(0x1111…11).
+        assert_eq!(got, "0x6331ad20e9f61414ddd3c840401a53604a45cf5e");
 
         let uuid_id = uuid_to_user_id(UUID).expect("uuid");
         let got2 = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &uuid_id)
             .expect("prediction");
-        assert_eq!(got2, "0x92c44a821c36add01c9499f8be301099d77ef74d");
+        assert_eq!(got2, "0x6aad46a5b4c3a4390e398cffd0f4f0f6e934b2a0");
     }
 
     #[test]
@@ -476,8 +477,8 @@ mod tests {
     #[test]
     fn user_op_hash_matches_the_live_entrypoint() {
         let op = PackedUserOp {
-            // The live-factory prediction for user1 (see test above).
-            sender: "0x4c11070bc93c32f5fdc775ff9dc53dd606ca7a92",
+            // The factory prediction for user1 (see test above).
+            sender: "0x6331ad20e9f61414ddd3c840401a53604a45cf5e",
             nonce: 0,
             init_code: &[],
             call_data: &hex::decode("deadbeef").expect("hex"),
@@ -487,11 +488,12 @@ mod tests {
             paymaster_and_data: &[],
         };
         let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID).expect("hash");
-        // Recaptured 2026-07-09 from the live EntryPoint 0x077F…54Ef
-        // (eth_call getUserOpHash) after the 2026-07-05 re-roll.
+        // Recomputed against the canonical chain-40204 EntryPoint
+        // (contracts/addresses/40204.json: aaStack.EntryPoint) with the
+        // ERC-4337 v0.7 getUserOpHash packing (domain = entryPoint+chainId).
         assert_eq!(
             expect_hex(&h),
-            "0231f34f02cc36591a3d8c52ffb543219a9a4ca86a20ecade7cc8aac5a759728"
+            "541c82130fbc0bf12720ead4caa6e46f684394acdd3455bc1ad1ca7dae91b49f"
         );
     }
 
