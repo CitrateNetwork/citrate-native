@@ -630,6 +630,13 @@ impl NodeBackend for EmbeddedNodeBackend {
             local_peer_id
         );
 
+        // Live head advertised in every handshake, seeded with our applied tip and
+        // refreshed every 1s below, so peers see us advance and their sync triggers
+        // fire. HandshakeParams.head became an Arc<RwLock<(u64,Hash)>> (was a static
+        // head_height/head_hash snapshot); a stale snapshot advertised head 0 forever
+        // and no follower ever synced. Mirrors the citrate-chain node's wiring.
+        let advertised_head = Arc::new(RwLock::new((head_height, head_hash)));
+
         // 8. Create NetworkTransport with Noise encryption
         let transport = NetworkTransport::new(
             peer_manager.clone(),
@@ -637,11 +644,28 @@ impl NodeBackend for EmbeddedNodeBackend {
             HandshakeParams {
                 network_id,
                 genesis_hash,
-                head_height,
-                head_hash,
+                head: advertised_head.clone(),
             },
         )
         .with_noise(noise_keypair);
+
+        // Keep the advertised head current from the persisted applied tip.
+        {
+            let advertised_head = advertised_head.clone();
+            let storage_head = storage.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    if let Ok(Some((hash, height))) = storage_head.blocks.get_applied_tip() {
+                        let mut g = advertised_head.write().await;
+                        if g.0 != height {
+                            *g = (height, hash);
+                        }
+                    }
+                }
+            });
+        }
 
         // 9. Start TCP listener — try configured port, fall back to OS-assigned
         let listen_result = {

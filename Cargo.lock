@@ -1077,6 +1077,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip32"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db40d3dfbeab4e031d78c844642fa0caa0b0db11ce1607ac9d2986dff1405c69"
+dependencies = [
+ "bs58",
+ "hmac",
+ "k256",
+ "rand_core 0.6.4",
+ "ripemd",
+ "secp256k1 0.27.0",
+ "sha2",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "bip39"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1087,6 +1104,7 @@ dependencies = [
  "rand_core 0.4.2",
  "serde",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -1274,6 +1292,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
 dependencies = [
+ "sha2",
  "tinyvec",
 ]
 
@@ -1609,7 +1628,7 @@ dependencies = [
 [[package]]
 name = "citrate-api"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1617,9 +1636,9 @@ dependencies = [
  "base64 0.21.7",
  "bincode 1.3.3",
  "chrono",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-economics",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-mcp",
  "citrate-network",
  "citrate-sequencer",
@@ -1680,7 +1699,7 @@ dependencies = [
 [[package]]
 name = "citrate-consensus"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1714,13 +1733,13 @@ dependencies = [
  "chrono",
  "citrate-agent-legacy",
  "citrate-api",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-economics",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-network",
  "citrate-sequencer",
  "citrate-storage",
- "citrate-wallet-core 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-wallet-core 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "dirs",
  "ed25519-dalek",
  "git2",
@@ -1754,11 +1773,11 @@ dependencies = [
 [[package]]
 name = "citrate-economics"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-storage",
  "hex",
  "primitive-types",
@@ -1854,7 +1873,7 @@ dependencies = [
 [[package]]
 name = "citrate-execution"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1875,8 +1894,9 @@ dependencies = [
  "bincode 1.3.3",
  "blake2",
  "cc",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "dashmap",
+ "ed25519-dalek",
  "ethereum-types",
  "futures",
  "hex",
@@ -1907,15 +1927,15 @@ dependencies = [
 [[package]]
 name = "citrate-mcp"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
  "blake3",
  "chrono",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-storage",
  "dirs",
  "hex",
@@ -1942,7 +1962,7 @@ dependencies = [
  "citrate-edu-app",
  "citrate-storage",
  "citrate-ui-kit",
- "citrate-wallet-core 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-wallet-core 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "dirs",
  "futures-util",
  "hex",
@@ -1973,15 +1993,15 @@ dependencies = [
 [[package]]
 name = "citrate-network"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
  "bytes 1.11.1",
  "chrono",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "citrate-sequencer",
  "citrate-storage",
  "dashmap",
@@ -1999,6 +2019,7 @@ dependencies = [
  "tokio",
  "tokio-util 0.7.18",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -2015,7 +2036,7 @@ dependencies = [
 [[package]]
 name = "citrate-security"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "aes-gcm",
  "subtle",
@@ -2026,14 +2047,14 @@ dependencies = [
 [[package]]
 name = "citrate-sequencer"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
  "chrono",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "futures",
  "hex",
  "priority-queue",
@@ -2050,7 +2071,7 @@ dependencies = [
 [[package]]
 name = "citrate-storage"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2060,8 +2081,8 @@ dependencies = [
  "blake3",
  "bytes 1.11.1",
  "chrono",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "dashmap",
  "dirs",
  "ethereum-types",
@@ -2134,17 +2155,18 @@ dependencies = [
 [[package]]
 name = "citrate-wallet-core"
 version = "0.4.0"
-source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be#385e82e11cb1bc21a9bf38813a1dc94a924ed8be"
+source = "git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7#2d1ca33a9796a615da7eb236ab95c7afb59a41f7"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "argon2",
  "base64 0.22.1",
  "bincode 1.3.3",
+ "bip32",
  "bip39",
- "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
- "citrate-security 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=385e82e11cb1bc21a9bf38813a1dc94a924ed8be)",
+ "citrate-consensus 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-execution 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
+ "citrate-security 0.4.0 (git+ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain?rev=2d1ca33a9796a615da7eb236ab95c7afb59a41f7)",
  "dirs",
  "ed25519-dalek",
  "hex",
