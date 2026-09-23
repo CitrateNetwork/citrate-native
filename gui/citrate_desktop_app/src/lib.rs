@@ -246,7 +246,7 @@ fn is_secret_marker(value: &str) -> bool {
 }
 
 fn io_secret_error(action: &str, err: String) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, format!("{action}: {err}"))
+    std::io::Error::other(format!("{action}: {err}"))
 }
 
 fn secret_value_requires_storage(value: &str) -> bool {
@@ -295,7 +295,7 @@ impl AppConfig {
 
     pub fn load_from_path_with_secret_store(path: &Path, secret_store: &dyn SecretStore) -> Self {
         if path.exists() {
-            match std::fs::read_to_string(&path) {
+            match std::fs::read_to_string(path) {
                 Ok(contents) => {
                     match serde_json::from_str::<AppConfig>(&contents) {
                         Ok(mut config) => {
@@ -403,7 +403,7 @@ impl AppConfig {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(&path, json)?;
+        std::fs::write(path, json)?;
         tracing::info!("Config saved to {:?}", path);
         Ok(())
     }

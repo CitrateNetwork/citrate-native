@@ -1538,7 +1538,7 @@ async fn fetch_cmo_portal_data(
             .map(|(hash, node, mx)| {
                 let mut has_red = false;
                 let mut has_yellow = false;
-                for (_idx, cell) in mx.iter().enumerate() {
+                for cell in mx.iter() {
                     match cell.status {
                         ComplianceStatus::NotApplicable => {}
                         ComplianceStatus::Expired | ComplianceStatus::Revoked => has_red = true,

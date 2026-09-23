@@ -887,7 +887,7 @@ async fn handle_initialize(
     let expires = now + 8 * 3600;
     let expires_rfc3339 = chrono::DateTime::<chrono::Utc>::from_timestamp(expires as i64, 0)
         .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| "".to_string());
+        .unwrap_or_default();
 
     let tool_descriptors = host.mcp.list_tools(&policy).await;
     let tool_names: Vec<String> = tool_descriptors.iter().map(|d| d.name.clone()).collect();

@@ -277,8 +277,7 @@ pub fn write_crash_record(dir: &Path, record: &CrashRecord) -> io::Result<PathBu
         backtrace: record.backtrace.clone(),
         last_state: redact_for_disk(&record.last_state),
     };
-    let json = serde_json::to_vec_pretty(&sanitized)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json = serde_json::to_vec_pretty(&sanitized).map_err(io::Error::other)?;
     std::fs::write(&path, json)?;
     restrict_file_perms(&path);
     Ok(path)
@@ -384,8 +383,7 @@ fn write_marker_file(path: &Path, state: &str) -> io::Result<()> {
         last_state: redact_for_disk(state),
         updated_at: now,
     };
-    let json =
-        serde_json::to_vec_pretty(&marker).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let json = serde_json::to_vec_pretty(&marker).map_err(io::Error::other)?;
     std::fs::write(path, json)?;
     restrict_file_perms(path);
     Ok(())
@@ -601,7 +599,7 @@ impl io::Write for FileLogWriter {
         let mut inner = self
             .inner
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "log writer poisoned"))?;
+            .map_err(|_| io::Error::other("log writer poisoned"))?;
         if inner.len.saturating_add(buf.len() as u64) > inner.max_len {
             // Rotation failure must not kill logging — keep appending.
             let _ = Self::rotate(&mut inner);
@@ -614,7 +612,7 @@ impl io::Write for FileLogWriter {
     fn flush(&mut self) -> io::Result<()> {
         self.inner
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "log writer poisoned"))?
+            .map_err(|_| io::Error::other("log writer poisoned"))?
             .file
             .flush()
     }
@@ -694,7 +692,6 @@ pub fn file_log_writer() -> Option<RedactingFileLogWriter> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     /// Fresh unique temp dir per test — no tempfile dependency.
     fn temp_dir(tag: &str) -> PathBuf {
