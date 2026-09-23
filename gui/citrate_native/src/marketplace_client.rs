@@ -765,7 +765,7 @@ pub async fn fetch_recent_activity(
         .collect();
 
     // Descending by block number — newest first.
-    entries.sort_by(|a, b| b.block_number.cmp(&a.block_number));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.block_number));
     entries.truncate(ACTIVITY_LIMIT);
     Ok(entries)
 }
