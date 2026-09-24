@@ -67,7 +67,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Agent substrate
-citrate-agent-core = { git = "ssh://git@github-citrate-agent-runtime/CitrateNetwork/citrate-agent-runtime", rev = "557f6ee614c4a2db28ca9c13f3b2341c83d43e19", package = "citrate-agent-legacy" }
+citrate-agent-core = { git = "ssh://git@github-citrate-agent-runtime/CitrateNetwork/citrate-agent-runtime", rev = "0db3da626962a53c9c3ad63397b19acd4dee8bad", package = "citrate-agent-legacy" }
 
 # P960-J: MCP host HTTP listener for external agent runtimes (Hermes
 # et al.). axum is already transitive via citrate-api; making it a
