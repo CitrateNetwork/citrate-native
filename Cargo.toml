@@ -106,14 +106,14 @@ halo2curves = { version = "0.7.0", default-features = false, features = ["bn256-
 # (StorageConfig::with_encryption + crypto::at_rest). All chain-sourced
 # crates move together as one rev.
 # chain main incl. ENCRYPT-S1 WP-0 (PR #62 merged 2026-07-04)
-citrate-wallet-core = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-storage     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-consensus   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-execution   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-sequencer   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-network     = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-economics   = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-api         = { git = "ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-storage     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-consensus   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-execution   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-sequencer   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-network     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-economics   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-api         = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
 citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", rev = "9c1b5299e20c33b65f5ec6f09440ca9766e415da" }
 #
 # NAT-B-006 (HELD — upstream fix required): `citrate-edu-app`
