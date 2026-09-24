@@ -1,6 +1,6 @@
 # citrate-ui-kit
 
-Shared Slint UI primitives used by `citrate-native` and `citrate-boeing-shell`.
+Shared Slint UI primitives used by `citrate-native` and `citrate-defense_prime-shell`.
 
 Holds:
 - `ui/theme.slint` — color tokens, typography, spacing
@@ -56,7 +56,7 @@ export component App inherits Window {
 
 ## Why this crate exists
 
-The Citrate monorepo split in May 2026 separated `citrate-native` and `citrate-boeing-shell` into sibling repos. Before the split they shared UI files via path imports (`../citrate_native/ui/chat/chat.slint`). Cargo's git-dep fetch only ships Rust source, not arbitrary `.slint`/asset files — so the post-split workaround was for `boeing-shell` to **vendor** the gui-native UI tree. That worked but rotted: any change to chat/theme/shared/feedback widgets had to be hand-synced.
+The Citrate monorepo split in May 2026 separated `citrate-native` and `citrate-defense_prime-shell` into sibling repos. Before the split they shared UI files via path imports (`../citrate_native/ui/chat/chat.slint`). Cargo's git-dep fetch only ships Rust source, not arbitrary `.slint`/asset files — so the post-split workaround was for `defense_prime-shell` to **vendor** the gui-native UI tree. That worked but rotted: any change to chat/theme/shared/feedback widgets had to be hand-synced.
 
 This crate solves it by making the shared UI a real Rust crate. Its `.slint` files travel through cargo's git fetch as part of the crate package (`include = [...]` in Cargo.toml).
 

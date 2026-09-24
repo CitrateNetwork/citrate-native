@@ -10,7 +10,7 @@ citrate-ui-kit = { path = "../citrate_ui_kit" }
 # Application core (headless orchestration)
 citrate-desktop-app = { path = "../citrate_desktop_app" }
 
-# BFR-INT-4: Boeing FedRAMP panel adapters moved to `citrate-boeing-shell`.
+# BFR-INT-4: defense_prime FedRAMP panel adapters moved to `citrate-defense_prime-shell`.
 thiserror = "1"
 
 # Edu-app service layer — backs the CMO portal (E6.1.5) with eth_call

@@ -12,8 +12,8 @@ use tokio::sync::RwLock;
 /// Message in the chat thread.
 ///
 /// `Serialize + Deserialize` derived for BFR-INT-11 follow-up:
-/// `citrate-boeing-shell` persists chat history to disk between
-/// runs (`~/.local/share/citrate-boeing-shell/chat_history.json`)
+/// `citrate-defense_prime-shell` persists chat history to disk between
+/// runs (`~/.local/share/citrate-defense_prime-shell/chat_history.json`)
 /// and re-loads it via `ChatService::load_history`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
@@ -681,8 +681,8 @@ impl ChatService {
     }
 
     /// BFR-INT-11 WP-5 — set the system prompt directly. Used by
-    /// `citrate-boeing-shell` to inject `prompts/boeing.md` at
-    /// startup so the assistant carries Boeing/FedRAMP identity +
+    /// `citrate-defense_prime-shell` to inject `prompts/defense_prime.md` at
+    /// startup so the assistant carries defense_prime/FedRAMP identity +
     /// panel awareness from the first message. The consumer GUI
     /// continues to use `set_context` for the wallet-context-baked
     /// prompt; the two are mutually exclusive — last-writer wins.

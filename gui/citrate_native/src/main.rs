@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 slint::include_modules!();
 
 mod app_binder;
-// BFR-INT-4: Boeing surface moved to `citrate-boeing-shell` crate.
+// BFR-INT-4: defense_prime surface moved to `citrate-defense_prime-shell` crate.
 // NATIVE-R1-S2 WP-A1: crash telemetry (panic hook + session marker +
 // rotating file log) — forensics for the silent node-start death.
 mod calldata_decoder;
@@ -1760,7 +1760,7 @@ fn main() {
     }
     let is_first_run = rt.block_on(app_core.wallet.is_first_run());
 
-    // BFR-INT-4: Boeing bindings init moved to citrate-boeing-shell.
+    // BFR-INT-4: defense_prime bindings init moved to citrate-defense_prime-shell.
 
     // P960-J: start the MCP host so external agent runtimes (Hermes)
     // can discover our tools. Bind failure is non-fatal — we log and
@@ -3172,8 +3172,8 @@ fn main() {
         }
         // (Contracts tab hydration retired with the panel itself — P960-H.)
 
-        // BFR-INT-1 — Boeing panel hydration on tab activation.
-        // Each handler clones the live BoeingBindings + a weak UI handle,
+        // BFR-INT-1 — defense_prime panel hydration on tab activation.
+        // Each handler clones the live defense_primeBindings + a weak UI handle,
         // spawns an async task that calls the adapter's fetch_*/assemble_*,
         // maps the returned `*PanelData` to Slint-generated row types, and
         // updates the App's `in property`s via `slint::invoke_from_event_loop`.
@@ -3182,7 +3182,7 @@ fn main() {
         // log their fetch result for now; their full row mapping lands in
         // BFR-INT-1 follow-up commits (each panel is mechanical but ~50-100
         // LOC of conversion).
-        // BFR-INT-4: Boeing tab dispatch moved to `citrate-boeing-shell` crate.
+        // BFR-INT-4: defense_prime tab dispatch moved to `citrate-defense_prime-shell` crate.
 
         // Hydrate Operations page on activation
         if tab_str == "operations" {

@@ -27,7 +27,7 @@ import { ComputeView, ListingActivityRow } from "compute/compute.slint";
 import { StorageView, FileEntry } from "storage/storage.slint";
 import { OperationsView, TrailEntryData, ApprovalEntryData } from "operations/operations_view.slint";
 
-// BFR-INT-4: Boeing panel imports moved to `citrate-boeing-shell` crate.
+// BFR-INT-4: defense_prime panel imports moved to `citrate-defense_prime-shell` crate.
 
 
 export component App inherits Window {
@@ -422,7 +422,7 @@ export component App inherits Window {
     callback ops-approve-pending(string);
     callback ops-deny-pending(string);
 
-    // BFR-INT-4: Boeing panel properties + callbacks moved to `citrate-boeing-shell`.
+    // BFR-INT-4: defense_prime panel properties + callbacks moved to `citrate-defense_prime-shell`.
 
 
     // Callbacks to Rust
@@ -937,7 +937,7 @@ export component App inherits Window {
                     deny-pending(id) => { root.ops-deny-pending(id); }
                 }
 
-                // BFR-INT-4: Boeing route views moved to `citrate-boeing-shell`.
+                // BFR-INT-4: defense_prime route views moved to `citrate-defense_prime-shell`.
 
 
                 // Placeholder for any remaining tabs

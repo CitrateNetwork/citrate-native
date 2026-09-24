@@ -12,7 +12,7 @@
 //!    consumer's `app.slint` can do `import { ChatView } from
 //!    "@citrate-ui-kit/chat/chat.slint";`.
 //!
-//! `citrate-native` uses pattern (2). `citrate-boeing-shell` uses
+//! `citrate-native` uses pattern (2). `citrate-defense_prime-shell` uses
 //! pattern (2). The two patterns can coexist within one consumer crate.
 
 slint::include_modules!();

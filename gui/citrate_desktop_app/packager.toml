@@ -24,10 +24,10 @@ description  = "Citrate desktop wallet — testnet-beta"
 long-description = """
 End-user desktop wallet and agent client for the Citrate Network. Manage accounts, send tCTR transactions, and view block history — a light client that connects to the Citrate network over P2P and RPC (full-node operation lives in the separate citrate-core app). Built on Slint for native performance on macOS, Windows, and Linux.
 """
-authors  = ["Citrate Labs <support@citrate.ai>"]
+authors  = ["Citrate Inc. <support@citrate.ai>"]
 homepage = "https://citrate.ai"
 category = "Finance"
-copyright = "© 2026 Citrate Labs. BUSL-1.1."
+copyright = "© 2026 Citrate Inc. BUSL-1.1."
 # Output formats. cargo-packager skips formats whose toolchain isn't
 # present on the build host: Linux runners produce deb + appimage,
 # macOS produces app + dmg, Windows produces msi + nsis. (rpm landed
