@@ -902,7 +902,9 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
             _ => Err("non-hex digit".to_string()),
         }
     }
-    b.chunks_exact(2)
+    b.as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| Ok((nib(p[0])? << 4) | nib(p[1])?))
         .collect()
 }
