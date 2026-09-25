@@ -1317,6 +1317,16 @@ mod tests {
             "0x8951ae72e5479cae28ef7bb3caa4207d5719e24b",
             // Visual-test wallet fixture (ui_visual_tests.rs)
             "0xaceaa7d00c024d32e6e0a07094ceb1a7706786d1",
+            // EIP-55 spec example address — recipient-validation fixture
+            // in main.rs `natb012_recipient_validation`.
+            "0x52908400098527886e0f7030069857d2e4169ee7",
+            // Model precompile (app_binder.rs registerModel target). Not a
+            // deployed contract: hardcoded in citrate-execution
+            // `Executor::model_precompile_address()`, so it cannot drift on
+            // redeploy. It was in the book as `precompiles.StateModel` until
+            // the 2026-09-23 resync to citrate-chain 40204.json, which no
+            // longer emits the executor-native 0x10xx precompiles.
+            "0x0000000000000000000000000000000000001000",
         ];
 
         // Every 40-hex string value anywhere in the book, lowercased.
