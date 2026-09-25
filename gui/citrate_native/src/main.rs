@@ -111,6 +111,26 @@ fn validate_recipient_address(input: &str) -> Result<String, String> {
     Ok(format!("0x{}", hex.to_lowercase()))
 }
 
+/// PBA-L7b-020: the account a chat `send_tx` debits. Pre-fix it was ALWAYS the first keystore
+/// account, whatever the member had selected in the Wallet. Now it is the selected account
+/// (which must belong to this wallet); with nothing selected, only a single-account wallet is
+/// unambiguous — otherwise the send is refused rather than guessed.
+fn resolve_chat_send_from(selected: &str, accounts: &[String]) -> Result<String, String> {
+    let sel = selected.trim();
+    if !sel.is_empty() {
+        return accounts
+            .iter()
+            .find(|a| a.eq_ignore_ascii_case(sel))
+            .cloned()
+            .ok_or_else(|| "The selected account is not in this wallet.".to_string());
+    }
+    match accounts {
+        [only] => Ok(only.clone()),
+        [] => Err("No wallet account found".to_string()),
+        _ => Err("Select the account to send from in Wallet first.".to_string()),
+    }
+}
+
 /// Strip markdown formatting for display in plain-text Slint Text elements.
 /// Converts headers, bold markers, backticks, and list items to readable plain text.
 fn clean_markdown(text: &str) -> String {
@@ -305,6 +325,67 @@ fn schedule_exported_key_clear(ui_w: slint::Weak<App>, original: String) {
             }
         },
     );
+}
+
+#[cfg(test)]
+mod pba_l7b_020_tests {
+    use super::*;
+
+    const A: &str = "0x52908400098527886e0f7030069857d2e4169ee7";
+    const B: &str = "0xaceaa7d00c024d32e6e0a07094ceb1a7706786d1"; // allowlisted visual-test fixture
+
+    #[test]
+    fn chat_send_debits_the_selected_account_not_the_first() {
+        let accounts = vec![A.to_string(), B.to_string()];
+        // The member selected account #2 (UI shows it EIP-55 checksummed).
+        assert_eq!(
+            resolve_chat_send_from(&eip55_checksum(B), &accounts).unwrap(),
+            B
+        );
+        assert_eq!(resolve_chat_send_from(A, &accounts).unwrap(), A);
+        // Nothing selected on a multi-account wallet: refuse, never guess account #1.
+        assert!(resolve_chat_send_from("", &accounts).is_err());
+        // A selection that is not in this wallet is refused.
+        assert!(
+            resolve_chat_send_from("0x1234567890123456789012345678901234567890", &accounts)
+                .is_err()
+        );
+        // Single-account wallet with nothing selected is unambiguous.
+        assert_eq!(resolve_chat_send_from(" ", &[A.to_string()]).unwrap(), A);
+        assert!(resolve_chat_send_from("", &[]).is_err());
+    }
+
+    /// The real tool path debits the resolved plan (never `accounts.first()`), and a bad
+    /// checksum recipient is refused. Needles are assembled from parts so this test cannot
+    /// match its own text (PBA-XR-002 lesson); a negative control proves the check can fail.
+    #[test]
+    fn chat_send_tool_path_uses_the_resolved_plan() {
+        fn region_ok(region: &str) -> bool {
+            region.contains("send_plan") && !region.contains(&["accounts", ".first()"].concat())
+        }
+        let src = include_str!("main.rs");
+        let marker = [
+            "// PBA-L7b-020: the from/to",
+            " the member approved on the card.",
+        ]
+        .concat();
+        let at = src
+            .find(&marker)
+            .expect("the send_tx execution marker exists");
+        let region = &src[at..(at + 900).min(src.len())];
+        assert!(region_ok(region), "send_tx must debit the approved plan");
+        let bad = ["let from = accounts", ".first()"].concat();
+        assert!(
+            !region_ok(&bad),
+            "negative control: the pre-fix shape is flagged"
+        );
+        // The recipient check used before the card rejects a mistyped checksum.
+        let mut tampered = eip55_checksum(A);
+        let flip = tampered.find(|c: char| c.is_ascii_uppercase()).unwrap();
+        let lower = tampered[flip..flip + 1].to_lowercase();
+        tampered.replace_range(flip..flip + 1, &lower);
+        assert!(validate_recipient_address(&tampered).is_err());
+    }
 }
 
 #[cfg(test)]
@@ -4896,6 +4977,12 @@ fn main() {
         let ui_w = ui_w.clone();
         let active_req_for_chat = active_req_for_chat.clone();
         let msg = message.to_string();
+        // PBA-L7b-020: the account the member has selected right now is the one a chat send
+        // debits (captured on the UI thread, before the async tool loop).
+        let selected_from = ui_w
+            .upgrade()
+            .map(|ui| ui.get_wallet_selected_address().to_string())
+            .unwrap_or_default();
 
         // Show thinking state and user's message immediately (doesn't block)
         loader_set_running(true); // WP-5: animate the thinking loader
@@ -4974,6 +5061,7 @@ fn main() {
             // can refuse mutation tools under ReadOnly scope before the
             // approval flow is even reached.
             let session_policy_for_tools = core.session_policy.clone();
+            let selected_from_for_tools = selected_from.clone();
 
             // Use streaming variant for incremental UI updates
             let ui_for_stream = ui_w.clone();
@@ -4989,6 +5077,7 @@ fn main() {
                     let node = node_for_tools.clone();
                     let blocks = blocks_for_tools.clone();
                     let session_policy = session_policy_for_tools.clone();
+                    let selected_from = selected_from_for_tools.clone();
                     async move {
                         let start_time = std::time::Instant::now();
                         tracing::info!("Tool call: {} with {:?}", tool_name, params);
@@ -5017,11 +5106,33 @@ fn main() {
                         }
 
                         // Determine risk level and target info for each tool
+                        // PBA-L7b-020: resolve the real debit account and validate the recipient
+                        // (EIP-55 when mixed-case) BEFORE the approval card, so the member approves
+                        // exactly the from/to that will be signed.
+                        let send_plan: Option<(String, String)> = if tool_name == "send_tx" {
+                            let to_raw = params.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                            let to = validate_recipient_address(to_raw)?;
+                            let accounts: Vec<String> = wallet
+                                .list_accounts()
+                                .await
+                                .into_iter()
+                                .map(|a| a.address)
+                                .collect();
+                            let from = resolve_chat_send_from(&selected_from, &accounts)?;
+                            Some((from, to))
+                        } else {
+                            None
+                        };
+
                         let (risk_level, target, scope) = match tool_name.as_str() {
                             "send_tx" => {
-                                let to = params.get("to").and_then(|v| v.as_str()).unwrap_or("unknown");
                                 let amount = params.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
-                                ("high".to_string(), format!("Address: {}", to), format!("Send {} SALT", amount))
+                                let (from, to) = send_plan.clone().unwrap_or_default();
+                                (
+                                    "high".to_string(),
+                                    format!("From: {}  To: {}", eip55_checksum(&from), eip55_checksum(&to)),
+                                    format!("Send {} SALT", amount),
+                                )
                             }
                             "deploy_contract" => {
                                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
@@ -5256,8 +5367,11 @@ fn main() {
                             // (unchanged — already real)
                             // -------------------------------------------------
                             "send_tx" => {
-                                let to = params.get("to").and_then(|v| v.as_str())
+                                // PBA-L7b-020: the from/to the member approved on the card.
+                                let (from, to) = send_plan
+                                    .clone()
                                     .ok_or_else(|| "Missing 'to' address".to_string())?;
+                                let to = to.as_str();
                                 let amount = params.get("amount").and_then(|v| v.as_str())
                                     .ok_or_else(|| "Missing 'amount'".to_string())?;
                                 // RM-G.7: exact decimal SALT→wei conversion. The
@@ -5268,10 +5382,6 @@ fn main() {
                                 let value_wei = citrate_wallet_core::format::salt_to_wei(amount)
                                     .map_err(|e| format!("Invalid amount '{}': {}", amount, e))?
                                     .to_string();
-                                let accounts = wallet.list_accounts().await;
-                                let from = accounts.first()
-                                    .map(|a| a.address.clone())
-                                    .ok_or_else(|| "No wallet account found".to_string())?;
                                 match wallet.send_transaction(&from, to, &value_wei, "").await {
                                     Ok(tx_hash) => Ok(format!("Transaction sent. Hash: {}", tx_hash)),
                                     Err(e) => Err(format!("Transaction failed: {}", e)),

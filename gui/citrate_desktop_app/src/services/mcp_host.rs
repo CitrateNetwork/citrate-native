@@ -724,6 +724,29 @@ fn is_local_request(origin: Option<&str>, host: Option<&str>) -> bool {
     }
 }
 
+/// PBA-L7b-015: the longest `recipient` label an `initialize` may carry.
+const MAX_RECIPIENT_LEN: usize = 128;
+/// PBA-L7b-015: live (unrevoked, unexpired) grants a TOKENLESS client may hold at once.
+const MAX_ACTIVE_TOKENLESS_GRANTS: usize = 16;
+/// PBA-L7b-015: hard ceiling on grants held in memory (the agent-runtime grant store only marks
+/// revoked grants, it never drops them, so the host bounds the total it will ever mint).
+const MAX_TOTAL_GRANTS: usize = 1024;
+
+/// PBA-L7b-015: admission control for `initialize`. Pure so it is unit-tested directly.
+fn admit_initialize(
+    total_grants: usize,
+    active_tokenless: usize,
+    tokenless: bool,
+) -> Result<(), &'static str> {
+    if total_grants >= MAX_TOTAL_GRANTS {
+        return Err("MCP session limit reached for this app run; restart Citrate to reset");
+    }
+    if tokenless && active_tokenless >= MAX_ACTIVE_TOKENLESS_GRANTS {
+        return Err("too many open unauthenticated MCP sessions; end one or use an operator token");
+    }
+    Ok(())
+}
+
 /// NAT-B-011: `tools/list` must not serve a grant past its expiry. The
 /// grant carries `expires_at` as an RFC-3339 string; compare it to `now`.
 /// A grant with an unparseable timestamp is treated as expired (fail
@@ -876,6 +899,29 @@ async fn handle_initialize(
         .and_then(|v| v.as_str())
         .unwrap_or("hermes-client")
         .to_string();
+    // PBA-L7b-015: bound what one `initialize` can store. Pre-fix the recipient was unbounded
+    // (a ~1.9 MB string per call) and every tokenless call pushed a grant that was never pruned,
+    // so a local loop exhausted memory.
+    if recipient.len() > MAX_RECIPIENT_LEN {
+        return Json(JsonRpcResponse::err(
+            id,
+            -32602,
+            format!("recipient longer than {MAX_RECIPIENT_LEN} bytes"),
+        ));
+    }
+    {
+        let now = now_unix_secs();
+        let grants = host.mcp.snapshot_grants().await;
+        let owners = host.grant_owners.read().await;
+        let active_tokenless = grants
+            .iter()
+            .filter(|g| !g.revoked && !grant_is_expired(&g.expires_at, now))
+            .filter(|g| matches!(owners.get(&g.id), Some(None)))
+            .count();
+        if let Err(msg) = admit_initialize(grants.len(), active_tokenless, auth_token.is_none()) {
+            return Json(JsonRpcResponse::err(id, -32005, msg));
+        }
+    }
 
     let grant_id = uuid::Uuid::new_v4().to_string();
     let now = std::time::SystemTime::now()
@@ -1051,6 +1097,87 @@ mod tests {
         let registry = Arc::new(ToolRegistry::new());
         let mcp = Arc::new(McpServer::new(registry));
         Arc::new(McpHostService::with_token_storage(mcp, dir.to_path_buf()))
+    }
+
+    /// PBA-L7b-015: a local loop of tokenless `initialize` calls cannot grow the grant store
+    /// without bound, and an oversized recipient is refused before anything is stored.
+    #[tokio::test]
+    async fn pba_l7b_015_tokenless_initialize_is_bounded() {
+        let host = test_host();
+        let huge = "x".repeat(1_900_000);
+        let resp = handle_initialize(
+            &host,
+            serde_json::json!(1),
+            serde_json::json!({ "recipient": huge }),
+        )
+        .await;
+        assert!(
+            resp.0.error.is_some(),
+            "oversized recipient must be refused"
+        );
+        assert_eq!(host.mcp.snapshot_grants().await.len(), 0, "nothing stored");
+
+        let mut refused = 0;
+        for i in 0..(MAX_ACTIVE_TOKENLESS_GRANTS + 10) {
+            let resp = handle_initialize(
+                &host,
+                serde_json::json!(i),
+                serde_json::json!({ "recipient": "loop" }),
+            )
+            .await;
+            if resp.0.error.is_some() {
+                refused += 1;
+            }
+        }
+        assert_eq!(refused, 10, "calls past the tokenless cap are refused");
+        assert_eq!(
+            host.mcp.snapshot_grants().await.len(),
+            MAX_ACTIVE_TOKENLESS_GRANTS,
+            "the grant store stops growing at the cap"
+        );
+    }
+
+    /// Mutation hardening: the recipient bound is inclusive, and revoked sessions stop
+    /// counting toward the tokenless cap (so ending a session frees a slot).
+    #[tokio::test]
+    async fn pba_l7b_015_bounds_are_exact_and_revocation_frees_a_slot() {
+        let host = test_host();
+        let at_cap = "r".repeat(MAX_RECIPIENT_LEN);
+        let resp = handle_initialize(
+            &host,
+            serde_json::json!(0),
+            serde_json::json!({ "recipient": at_cap }),
+        )
+        .await;
+        assert!(
+            resp.0.error.is_none(),
+            "a recipient exactly at the cap is accepted"
+        );
+        for i in 1..MAX_ACTIVE_TOKENLESS_GRANTS {
+            let r = handle_initialize(&host, serde_json::json!(i), serde_json::json!({})).await;
+            assert!(r.0.error.is_none());
+        }
+        let full = handle_initialize(&host, serde_json::json!(99), serde_json::json!({})).await;
+        assert!(full.0.error.is_some(), "cap reached");
+        let first = host.mcp.snapshot_grants().await[0].id.clone();
+        assert!(host.mcp.revoke_grant(&first).await);
+        let again = handle_initialize(&host, serde_json::json!(100), serde_json::json!({})).await;
+        assert!(
+            again.0.error.is_none(),
+            "a revoked session no longer counts"
+        );
+    }
+
+    #[test]
+    fn pba_l7b_015_admission_rules() {
+        assert!(admit_initialize(0, 0, true).is_ok());
+        assert!(admit_initialize(0, MAX_ACTIVE_TOKENLESS_GRANTS - 1, true).is_ok());
+        assert!(admit_initialize(0, MAX_ACTIVE_TOKENLESS_GRANTS, true).is_err());
+        // An operator-token client is not limited by the tokenless cap ...
+        assert!(admit_initialize(0, MAX_ACTIVE_TOKENLESS_GRANTS, false).is_ok());
+        // ... but everyone is bounded by the total ceiling.
+        assert!(admit_initialize(MAX_TOTAL_GRANTS - 1, 0, false).is_ok());
+        assert!(admit_initialize(MAX_TOTAL_GRANTS, 0, false).is_err());
     }
 
     #[tokio::test]
