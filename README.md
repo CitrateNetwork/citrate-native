@@ -1,4 +1,4 @@
-# citrate-gui-native
+# citrate-native
 
 *Part of the **[Citrate Network](https://citrate.ai)** — own the means of computation. · [Docs](https://docs.citrate.ai) · [Run a node](https://citrate.ai/download) · [Contribute → free membership](https://github.com/CitrateNetwork/.github/blob/main/CONTRIBUTING.md)*
 
@@ -8,7 +8,7 @@
 
 Citrate Native is a single Rust + [Slint](https://slint.dev) desktop application (no browser, no Electron, no WebKit) that bundles a crypto wallet, an **embedded full chain node**, a GhostDAG block explorer, a local AI chat client, an IPFS/Storage tab, and a developer studio/IDE. Keys never leave the machine (OS keychain, RocksDB chain data encrypted at rest), and it runs against the Citrate testnet-beta (chain id **40204**).
 
-It connects out to a chain RPC + bootnodes for sync, to [citrate-identity](https://github.com/CitrateNetwork/citrate-identity) for OIDC login, and to an ERC-4337 bundler for account-abstraction transactions. Concept overview: https://docs.citrate.ai/apps. (Public repo: `github.com/CitrateNetwork/citrate-native`.)
+It connects out to a chain RPC + bootnodes for sync, to [citrate-identity](https://github.com/CitrateNetwork/citrate-identity) for OIDC login, and to an ERC-4337 bundler for account-abstraction transactions. Concept overview: https://docs.citrate.ai/apps.
 
 ## Prerequisites
 
