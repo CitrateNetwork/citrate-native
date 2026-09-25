@@ -385,6 +385,25 @@ mod clipboard_autoclear_tests {
 mod rm_q_gui_tests {
     use super::*;
 
+    /// `main.rs` with this test module cut out. The source-level
+    /// tripwires below must only see production code: scanning the raw
+    /// `include_str!` also matches the needle literals written in these
+    /// very tests, which made every `contains` check pass vacuously and
+    /// every "must be absent" / positional check fail unconditionally.
+    fn production_source() -> String {
+        let source = include_str!("main.rs");
+        let start = source
+            .find(concat!("mod rm_q_gui_", "tests {"))
+            .expect("rm_q_gui_tests module header present");
+        // rustfmt puts only the module's own closing brace at column 0.
+        let end = start
+            + source[start..]
+                .find("\n}\n")
+                .expect("rm_q_gui_tests module end present")
+            + 3;
+        format!("{}{}", &source[..start], &source[end..])
+    }
+
     // NAT-B-012: recipient address validation before signing.
     #[test]
     fn natb012_recipient_validation() {
@@ -433,7 +452,7 @@ mod rm_q_gui_tests {
     // same spirit as the existing include_str! guards.
     #[test]
     fn natb013_021_slint_state_properties_are_written() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(
             source.contains("set_send_sending("),
             "send-sending must be driven (NAT-B-013)"
@@ -455,7 +474,7 @@ mod rm_q_gui_tests {
     // NAT-B-019: the idle-timeout transition raises the lock screen.
     #[test]
     fn natb019_idle_timeout_raises_lock_screen() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         // The timeout branch that stores epoch 0 and toasts must also set
         // the lock screen and dismiss the send dialog.
         let idx = source
@@ -472,7 +491,7 @@ mod rm_q_gui_tests {
     // lockout), not a fresh KeyManager.
     #[test]
     fn natb017_export_routes_through_service() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(
             source.contains("core.wallet.export_private_key("),
             "export must route through WalletService (NAT-B-017)"
@@ -487,7 +506,7 @@ mod rm_q_gui_tests {
     // NAT-B-016: the onboarding mnemonic property is cleared on completion.
     #[test]
     fn natb016_mnemonic_property_cleared() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(
             source.contains("set_onboarding_mnemonic(\"\".into())"),
             "onboarding mnemonic must be cleared (NAT-B-016)"
@@ -497,7 +516,7 @@ mod rm_q_gui_tests {
     // NAT-B-031: the empty-input verification skip is debug-only.
     #[test]
     fn natb031_empty_mnemonic_skip_is_debug_only() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         assert!(
             source.contains("input_str.is_empty() && cfg!(debug_assertions)"),
             "empty-mnemonic skip must be gated to debug builds (NAT-B-031)"
@@ -507,7 +526,7 @@ mod rm_q_gui_tests {
     // NAT-B-015: CMO super-admin cannot be granted from env in release.
     #[test]
     fn natb015_cmo_super_admin_env_is_debug_gated() {
-        let source = include_str!("main.rs");
+        let source = production_source();
         let demo_idx = source
             .find("std::env::var(\"CITRATE_CMO_DEMO\")")
             .expect("CITRATE_CMO_DEMO read present");

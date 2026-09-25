@@ -129,6 +129,19 @@ citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateN
 # Until then `scripts/ci/check-chain-dep-pins.sh` is the enforcing guard —
 # it fails while any duplicate/branch-tracking chain source remains, and
 # goes green the moment the upstream pin lands.
+#
+# UPDATE 2026-09-24: edu-app@9c1b5299 now pins its chain deps by `rev`, but
+# that rev (0f2d16b4) was orphaned by the citrate-chain history rewrite and
+# is no longer fetchable ("revspec not found"), which broke every CI build.
+# Since the direct deps above moved to the https URL, edu-app's
+# `ssh://git@github-citrate-chain/...` source is now a *different* source,
+# so the collapsing [patch] is accepted: every citrate-chain crate edu-app
+# pulls resolves to the same audited rev as the wallet's own deps.
+# Drop this once citrate-learning-center re-pins to a live https rev.
+
+[patch."ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain"]
+citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-security    = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
 
 [profile.release]
 opt-level = 3

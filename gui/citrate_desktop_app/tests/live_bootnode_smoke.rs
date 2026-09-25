@@ -85,8 +85,12 @@ async fn all_four_bootnodes_connect_and_hold() {
         HandshakeParams {
             network_id: 40204,
             genesis_hash,
-            head_height: 0,
-            head_hash: citrate_consensus::types::Hash::default(),
+            // `head` is now the live, shared (height, hash) the node refreshes;
+            // a handshake-only probe advertises genesis (height 0), as before.
+            head: Arc::new(tokio::sync::RwLock::new((
+                0,
+                citrate_consensus::types::Hash::default(),
+            ))),
         },
     )
     .with_noise(noise_keypair);

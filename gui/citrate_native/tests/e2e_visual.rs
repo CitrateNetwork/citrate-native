@@ -63,7 +63,7 @@ fn save_snapshot(app: &App, name: &str) {
             let height = buffer.height();
             // Fix: force alpha to 255 — Slint software renderer produces alpha=0
             let mut pixels = buffer.as_bytes().to_vec();
-            for chunk in pixels.chunks_exact_mut(4) {
+            for chunk in pixels.as_chunks_mut::<4>().0 {
                 chunk[3] = 255;
             }
             let path = screenshots_dir().join(format!("{}.png", name));
