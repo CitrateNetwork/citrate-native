@@ -1031,6 +1031,7 @@ mod tests {
             "https://x\ncalc",
             "file:///etc/passwd",
             "https://x|calc",
+            "https://x\u{7}y",
             "javascript:alert(1)",
             "http://evil.example/",
         ] {

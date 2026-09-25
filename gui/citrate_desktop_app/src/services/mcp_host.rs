@@ -1137,6 +1137,37 @@ mod tests {
         );
     }
 
+    /// Mutation hardening: the recipient bound is inclusive, and revoked sessions stop
+    /// counting toward the tokenless cap (so ending a session frees a slot).
+    #[tokio::test]
+    async fn pba_l7b_015_bounds_are_exact_and_revocation_frees_a_slot() {
+        let host = test_host();
+        let at_cap = "r".repeat(MAX_RECIPIENT_LEN);
+        let resp = handle_initialize(
+            &host,
+            serde_json::json!(0),
+            serde_json::json!({ "recipient": at_cap }),
+        )
+        .await;
+        assert!(
+            resp.0.error.is_none(),
+            "a recipient exactly at the cap is accepted"
+        );
+        for i in 1..MAX_ACTIVE_TOKENLESS_GRANTS {
+            let r = handle_initialize(&host, serde_json::json!(i), serde_json::json!({})).await;
+            assert!(r.0.error.is_none());
+        }
+        let full = handle_initialize(&host, serde_json::json!(99), serde_json::json!({})).await;
+        assert!(full.0.error.is_some(), "cap reached");
+        let first = host.mcp.snapshot_grants().await[0].id.clone();
+        assert!(host.mcp.revoke_grant(&first).await);
+        let again = handle_initialize(&host, serde_json::json!(100), serde_json::json!({})).await;
+        assert!(
+            again.0.error.is_none(),
+            "a revoked session no longer counts"
+        );
+    }
+
     #[test]
     fn pba_l7b_015_admission_rules() {
         assert!(admit_initialize(0, 0, true).is_ok());
