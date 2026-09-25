@@ -884,14 +884,26 @@ fn addr_eq(a: &str, b: &str) -> bool {
 }
 
 /// Decode a `0x`-prefixed (or bare) hex string into bytes.
+///
+/// PBA-L7b-016: works on BYTES, never `&str` slices. The old `&h[i..i + 2]` panicked on a
+/// non-ASCII char (a slice inside a multi-byte UTF-8 sequence), and the panic killed the signing
+/// relay thread for good. Any non-hex byte is now an ordinary `Err` (the request is rejected).
 fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     let h = s.trim().trim_start_matches("0x").trim_start_matches("0X");
-    if !h.len().is_multiple_of(2) {
+    let b = h.as_bytes();
+    if !b.len().is_multiple_of(2) {
         return Err("odd-length hex".to_string());
     }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&h[i..i + 2], 16).map_err(|_| "non-hex digit".to_string()))
+    fn nib(c: u8) -> Result<u8, String> {
+        match c {
+            b'0'..=b'9' => Ok(c - b'0'),
+            b'a'..=b'f' => Ok(c - b'a' + 10),
+            b'A'..=b'F' => Ok(c - b'A' + 10),
+            _ => Err("non-hex digit".to_string()),
+        }
+    }
+    b.chunks_exact(2)
+        .map(|p| Ok((nib(p[0])? << 4) | nib(p[1])?))
         .collect()
 }
 
@@ -899,6 +911,29 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    /// PBA-L7b-016: non-ASCII calldata from node-agent must be rejected, not panic the relay.
+    #[test]
+    fn pba_l7b_016_decode_hex_rejects_non_ascii_without_panicking() {
+        for evil in [
+            "0xa\u{e9}b",
+            "0x\u{e9}\u{e9}",
+            "\u{1F600}\u{1F600}",
+            "0xzz",
+            "0xabc",
+        ] {
+            let r = std::panic::catch_unwind(|| decode_hex(evil));
+            assert!(r.is_ok(), "decode_hex panicked on {evil:?}");
+            assert!(r.unwrap().is_err(), "{evil:?} must be rejected");
+        }
+        assert_eq!(
+            decode_hex("0xdeADbe01").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0x01]
+        );
+        assert_eq!(decode_hex(" 0X00ff ").unwrap(), vec![0x00, 0xff]);
+        assert_eq!(decode_hex("").unwrap(), Vec::<u8>::new());
+        assert_eq!(decode_hex("9aF0").unwrap(), vec![0x9a, 0xf0]);
+    }
 
     const MARKETPLACE: &str = "0xc12dbcdb80ef2ae675315f455210f39a736a373c";
     const ACCOUNTING: &str = "0x86d918808b48ad543c9c816b5303b7dbcb0e321f";
