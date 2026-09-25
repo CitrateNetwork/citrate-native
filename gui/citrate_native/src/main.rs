@@ -332,7 +332,7 @@ mod pba_l7b_020_tests {
     use super::*;
 
     const A: &str = "0x52908400098527886e0f7030069857d2e4169ee7";
-    const B: &str = "0x8617e340b3d01fa5f11f306f4090fd50e238070d";
+    const B: &str = "0xaceaa7d00c024d32e6e0a07094ceb1a7706786d1"; // allowlisted visual-test fixture
 
     #[test]
     fn chat_send_debits_the_selected_account_not_the_first() {
@@ -347,7 +347,7 @@ mod pba_l7b_020_tests {
         assert!(resolve_chat_send_from("", &accounts).is_err());
         // A selection that is not in this wallet is refused.
         assert!(
-            resolve_chat_send_from("0x0000000000000000000000000000000000000001", &accounts)
+            resolve_chat_send_from("0x1234567890123456789012345678901234567890", &accounts)
                 .is_err()
         );
         // Single-account wallet with nothing selected is unambiguous.
