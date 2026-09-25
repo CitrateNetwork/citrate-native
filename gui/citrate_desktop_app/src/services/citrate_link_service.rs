@@ -812,9 +812,11 @@ fn urldecode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
+            // PBA-L7b-019: decode the pair from BYTES. `&s[i + 1..i + 3]` panicked when a
+            // multi-byte char followed the '%' (not a char boundary), killing the link task.
             b'%' if i + 2 < bytes.len() => {
-                let hexpair = &s[i + 1..i + 3];
-                if let Ok(v) = u8::from_str_radix(hexpair, 16) {
+                let pair = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+                if let Some(v) = pair.and_then(|p| u8::from_str_radix(p, 16).ok()) {
                     out.push(v);
                     i += 3;
                 } else {
@@ -864,15 +866,47 @@ fn sponsored_chain_supported(active_chain_id: u64) -> bool {
     active_chain_id == addresses::CHAIN_ID
 }
 
+/// PBA-L7b-018: only a plain http(s) URL with no whitespace, control characters or shell
+/// metacharacters is ever handed to the OS opener.
+fn validate_browser_url(url: &str) -> Result<(), AppError> {
+    // Same scheme policy as the authority override: https, or http only to loopback.
+    let ok_scheme = is_acceptable_authority_url(url);
+    let clean = !url.chars().any(|c| {
+        c.is_control() || c.is_whitespace() || matches!(c, '"' | '^' | '|' | '<' | '>' | '`')
+    });
+    if ok_scheme && clean {
+        Ok(())
+    } else {
+        Err(AppError::Wallet(
+            "refusing to open a malformed sign-in URL in the browser".to_string(),
+        ))
+    }
+}
+
+/// PBA-L7b-018: the Windows opener. `cmd /C start "" <url>` re-parses the URL through cmd.exe,
+/// so `&` split it (the link flow was always broken — every OIDC URL has `&`) and an
+/// env-controlled auth URL could inject a second command. `rundll32 url.dll,FileProtocolHandler`
+/// takes the URL as ONE argv element with no shell in between.
+fn windows_open_command(url: &str) -> (&'static str, [String; 2]) {
+    (
+        "rundll32",
+        ["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+    )
+}
+
 fn open_in_browser(url: &str) -> Result<(), AppError> {
+    validate_browser_url(url)?;
     #[cfg(target_os = "macos")]
     let cmd = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "linux")]
     let cmd = std::process::Command::new("xdg-open").arg(url).spawn();
     #[cfg(target_os = "windows")]
-    let cmd = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    let cmd = {
+        let (prog, args) = windows_open_command(url);
+        std::process::Command::new(prog).args(args).spawn()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let _ = windows_open_command;
     cmd.map(|_| ())
         .map_err(|e| AppError::Wallet(format!("cannot open the browser for sign-in: {}", e)))
 }
@@ -956,6 +990,57 @@ mod tests {
         );
         assert_eq!(urldecode(&urlencode(uri)), uri);
         assert_eq!(urldecode("a%2Bb+c"), "a+b c");
+    }
+
+    /// PBA-L7b-019: a malformed callback query must not panic the link task.
+    #[test]
+    fn pba_l7b_019_urldecode_never_panics_on_non_ascii_after_percent() {
+        for evil in [
+            "%a\u{e9}",
+            "%\u{e9}a",
+            "a%\u{1F600}x",
+            "%%%",
+            "%",
+            "%4",
+            "%zz",
+        ] {
+            let r = std::panic::catch_unwind(|| urldecode(evil));
+            assert!(r.is_ok(), "urldecode panicked on {evil:?}");
+        }
+        assert_eq!(urldecode("%41%42"), "AB");
+        assert_eq!(urldecode("%zz"), "%zz");
+        assert_eq!(urldecode("a%2"), "a%2");
+    }
+
+    /// PBA-L7b-018: the Windows opener never goes through cmd.exe, and the URL is one argv
+    /// element; hostile URLs are refused before any opener runs.
+    #[test]
+    fn pba_l7b_018_windows_open_is_shell_free_and_urls_are_validated() {
+        let url = "https://auth.citrate.ai/auth?client_id=x&redirect_uri=y&state=z";
+        let (prog, args) = windows_open_command(url);
+        assert_ne!(prog.to_ascii_lowercase(), "cmd");
+        assert_eq!(
+            args[1], url,
+            "the whole URL (with its '&') is a single argument"
+        );
+        assert!(validate_browser_url(url).is_ok());
+        assert!(validate_browser_url("http://127.0.0.1:8975/auth/callback").is_ok());
+        for bad in [
+            "https://x&calc",
+            "https://x\" & calc",
+            "https://x\ncalc",
+            "file:///etc/passwd",
+            "https://x|calc",
+            "javascript:alert(1)",
+            "http://evil.example/",
+        ] {
+            if bad == "https://x&calc" {
+                // '&' is legitimate in a URL; it is harmless now because no shell parses it.
+                assert!(validate_browser_url(bad).is_ok());
+                continue;
+            }
+            assert!(validate_browser_url(bad).is_err(), "must refuse {bad:?}");
+        }
     }
 
     #[test]
