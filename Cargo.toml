@@ -106,14 +106,14 @@ halo2curves = { version = "0.7.0", default-features = false, features = ["bn256-
 # (StorageConfig::with_encryption + crypto::at_rest). All chain-sourced
 # crates move together as one rev.
 # chain main incl. ENCRYPT-S1 WP-0 (PR #62 merged 2026-07-04)
-citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-storage     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-consensus   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-execution   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-sequencer   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-network     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-economics   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-api         = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-storage     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-consensus   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-execution   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-sequencer   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-network     = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-economics   = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-api         = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
 citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateNetwork/citrate-learning-center", rev = "9c1b5299e20c33b65f5ec6f09440ca9766e415da" }
 #
 # NAT-B-006 (HELD — upstream fix required): `citrate-edu-app`
@@ -138,10 +138,18 @@ citrate-edu-app     = { git = "ssh://git@github-citrate-learning-center/CitrateN
 # so the collapsing [patch] is accepted: every citrate-chain crate edu-app
 # pulls resolves to the same audited rev as the wallet's own deps.
 # Drop this once citrate-learning-center re-pins to a live https rev.
+#
+# UPDATE 2026-09-26: citrate-learning-center main now pins https revs, but
+# `citrate-edu-app` above is still pinned to 9c1b5299 (ssh source), so the
+# bridge stays until edu-app is re-pinned to a learning-center commit whose
+# chain deps sit on the same https rev as this workspace (compat: chain
+# f9f6257b). Moving edu-app to a commit with an https chain pin at another
+# rev would yield two copies of each chain crate, which
+# scripts/ci/check-chain-dep-pins.sh rejects.
 
 [patch."ssh://git@github-citrate-chain/CitrateNetwork/citrate-chain"]
-citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
-citrate-security    = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f4a07811940a0962325d18e8ba44fea0ff50a3b4" }
+citrate-wallet-core = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
+citrate-security    = { git = "https://github.com/CitrateNetwork/citrate-chain", rev = "f9f6257b2dcde21149fe9c09236231ccfc32da68" }
 
 [profile.release]
 opt-level = 3

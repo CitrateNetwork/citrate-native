@@ -88,6 +88,8 @@ tokio-test = "0.4"
 proptest = "1"
 async-trait = "0.1"
 tempfile = "3"
+# Decodes the signed native tx in the V2 signing test.
+bincode = { workspace = true }
 # ENCRYPT-S1 WP-1: raw-bytes probe that the embedded node's on-disk
 # RocksDB values are ciphertext. Same version citrate-storage pins, so
 # cargo unifies it into the existing rocksdb build (no new artifact).

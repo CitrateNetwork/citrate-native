@@ -187,6 +187,35 @@ impl WalletCoreBackend {
         self.chain_id.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Build and sign a transaction for the current chain id. Both send
+    /// paths go through here. Ed25519 keys sign the chain-bound V2 native
+    /// digest (wallet-core signs V2 whenever a chain id is set); secp256k1
+    /// keys sign EIP-155.
+    fn sign_tx(
+        &self,
+        unified_key: &citrate_wallet_core::keys::UnifiedKey,
+        to: &str,
+        value: u128,
+        data: Option<Vec<u8>>,
+        nonce: u64,
+    ) -> Result<citrate_wallet_core::SignedTransaction, AppError> {
+        let mut builder = citrate_wallet_core::TransactionBuilder::new()
+            .to(to)
+            .value(value)
+            .chain_id(self.get_chain_id());
+        if let Some(data) = data {
+            builder = builder.data(data);
+        }
+        match unified_key {
+            citrate_wallet_core::keys::UnifiedKey::Ed25519(ed_key) => builder
+                .sign(ed_key, nonce)
+                .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e))),
+            citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp_key) => builder
+                .sign_secp256k1(secp_key, nonce)
+                .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e))),
+        }
+    }
+
     fn rpc_client_read(&self) -> RwLockReadGuard<'_, Arc<citrate_wallet_core::RpcClient>> {
         match self.rpc_client.read() {
             Ok(guard) => guard,
@@ -350,24 +379,7 @@ impl WalletBackend for WalletCoreBackend {
             .map_err(|_| AppError::Wallet(format!("Invalid amount: '{}'", value_wei)))?;
 
         // Build and sign the transaction — supports both Ed25519 and secp256k1
-        let signed = match &unified_key {
-            citrate_wallet_core::keys::UnifiedKey::Ed25519(ed_key) => {
-                citrate_wallet_core::TransactionBuilder::new()
-                    .to(to)
-                    .value(value)
-                    .chain_id(self.get_chain_id())
-                    .sign(ed_key, nonce)
-                    .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e)))?
-            }
-            citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp_key) => {
-                citrate_wallet_core::TransactionBuilder::new()
-                    .to(to)
-                    .value(value)
-                    .chain_id(self.get_chain_id())
-                    .sign_secp256k1(secp_key, nonce)
-                    .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e)))?
-            }
-        };
+        let signed = self.sign_tx(&unified_key, to, value, None, nonce)?;
 
         // Submit to RPC — MUST succeed, no local hash fallback
         // F-03 fix: failed submission is a real error, not a fake success
@@ -403,26 +415,7 @@ impl WalletBackend for WalletCoreBackend {
             .parse()
             .map_err(|_| AppError::Wallet(format!("Invalid amount: '{}'", value_wei)))?;
 
-        let signed = match &unified_key {
-            citrate_wallet_core::keys::UnifiedKey::Ed25519(ed_key) => {
-                citrate_wallet_core::TransactionBuilder::new()
-                    .to(to)
-                    .value(value)
-                    .data(data)
-                    .chain_id(self.get_chain_id())
-                    .sign(ed_key, nonce)
-                    .map_err(|e| AppError::Wallet(format!("Ed25519 sign failed: {}", e)))?
-            }
-            citrate_wallet_core::keys::UnifiedKey::Secp256k1(secp_key) => {
-                citrate_wallet_core::TransactionBuilder::new()
-                    .to(to)
-                    .value(value)
-                    .data(data)
-                    .chain_id(self.get_chain_id())
-                    .sign_secp256k1(secp_key, nonce)
-                    .map_err(|e| AppError::Wallet(format!("secp256k1 sign failed: {}", e)))?
-            }
-        };
+        let signed = self.sign_tx(&unified_key, to, value, Some(data), nonce)?;
 
         let tx_hash = rpc
             .send_raw_transaction(&signed.raw)
@@ -1630,6 +1623,49 @@ mod tests {
     /// password. A wrong password fails closed BEFORE any signing or
     /// network call — pre-fix `_password` was discarded and any string
     /// (wrong or empty) signed and broadcast. RED at parent.
+
+    /// Activation hardening: an Ed25519 send from the desktop wallet on 40204
+    /// carries the chain-bound V2 native signature, and that signature is
+    /// what a node accepts in a block at or after the activation height.
+    #[tokio::test]
+    async fn test_native_send_signs_chain_bound_v2_for_40204() {
+        use citrate_consensus::native_sig::{signed_version, NativeSigVersion};
+        use citrate_consensus::tx_auth::{native_tx_id, verify_for_block};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keystore = dir.path().join("keystore.json");
+        let backend = WalletCoreBackend::with_keystore_path(&keystore);
+        assert_eq!(WalletBackend::get_chain_id(&backend), 40204);
+        let created = backend
+            .create_wallet("correct-horse-battery", "Primary")
+            .await
+            .expect("create wallet");
+        assert!(backend
+            .unlock(&created.address, "correct-horse-battery")
+            .await
+            .expect("unlock"));
+        let key = backend
+            .key_manager
+            .get_signing_key(&created.address)
+            .expect("unlocked key");
+        assert!(
+            matches!(key, citrate_wallet_core::keys::UnifiedKey::Ed25519(_)),
+            "desktop wallet accounts are Ed25519 (native)"
+        );
+
+        let to = format!("0x{}", "22".repeat(20));
+        for data in [None, Some(vec![0xab, 0xcd])] {
+            let signed = backend.sign_tx(&key, &to, 1_000, data, 0).expect("signs");
+            let mut tx: citrate_consensus::types::Transaction =
+                bincode::deserialize(&signed.raw).expect("native raw tx is bincode");
+            assert_eq!(tx.chain_id, Some(40204));
+            assert_eq!(signed_version(&tx), Some(NativeSigVersion::V2));
+            tx.hash = native_tx_id(&tx);
+            assert_eq!(verify_for_block(&tx, 40204), Ok(tx.hash));
+            // Chain-bound: the same signature is not valid for another chain.
+            assert!(verify_for_block(&tx, 1337).is_err());
+        }
+    }
     #[tokio::test]
     async fn test_natb002_wrong_password_does_not_sign() {
         let dir = tempfile::tempdir().expect("tempdir");
