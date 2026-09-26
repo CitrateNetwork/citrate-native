@@ -6,6 +6,11 @@ name: Release (gui-native)
 # binary + assets.
 #
 # See release ceremony prep audit (2026-05-21).
+#
+# The `build` job signs and notarizes with secrets from the protected
+# `release` environment, so it runs only on a v* tag push (after a
+# required reviewer approves). A manual dispatch does not build or
+# publish; to rebuild, delete and re-push the tag.
 
 on:
   push:
@@ -41,8 +46,19 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
+    # Signing secrets live in the protected `release` environment (required
+    # reviewer, v* tags only). Only a v* tag push runs this job; PR CI and
+    # manual dispatches never reach the environment.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: release
     permissions:
       contents: read
+    env:
+      # Presence flags for the signing secrets ('true' / 'false', never a
+      # value). Steps gate on these; the secret values stay in the
+      # step-level env of the one step that needs them.
+      HAS_MACOS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ (secrets.NOTARY_KEY_P8 != '' && secrets.NOTARY_KEY_ID != '' && secrets.NOTARY_ISSUER_ID != '') || (secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -172,7 +188,7 @@ jobs:
       # (unsigned artifact, loud notice) when the cert secrets are absent
       # so forks/branches still produce artifacts.
       - name: Import Developer ID certificate (macOS)
-        if: matrix.os == 'macos'
+        if: matrix.os == 'macos' && env.HAS_MACOS_CERT == 'true'
         shell: bash
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -282,7 +298,7 @@ jobs:
       # tar.gz binary passes online Gatekeeper too; the DMG additionally
       # verifies OFFLINE because the ticket is stapled to it.
       - name: Notarize + DMG (macOS)
-        if: matrix.os == 'macos'
+        if: matrix.os == 'macos' && env.HAS_MACOS_CERT == 'true' && env.HAS_NOTARY == 'true'
         shell: bash
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -322,6 +338,40 @@ jobs:
           # Verify: dmg (stapled) + bare binary (online ticket via cdhash)
           spctl -a -t open --context context:primary-signature -vv "dist/$STAGE.dmg" || true
           spctl -a -t exec -vv "dist/$STAGE/citrate-native" || true
+
+      # Nothing ships unsigned silently. On a v* tag build the macOS legs
+      # FAIL unless the .app is Developer-ID signed and the DMG is notarized
+      # with a stapled ticket. This workflow has no Windows Authenticode
+      # signing yet (owner decision pending), so the Windows leg emits a
+      # visible warning (annotation + run summary) instead of failing.
+      - name: Require signed artefacts (v* tag builds)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="citrate-native-${{ matrix.target }}"
+          case "${{ matrix.os }}" in
+            macos)
+              if [[ "$HAS_MACOS_CERT" != "true" || -z "${SIGN_IDENTITY:-}" ]]; then
+                echo "::error title=Unsigned macOS release::v* tag build without a Developer ID identity (MACOS_CERT_P12 / MACOS_CERT_P12_PASSWORD in the release environment)"
+                exit 1
+              fi
+              if [[ "$HAS_NOTARY" != "true" ]]; then
+                echo "::error title=Unnotarized macOS release::v* tag build without notarization credentials (NOTARY_KEY_P8/NOTARY_KEY_ID/NOTARY_ISSUER_ID, or APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID)"
+                exit 1
+              fi
+              codesign --verify --deep --strict --verbose=2 "dist/$STAGE/Citrate Native.app"
+              xcrun stapler validate "dist/$STAGE.dmg"
+              echo "macOS artefacts signed and notarized"
+              ;;
+            windows)
+              echo "::warning title=Unsigned Windows build::The Windows archive in this release is NOT Authenticode-signed (no Windows signing in this workflow; owner decision pending)."
+              echo "**WARNING: the Windows archive in this release is NOT Authenticode-signed** (owner decision pending)." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "Linux archive: integrity via SHA256 + the release job."
+              ;;
+          esac
 
       - name: SHA256
         shell: bash
