@@ -94,6 +94,39 @@ pub trait TxSigner: Send + Sync {
     ) -> Result<String, String>;
 }
 
+/// Chain reads that decide whether a validated settlement-phase write can land
+/// this block (`ComputeMarketplace` dispute window, `ComputeVerifier`
+/// commitment block and effective tier). Narrow seam so `run_once` is testable.
+#[async_trait::async_trait]
+pub trait SettlementReader: Send + Sync {
+    /// Current chain head.
+    async fn head(&self) -> Result<u128, String>;
+    /// `ComputeMarketplace.resultVerifiedAt(jobId)` (0 = not verified Valid).
+    async fn result_verified_at(&self, job_id: u128) -> Result<u128, String>;
+    /// `ComputeMarketplace.disputeResolvedForProvider(jobId)`.
+    async fn dispute_resolved_for_provider(&self, job_id: u128) -> Result<bool, String>;
+    /// `ComputeVerifier.commitmentBlock(jobId)`.
+    async fn commitment_block(&self, job_id: u128) -> Result<u128, String>;
+    /// `ComputeVerifier.getRecord(jobId).tier` (0 Commitment, 1 ZKProof, 2 TEE).
+    async fn effective_tier(&self, job_id: u128) -> Result<u8, String>;
+}
+
+/// `ComputeMarketplace.DISPUTE_WINDOW` (blocks after `resultVerifiedAt`).
+pub const DISPUTE_WINDOW_BLOCKS: u128 = 100;
+
+/// Why a validated write was held back this tick (left pending, retried).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeferReason {
+    /// `completeJob` is accepted from `ready_at_block`.
+    DisputeWindow { ready_at_block: u128 },
+    /// The result has not verified Valid yet (`resultVerifiedAt == 0`).
+    AwaitingVerification,
+    /// The reveal must land in a later block than the commitment.
+    RevealAfterCommitBlock { commit_block: u128 },
+    /// A settlement read failed; nothing is signed on a guess.
+    ChainRead(String),
+}
+
 // ── real implementations (wired by the UI loop in S1.3) ───────────────────────
 
 /// Env var pointing at the node-agent supervision token file (shared contract
@@ -307,6 +340,102 @@ impl TxSigner for WalletTxSigner {
     }
 }
 
+/// Live [`SettlementReader`] over JSON-RPC `eth_call` / `eth_blockNumber`
+/// against the configured node (read-only; never signs).
+pub struct RpcSettlementReader {
+    rpc_url: String,
+    marketplace: String,
+    verifier: String,
+    http: reqwest::Client,
+}
+
+impl RpcSettlementReader {
+    pub fn new(
+        rpc_url: impl Into<String>,
+        marketplace: impl Into<String>,
+        verifier: impl Into<String>,
+    ) -> Self {
+        Self {
+            rpc_url: rpc_url.into(),
+            marketplace: marketplace.into(),
+            verifier: verifier.into(),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    async fn rpc(&self, method: &str, params: serde_json::Value) -> Result<String, String> {
+        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let resp: serde_json::Value = self
+            .http
+            .post(&self.rpc_url)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| format!("{method}: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("{method}: {e}"))?;
+        if let Some(err) = resp.get("error") {
+            return Err(format!("{method}: {err}"));
+        }
+        resp.get("result")
+            .and_then(|r| r.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("{method}: missing result"))
+    }
+
+    /// `eth_call(to, selector(sig) ‖ uint256(job_id))`, returning word `word`
+    /// of the return data as a `u128` (non-zero high bytes are an error).
+    async fn call_word(&self, to: &str, sig: &str, job_id: u128, word: usize) -> Result<u128, String> {
+        use sha3::{Digest, Keccak256};
+        let sel = Keccak256::digest(sig.as_bytes());
+        let mut data = sel[..4].to_vec();
+        data.extend_from_slice(&[0u8; 16]);
+        data.extend_from_slice(&job_id.to_be_bytes());
+        let out = self
+            .rpc(
+                "eth_call",
+                serde_json::json!([{"to": to, "data": format!("0x{}", hex::encode(data))}, "latest"]),
+            )
+            .await?;
+        let bytes = decode_hex(&out).map_err(|e| format!("{sig}: {e}"))?;
+        let w = bytes
+            .get(word * 32..(word + 1) * 32)
+            .ok_or_else(|| format!("{sig}: short return ({} bytes)", bytes.len()))?;
+        decode_u128_word(w, sig)
+    }
+}
+
+#[async_trait::async_trait]
+impl SettlementReader for RpcSettlementReader {
+    async fn head(&self) -> Result<u128, String> {
+        let h = self.rpc("eth_blockNumber", serde_json::json!([])).await?;
+        u128::from_str_radix(h.trim_start_matches("0x"), 16).map_err(|e| format!("eth_blockNumber: {e}"))
+    }
+    async fn result_verified_at(&self, job_id: u128) -> Result<u128, String> {
+        self.call_word(&self.marketplace, "resultVerifiedAt(uint256)", job_id, 0)
+            .await
+    }
+    async fn dispute_resolved_for_provider(&self, job_id: u128) -> Result<bool, String> {
+        Ok(self
+            .call_word(&self.marketplace, "disputeResolvedForProvider(uint256)", job_id, 0)
+            .await?
+            != 0)
+    }
+    async fn commitment_block(&self, job_id: u128) -> Result<u128, String> {
+        self.call_word(&self.verifier, "commitmentBlock(uint256)", job_id, 0)
+            .await
+    }
+    async fn effective_tier(&self, job_id: u128) -> Result<u8, String> {
+        // getRecord(uint256) → VerificationRecord; word 2 is `tier`.
+        let t = self
+            .call_word(&self.verifier, "getRecord(uint256)", job_id, 2)
+            .await?;
+        u8::try_from(t).map_err(|_| format!("getRecord: tier {t} out of range"))
+    }
+}
+
 // ── validation (the trust boundary) ───────────────────────────────────────────
 
 /// 4-byte selectors of the seven writes the relay will sign (mirror
@@ -350,6 +479,9 @@ pub enum RejectReason {
     /// A privileged/value-bearing write the user did not confirm
     /// (FUA-GUI-01 residual, WP 6.4b).
     NotConfirmed { intent: String },
+    /// The job is verified under a tier the provider agent cannot prove
+    /// (ZKProof / TEE, including a Commitment request above 10 SALT).
+    UnsupportedTier { intent: String, tier: u8 },
 }
 
 /// Decoded, shape-validated calldata arguments for one allow-listed write
@@ -719,6 +851,9 @@ pub struct RelayTickReport {
     pub errors: Vec<String>,
     /// Already-submitted entries skipped.
     pub skipped_non_pending: usize,
+    /// Valid writes held back this tick because the chain would reject them
+    /// now (left pending for a later tick).
+    pub deferred: Vec<(u64, DeferReason)>,
 }
 
 /// Run one relay cycle: poll the queue, and sign **at most one** valid pending
@@ -733,7 +868,9 @@ pub async fn run_once(
     queue: &dyn RequestQueue,
     validator: &RelayValidator,
     gate: &dyn ConfirmationGate,
+    settlement: &dyn SettlementReader,
 ) -> RelayTickReport {
+    let _ = settlement;
     let mut report = RelayTickReport::default();
 
     let requests = match queue.list_requests().await {
@@ -862,11 +999,12 @@ impl RelayService {
         queue: &dyn RequestQueue,
         unlocked: bool,
         gate: &dyn ConfirmationGate,
+        settlement: &dyn SettlementReader,
     ) -> Option<RelayTickReport> {
         if !self.is_enabled() || !unlocked {
             return None;
         }
-        Some(run_once(signer, from, queue, &self.validator(), gate).await)
+        Some(run_once(signer, from, queue, &self.validator(), gate, settlement).await)
     }
 }
 
@@ -1292,6 +1430,177 @@ mod tests {
         }
     }
 
+    /// Settlement reads for a Commitment-tier job whose result verified long
+    /// ago: every write is ready. Fields override individual reads.
+    struct ReadyChain {
+        head: u128,
+        verified_at: u128,
+        resolved: bool,
+        commit_block: u128,
+        tier: u8,
+        fail: bool,
+    }
+    impl Default for ReadyChain {
+        fn default() -> Self {
+            Self {
+                head: 10_000,
+                verified_at: 100,
+                resolved: false,
+                commit_block: 50,
+                tier: 0,
+                fail: false,
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl SettlementReader for ReadyChain {
+        async fn head(&self) -> Result<u128, String> {
+            if self.fail {
+                return Err("rpc down".into());
+            }
+            Ok(self.head)
+        }
+        async fn result_verified_at(&self, _j: u128) -> Result<u128, String> {
+            Ok(self.verified_at)
+        }
+        async fn dispute_resolved_for_provider(&self, _j: u128) -> Result<bool, String> {
+            Ok(self.resolved)
+        }
+        async fn commitment_block(&self, _j: u128) -> Result<u128, String> {
+            Ok(self.commit_block)
+        }
+        async fn effective_tier(&self, _j: u128) -> Result<u8, String> {
+            Ok(self.tier)
+        }
+    }
+
+    async fn one(intent: &str, sel: [u8; 4], chain: ReadyChain) -> RelayTickReport {
+        let q = MockQueue::new(vec![req(7, intent, MARKETPLACE, "0", sel)]);
+        let s = MockSigner::new(true);
+        run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &chain).await
+    }
+
+    #[tokio::test]
+    async fn complete_job_inside_dispute_window_is_deferred_not_signed() {
+        for head in [150u128, 199, 249] {
+            let r = one(
+                "completeJob",
+                SEL_COMPLETE_JOB,
+                ReadyChain { head, verified_at: 150, ..ReadyChain::default() },
+            )
+            .await;
+            assert!(r.signed.is_empty(), "head {head}");
+            assert_eq!(
+                r.deferred,
+                vec![(7, DeferReason::DisputeWindow { ready_at_block: 250 })],
+                "head {head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_job_after_dispute_window_is_signed() {
+        let r = one(
+            "completeJob",
+            SEL_COMPLETE_JOB,
+            ReadyChain { head: 250, verified_at: 150, ..ReadyChain::default() },
+        )
+        .await;
+        assert_eq!(r.signed.len(), 1);
+        assert!(r.deferred.is_empty());
+    }
+
+    #[tokio::test]
+    async fn complete_job_unverified_waits_unless_resolved_for_provider() {
+        let r = one(
+            "completeJob",
+            SEL_COMPLETE_JOB,
+            ReadyChain { verified_at: 0, ..ReadyChain::default() },
+        )
+        .await;
+        assert_eq!(r.deferred, vec![(7, DeferReason::AwaitingVerification)]);
+        let r = one(
+            "completeJob",
+            SEL_COMPLETE_JOB,
+            ReadyChain { verified_at: 0, resolved: true, ..ReadyChain::default() },
+        )
+        .await;
+        assert_eq!(r.signed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reveal_in_commitment_block_is_deferred() {
+        let r = one(
+            "submitResult",
+            SEL_SUBMIT_RESULT,
+            ReadyChain { head: 50, commit_block: 50, ..ReadyChain::default() },
+        )
+        .await;
+        assert!(r.signed.is_empty());
+        assert_eq!(
+            r.deferred,
+            vec![(7, DeferReason::RevealAfterCommitBlock { commit_block: 50 })]
+        );
+        let r = one(
+            "submitResult",
+            SEL_SUBMIT_RESULT,
+            ReadyChain { head: 51, commit_block: 50, ..ReadyChain::default() },
+        )
+        .await;
+        assert_eq!(r.signed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn non_commitment_tier_job_writes_are_refused() {
+        for (intent, sel) in [
+            ("startExecution", SEL_START_EXECUTION),
+            ("submitCommitment", SEL_SUBMIT_COMMITMENT),
+            ("submitResult", SEL_SUBMIT_RESULT),
+            ("completeJob", SEL_COMPLETE_JOB),
+        ] {
+            for tier in [1u8, 2] {
+                let r = one(intent, sel, ReadyChain { tier, ..ReadyChain::default() }).await;
+                assert!(r.signed.is_empty(), "{intent} tier {tier}");
+                assert_eq!(
+                    r.rejected,
+                    vec![(7, RejectReason::UnsupportedTier { intent: intent.into(), tier })],
+                    "{intent} tier {tier}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn settlement_read_failure_defers_fail_closed() {
+        let r = one(
+            "completeJob",
+            SEL_COMPLETE_JOB,
+            ReadyChain { fail: true, ..ReadyChain::default() },
+        )
+        .await;
+        assert!(r.signed.is_empty());
+        assert!(matches!(r.deferred.as_slice(), [(7, DeferReason::ChainRead(_))]));
+    }
+
+    #[tokio::test]
+    async fn deferred_write_does_not_block_a_later_ready_write() {
+        let q = MockQueue::new(vec![
+            req(7, "completeJob", MARKETPLACE, "0", SEL_COMPLETE_JOB),
+            req(8, "heartbeat", HEARTBEAT_MONITOR, "0", SEL_HEARTBEAT),
+        ]);
+        let s = MockSigner::new(true);
+        let chain = ReadyChain { head: 200, verified_at: 150, ..ReadyChain::default() };
+        let r = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &chain).await;
+        assert_eq!(r.deferred.len(), 1);
+        assert_eq!(r.signed.len(), 1);
+        assert_eq!(r.signed[0].id, 8);
+    }
+
+    #[test]
+    fn dispute_window_constant_matches_contract() {
+        assert_eq!(DISPUTE_WINDOW_BLOCKS, 100);
+    }
+
     /// Records which writes it was asked to confirm; answers `allow`.
     struct MockGate {
         allow: bool,
@@ -1323,7 +1632,7 @@ mod tests {
             SEL_SUBMIT_RESULT,
         )]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
 
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 7);
@@ -1349,7 +1658,7 @@ mod tests {
             SEL_SUBMIT_RESULT,
         )]);
         let s = MockSigner::new(false); // broadcast fails
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
 
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
@@ -1371,7 +1680,7 @@ mod tests {
         let good = req(3, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
         let q = MockQueue::new(vec![submitted, bad_to, good]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
 
         assert_eq!(report.skipped_non_pending, 1);
         assert_eq!(report.rejected.len(), 1);
@@ -1390,7 +1699,7 @@ mod tests {
             req(2, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT),
         ]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
         // Only the first valid write is signed (nonce safety); #2 waits for next tick.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 1);
@@ -1408,7 +1717,7 @@ mod tests {
         )]);
         q.fail_observe = true;
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
         // The tx was broadcast (signed recorded) even though observe POST failed.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.errors.len(), 1);
@@ -1440,7 +1749,7 @@ mod tests {
         let s = MockSigner::new(true);
         // Even unlocked, a disabled relay signs nothing.
         assert!(svc
-            .tick(&s, FROM, &q, true, &MockGate::new(true))
+            .tick(&s, FROM, &q, true, &MockGate::new(true), &ReadyChain::default())
             .await
             .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
@@ -1460,7 +1769,7 @@ mod tests {
         let s = MockSigner::new(true);
         // Enabled but locked → nothing signed (never auto-unlocks).
         assert!(svc
-            .tick(&s, FROM, &q, false, &MockGate::new(true))
+            .tick(&s, FROM, &q, false, &MockGate::new(true), &ReadyChain::default())
             .await
             .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
@@ -1479,7 +1788,7 @@ mod tests {
         )]);
         let s = MockSigner::new(true);
         let report = svc
-            .tick(&s, FROM, &q, true, &MockGate::new(true))
+            .tick(&s, FROM, &q, true, &MockGate::new(true), &ReadyChain::default())
             .await
             .expect("should run");
         assert_eq!(report.signed.len(), 1);
@@ -1637,7 +1946,7 @@ mod tests {
         )]);
         let s = MockSigner::new(true);
         let gate = MockGate::new(false); // user declines / no surface
-        let report = run_once(&s, FROM, &q, &validator(), &gate).await;
+        let report = run_once(&s, FROM, &q, &validator(), &gate, &ReadyChain::default()).await;
 
         assert!(
             report.signed.is_empty(),
@@ -1675,7 +1984,7 @@ mod tests {
         )]);
         let s = MockSigner::new(true);
         let gate = MockGate::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &gate).await;
+        let report = run_once(&s, FROM, &q, &validator(), &gate, &ReadyChain::default()).await;
         assert_eq!(report.signed.len(), 1);
         assert_eq!(gate.asked.lock().unwrap().as_slice(), &[5]);
 
@@ -1688,7 +1997,7 @@ mod tests {
         )]);
         let s2 = MockSigner::new(true);
         let gate2 = MockGate::new(false); // even a denying gate is irrelevant here
-        let report2 = run_once(&s2, FROM, &q2, &validator(), &gate2).await;
+        let report2 = run_once(&s2, FROM, &q2, &validator(), &gate2, &ReadyChain::default()).await;
         assert_eq!(
             report2.signed.len(),
             1,
@@ -1711,7 +2020,7 @@ mod tests {
             SEL_CLAIM_REWARDS,
         )]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &DenyAllConfirmations).await;
+        let report = run_once(&s, FROM, &q, &validator(), &DenyAllConfirmations, &ReadyChain::default()).await;
         assert!(report.signed.is_empty());
         assert!(matches!(
             report.rejected.as_slice(),
@@ -1732,7 +2041,7 @@ mod tests {
             }
         }
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &DeadQueue, &validator(), &MockGate::new(true)).await;
+        let report = run_once(&s, FROM, &DeadQueue, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("list requests"));
