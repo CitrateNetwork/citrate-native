@@ -3505,7 +3505,7 @@ fn main() {
     // `CITRATE_RELAY_ENABLED=1`; the Settings toggle (S1.3b) flips the same flag.
     let relay_for_toggle = {
         use citrate_desktop_app::services::relay_service::{
-            NodeAgentClient, RelayConfig, RelayService, WalletTxSigner,
+            NodeAgentClient, RelayConfig, RelayService, RpcSettlementReader, WalletTxSigner,
         };
         let chain_id = 40204u64;
         let marketplace =
@@ -3514,8 +3514,17 @@ fn main() {
             marketplace_client::contribution_accounting_address(chain_id).map(str::to_string);
         let heartbeat_monitor =
             marketplace_client::known_contract(chain_id, "HeartbeatMonitor").map(str::to_string);
-        match (marketplace, accounting, heartbeat_monitor) {
-            (Some(marketplace), Some(accounting), Some(heartbeat_monitor)) => {
+        let verifier =
+            marketplace_client::known_contract(chain_id, "ComputeVerifier").map(str::to_string);
+        match (marketplace, accounting, heartbeat_monitor, verifier) {
+            (Some(marketplace), Some(accounting), Some(heartbeat_monitor), Some(verifier)) => {
+                // Settlement reads (dispute window, commitment block, tier)
+                // gate completeJob / submitResult before anything is signed.
+                let settlement = std::sync::Arc::new(RpcSettlementReader::new(
+                    app_core.wallet.get_rpc_url(),
+                    marketplace.clone(),
+                    verifier,
+                ));
                 let agent_url = std::env::var("CITRATE_NODE_AGENT_ADDR")
                     .unwrap_or_else(|_| "http://127.0.0.1:19600".to_string());
                 let relay = std::sync::Arc::new(RelayService::new(RelayConfig {
@@ -3572,6 +3581,7 @@ fn main() {
                                 agent.as_ref(),
                                 true,
                                 confirm_gate.as_ref(),
+                                settlement.as_ref(),
                             ));
                             if let Some(r) = report {
                                 for s in &r.signed {
@@ -3597,6 +3607,11 @@ fn main() {
                                 for (id, reason) in &r.rejected {
                                     tracing::warn!(
                                         "signing relay: refused request {id}: {reason:?}"
+                                    );
+                                }
+                                for (id, reason) in &r.deferred {
+                                    tracing::info!(
+                                        "signing relay: holding request {id} until the chain accepts it: {reason:?}"
                                     );
                                 }
                                 for e in &r.errors {
