@@ -18,6 +18,8 @@ use sha3::{Digest, Keccak256};
 /// Test-only accounts, impersonated on anvil (no keys exist for them).
 const PROVIDER: &str = "0x000000000000000000000000000000000000a11c";
 const REQUESTER: &str = "0x000000000000000000000000000000000000b0b0";
+/// Governance of the local deploy (anvil default account #0, unlocked).
+const GOVERNANCE: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
 fn keccak(parts: &[&[u8]]) -> [u8; 32] {
     let mut h = Keccak256::new();
@@ -104,49 +106,19 @@ fn job_call(sig: &str, job: u128) -> Vec<u8> {
     d
 }
 
-#[tokio::test]
-async fn settlement_reads_match_the_deployed_contracts() {
-    let Ok(path) = std::env::var("CITRATE_R2_ANVIL_ADDRS") else {
-        eprintln!("skipping: CITRATE_R2_ANVIL_ADDRS not set");
-        return;
-    };
-    let url =
-        std::env::var("CITRATE_R2_ANVIL_RPC").unwrap_or_else(|_| "http://127.0.0.1:8599".into());
-    let book: Value =
-        serde_json::from_str(&std::fs::read_to_string(path).expect("addrs")).expect("json");
-    let market = book["ComputeMarketplace"]
-        .as_str()
-        .expect("market")
-        .to_string();
-    let verifier = book["ComputeVerifier"]
-        .as_str()
-        .expect("verifier")
-        .to_string();
-    let reader = RpcSettlementReader::new(url.clone(), market.clone(), verifier.clone());
-    let one: u128 = 1_000_000_000_000_000_000;
-    for who in [PROVIDER, REQUESTER] {
-        rpc(&url, "anvil_impersonateAccount", json!([who]))
-            .await
-            .expect("impersonate");
-        rpc(
-            &url,
-            "anvil_setBalance",
-            json!([who, format!("0x{:x}", 100_000 * one)]),
-        )
-        .await
-        .expect("fund");
-    }
-
-    // Provider registration (idempotent across reruns).
-    let model = keccak(&[b"r2-native-compat-model"]);
-    let stake = call_u128(&url, &market, sel("MIN_PROVIDER_STAKE()")).await;
-    let mut reg = sel("registerProvider(bytes32[])");
-    reg.extend_from_slice(&word(32));
-    reg.extend_from_slice(&word(1));
-    reg.extend_from_slice(&model);
-    let _ = send(&url, PROVIDER, &market, &reg, stake).await;
-
-    // Commitment job, 1 SALT.
+/// Post a 1-SALT Commitment job, have the provider win, execute, commit and
+/// (one block later) reveal. Returns the job id. With `check`, asserts the
+/// reader's commitment-block / head / verified-at reads along the way.
+async fn run_to_valid(
+    url: &str,
+    market: &str,
+    reader: &RpcSettlementReader,
+    model: [u8; 32],
+    one: u128,
+    check: bool,
+) -> u128 {
+    let url = url.to_string();
+    let market = market.to_string();
     let job = call_u128(&url, &market, sel("nextJobId()")).await;
     send(
         &url,
@@ -199,7 +171,9 @@ async fn settlement_reads_match_the_deployed_contracts() {
     assert_eq!(reader.result_verified_at(job).await.expect("verifiedAt"), 0);
 
     rpc(&url, "anvil_mine", json!(["0x1"])).await.expect("mine");
-    assert_eq!(reader.head().await.expect("head"), head + 1);
+    if check {
+        assert_eq!(reader.head().await.expect("head"), head + 1);
+    }
     let mut proof = commitment.to_vec();
     proof.extend_from_slice(&nonce);
     proof.extend_from_slice(output);
@@ -216,6 +190,53 @@ async fn settlement_reads_match_the_deployed_contracts() {
         .await
         .expect("submitResult");
 
+    job
+}
+
+#[tokio::test]
+async fn settlement_reads_match_the_deployed_contracts() {
+    let Ok(path) = std::env::var("CITRATE_R2_ANVIL_ADDRS") else {
+        eprintln!("skipping: CITRATE_R2_ANVIL_ADDRS not set");
+        return;
+    };
+    let url =
+        std::env::var("CITRATE_R2_ANVIL_RPC").unwrap_or_else(|_| "http://127.0.0.1:8599".into());
+    let book: Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("addrs")).expect("json");
+    let market = book["ComputeMarketplace"]
+        .as_str()
+        .expect("market")
+        .to_string();
+    let verifier = book["ComputeVerifier"]
+        .as_str()
+        .expect("verifier")
+        .to_string();
+    let reader = RpcSettlementReader::new(url.clone(), market.clone(), verifier.clone());
+    let one: u128 = 1_000_000_000_000_000_000;
+    for who in [PROVIDER, REQUESTER] {
+        rpc(&url, "anvil_impersonateAccount", json!([who]))
+            .await
+            .expect("impersonate");
+        rpc(
+            &url,
+            "anvil_setBalance",
+            json!([who, format!("0x{:x}", 100_000 * one)]),
+        )
+        .await
+        .expect("fund");
+    }
+
+    // Provider registration (idempotent across reruns).
+    let model = keccak(&[b"r2-native-compat-model"]);
+    let stake = call_u128(&url, &market, sel("MIN_PROVIDER_STAKE()")).await;
+    let mut reg = sel("registerProvider(bytes32[])");
+    reg.extend_from_slice(&word(32));
+    reg.extend_from_slice(&word(1));
+    reg.extend_from_slice(&model);
+    let _ = send(&url, PROVIDER, &market, &reg, stake).await;
+
+    // Commitment job, 1 SALT, driven to a Valid result.
+    let job = run_to_valid(&url, &market, &reader, model, one, true).await;
     let verified_at = reader.result_verified_at(job).await.expect("verifiedAt");
     assert_eq!(verified_at, reader.head().await.expect("head"));
     assert!(!reader
@@ -247,6 +268,41 @@ async fn settlement_reads_match_the_deployed_contracts() {
     )
     .await
     .expect("completeJob once the window has elapsed");
+
+    // A dispute resolved for the provider lifts the window: the relay's
+    // flag reads true and completeJob lands at once.
+    let disputed = run_to_valid(&url, &market, &reader, model, one, false).await;
+    assert!(!reader
+        .dispute_resolved_for_provider(disputed)
+        .await
+        .expect("resolved"));
+    send(
+        &url,
+        REQUESTER,
+        &market,
+        &job_call("disputeResult(uint256)", disputed),
+        10 * one,
+    )
+    .await
+    .expect("dispute");
+    let mut resolve = job_call("resolveDispute(uint256,bool)", disputed);
+    resolve.extend_from_slice(&word(0)); // requesterWins = false
+    send(&url, GOVERNANCE, &market, &resolve, 0)
+        .await
+        .expect("governance resolves for provider");
+    assert!(reader
+        .dispute_resolved_for_provider(disputed)
+        .await
+        .expect("resolved"));
+    send(
+        &url,
+        PROVIDER,
+        &market,
+        &job_call("completeJob(uint256)", disputed),
+        0,
+    )
+    .await
+    .expect("completeJob after a provider-won dispute, inside the window");
 
     // Commitment request above 10 SALT reads as ZKProof (tier 1).
     let zk = call_u128(&url, &market, sel("nextJobId()")).await;
