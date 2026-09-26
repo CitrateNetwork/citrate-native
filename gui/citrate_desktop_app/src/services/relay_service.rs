@@ -996,7 +996,8 @@ async fn settlement_check(vw: &ValidatedWrite, chain: &dyn SettlementReader) -> 
                 }
             }
             "completeJob" => {
-                if !chain.dispute_resolved_for_provider(job_id).await? {
+                let resolved_for_provider = chain.dispute_resolved_for_provider(job_id).await?;
+                if !resolved_for_provider {
                     let verified_at = chain.result_verified_at(job_id).await?;
                     if verified_at == 0 {
                         return Ok(SettlementCheck::Defer(DeferReason::AwaitingVerification));

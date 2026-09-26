@@ -15,8 +15,9 @@ use citrate_desktop_app::services::relay_service::{
 use serde_json::{json, Value};
 use sha3::{Digest, Keccak256};
 
-/// Test-only accounts, impersonated on anvil (no keys exist for them).
-const PROVIDER: &str = "0x000000000000000000000000000000000000a11c";
+/// Test-only requester, impersonated on anvil (no key exists for it). The
+/// provider is a fresh impersonated address per run (derived from `nextJobId`),
+/// so repeated runs never hit the per-provider concurrent-job cap.
 const REQUESTER: &str = "0x000000000000000000000000000000000000b0b0";
 /// Governance of the local deploy (anvil default account #0, unlocked).
 const GOVERNANCE: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -110,6 +111,7 @@ fn job_call(sig: &str, job: u128) -> Vec<u8> {
 /// (one block later) reveal. Returns the job id. With `check`, asserts the
 /// reader's commitment-block / head / verified-at reads along the way.
 async fn run_to_valid(
+    provider: &str,
     url: &str,
     market: &str,
     reader: &RpcSettlementReader,
@@ -134,7 +136,7 @@ async fn run_to_valid(
     bid.extend_from_slice(&word(job));
     bid.extend_from_slice(&word(one / 2));
     bid.extend_from_slice(&word(1_000));
-    send(&url, PROVIDER, &market, &bid, 0).await.expect("bid");
+    send(&url, provider, &market, &bid, 0).await.expect("bid");
     send(
         &url,
         REQUESTER,
@@ -146,7 +148,7 @@ async fn run_to_valid(
     .expect("assign");
     send(
         &url,
-        PROVIDER,
+        provider,
         &market,
         &job_call("startExecution(uint256)", job),
         0,
@@ -159,7 +161,7 @@ async fn run_to_valid(
     let commitment = keccak(&[output, &nonce]);
     let mut commit = job_call("submitCommitment(uint256,bytes32)", job);
     commit.extend_from_slice(&commitment);
-    send(&url, PROVIDER, &market, &commit, 0)
+    send(&url, provider, &market, &commit, 0)
         .await
         .expect("commit");
 
@@ -186,7 +188,7 @@ async fn run_to_valid(
     let mut padded = proof.clone();
     padded.resize(proof.len().div_ceil(32) * 32, 0);
     reveal.extend_from_slice(&padded);
-    send(&url, PROVIDER, &market, &reveal, 0)
+    send(&url, provider, &market, &reveal, 0)
         .await
         .expect("submitResult");
 
@@ -213,7 +215,11 @@ async fn settlement_reads_match_the_deployed_contracts() {
         .to_string();
     let reader = RpcSettlementReader::new(url.clone(), market.clone(), verifier.clone());
     let one: u128 = 1_000_000_000_000_000_000;
-    for who in [PROVIDER, REQUESTER] {
+    let provider = format!(
+        "0x{:040x}",
+        0xa11c_0000_0000u128 + call_u128(&url, &market, sel("nextJobId()")).await
+    );
+    for who in [provider.as_str(), REQUESTER] {
         rpc(&url, "anvil_impersonateAccount", json!([who]))
             .await
             .expect("impersonate");
@@ -233,10 +239,12 @@ async fn settlement_reads_match_the_deployed_contracts() {
     reg.extend_from_slice(&word(32));
     reg.extend_from_slice(&word(1));
     reg.extend_from_slice(&model);
-    let _ = send(&url, PROVIDER, &market, &reg, stake).await;
+    send(&url, &provider, &market, &reg, stake)
+        .await
+        .expect("register fresh provider");
 
     // Commitment job, 1 SALT, driven to a Valid result.
-    let job = run_to_valid(&url, &market, &reader, model, one, true).await;
+    let job = run_to_valid(&provider, &url, &market, &reader, model, one, true).await;
     let verified_at = reader.result_verified_at(job).await.expect("verifiedAt");
     assert_eq!(verified_at, reader.head().await.expect("head"));
     assert!(!reader
@@ -247,7 +255,7 @@ async fn settlement_reads_match_the_deployed_contracts() {
     // before verifiedAt + DISPUTE_WINDOW and succeeds at it.
     assert!(send(
         &url,
-        PROVIDER,
+        &provider,
         &market,
         &job_call("completeJob(uint256)", job),
         0
@@ -261,7 +269,7 @@ async fn settlement_reads_match_the_deployed_contracts() {
         .expect("mine");
     send(
         &url,
-        PROVIDER,
+        &provider,
         &market,
         &job_call("completeJob(uint256)", job),
         0,
@@ -271,7 +279,7 @@ async fn settlement_reads_match_the_deployed_contracts() {
 
     // A dispute resolved for the provider lifts the window: the relay's
     // flag reads true and completeJob lands at once.
-    let disputed = run_to_valid(&url, &market, &reader, model, one, false).await;
+    let disputed = run_to_valid(&provider, &url, &market, &reader, model, one, false).await;
     assert!(!reader
         .dispute_resolved_for_provider(disputed)
         .await
@@ -296,7 +304,7 @@ async fn settlement_reads_match_the_deployed_contracts() {
         .expect("resolved"));
     send(
         &url,
-        PROVIDER,
+        &provider,
         &market,
         &job_call("completeJob(uint256)", disputed),
         0,
