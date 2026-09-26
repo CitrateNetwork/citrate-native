@@ -3,8 +3,9 @@
 //!
 //! Gated: runs only when `CITRATE_R2_ANVIL_ADDRS` (JSON with
 //! `ComputeMarketplace` and `ComputeVerifier`) is set. `CITRATE_R2_ANVIL_RPC`
-//! defaults to `http://127.0.0.1:8599`. The node must be an anvil with
-//! unlocked default accounts (#1 provider, #2 requester) and `anvil_mine`.
+//! defaults to `http://127.0.0.1:8599`. The node must be an anvil
+//! (`anvil_impersonateAccount`, `anvil_setBalance`, `anvil_mine`); the test
+//! funds and impersonates its own provider and requester accounts.
 //! Read-only for the relay: every write here is a test fixture sent from an
 //! unlocked account, never through the wallet signer.
 
@@ -14,8 +15,9 @@ use citrate_desktop_app::services::relay_service::{
 use serde_json::{json, Value};
 use sha3::{Digest, Keccak256};
 
-const PROVIDER: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
-const REQUESTER: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+/// Test-only accounts, impersonated on anvil (no keys exist for them).
+const PROVIDER: &str = "0x000000000000000000000000000000000000a11c";
+const REQUESTER: &str = "0x000000000000000000000000000000000000b0b0";
 
 fn keccak(parts: &[&[u8]]) -> [u8; 32] {
     let mut h = Keccak256::new();
@@ -59,7 +61,11 @@ async fn send(url: &str, from: &str, to: &str, data: &[u8], value: u128) -> Resu
     for _ in 0..100 {
         let r = rpc(url, "eth_getTransactionReceipt", json!([hash])).await?;
         if let Some(s) = r.get("status").and_then(Value::as_str) {
-            return if s == "0x1" { Ok(()) } else { Err(format!("status {s}")) };
+            return if s == "0x1" {
+                Ok(())
+            } else {
+                Err(format!("status {s}"))
+            };
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
@@ -67,9 +73,13 @@ async fn send(url: &str, from: &str, to: &str, data: &[u8], value: u128) -> Resu
 }
 
 async fn call_u128(url: &str, to: &str, data: Vec<u8>) -> u128 {
-    let out = rpc(url, "eth_call", json!([{"to": to, "data": format!("0x{}", hex::encode(data))}, "latest"]))
-        .await
-        .expect("eth_call");
+    let out = rpc(
+        url,
+        "eth_call",
+        json!([{"to": to, "data": format!("0x{}", hex::encode(data))}, "latest"]),
+    )
+    .await
+    .expect("eth_call");
     u128::from_str_radix(&out.as_str().expect("hex")[2..66][32..], 16).expect("u128")
 }
 
@@ -100,12 +110,32 @@ async fn settlement_reads_match_the_deployed_contracts() {
         eprintln!("skipping: CITRATE_R2_ANVIL_ADDRS not set");
         return;
     };
-    let url = std::env::var("CITRATE_R2_ANVIL_RPC").unwrap_or_else(|_| "http://127.0.0.1:8599".into());
-    let book: Value = serde_json::from_str(&std::fs::read_to_string(path).expect("addrs")).expect("json");
-    let market = book["ComputeMarketplace"].as_str().expect("market").to_string();
-    let verifier = book["ComputeVerifier"].as_str().expect("verifier").to_string();
+    let url =
+        std::env::var("CITRATE_R2_ANVIL_RPC").unwrap_or_else(|_| "http://127.0.0.1:8599".into());
+    let book: Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("addrs")).expect("json");
+    let market = book["ComputeMarketplace"]
+        .as_str()
+        .expect("market")
+        .to_string();
+    let verifier = book["ComputeVerifier"]
+        .as_str()
+        .expect("verifier")
+        .to_string();
     let reader = RpcSettlementReader::new(url.clone(), market.clone(), verifier.clone());
     let one: u128 = 1_000_000_000_000_000_000;
+    for who in [PROVIDER, REQUESTER] {
+        rpc(&url, "anvil_impersonateAccount", json!([who]))
+            .await
+            .expect("impersonate");
+        rpc(
+            &url,
+            "anvil_setBalance",
+            json!([who, format!("0x{:x}", 100_000 * one)]),
+        )
+        .await
+        .expect("fund");
+    }
 
     // Provider registration (idempotent across reruns).
     let model = keccak(&[b"r2-native-compat-model"]);
@@ -118,31 +148,54 @@ async fn settlement_reads_match_the_deployed_contracts() {
 
     // Commitment job, 1 SALT.
     let job = call_u128(&url, &market, sel("nextJobId()")).await;
-    send(&url, REQUESTER, &market, &post_job(model, &keccak(&[b"in"]), one, 0), one)
-        .await
-        .expect("postJob");
+    send(
+        &url,
+        REQUESTER,
+        &market,
+        &post_job(model, &keccak(&[b"in"]), one, 0),
+        one,
+    )
+    .await
+    .expect("postJob");
     assert_eq!(reader.effective_tier(job).await.expect("tier"), 0);
     let mut bid = sel("bidOnJob(uint256,uint256,uint256)");
     bid.extend_from_slice(&word(job));
     bid.extend_from_slice(&word(one / 2));
     bid.extend_from_slice(&word(1_000));
     send(&url, PROVIDER, &market, &bid, 0).await.expect("bid");
-    send(&url, REQUESTER, &market, &job_call("assignBestBid(uint256)", job), 0)
-        .await
-        .expect("assign");
-    send(&url, PROVIDER, &market, &job_call("startExecution(uint256)", job), 0)
-        .await
-        .expect("start");
+    send(
+        &url,
+        REQUESTER,
+        &market,
+        &job_call("assignBestBid(uint256)", job),
+        0,
+    )
+    .await
+    .expect("assign");
+    send(
+        &url,
+        PROVIDER,
+        &market,
+        &job_call("startExecution(uint256)", job),
+        0,
+    )
+    .await
+    .expect("start");
 
     let output = b"out";
     let nonce = keccak(&[b"n", &job.to_be_bytes()]);
     let commitment = keccak(&[output, &nonce]);
     let mut commit = job_call("submitCommitment(uint256,bytes32)", job);
     commit.extend_from_slice(&commitment);
-    send(&url, PROVIDER, &market, &commit, 0).await.expect("commit");
+    send(&url, PROVIDER, &market, &commit, 0)
+        .await
+        .expect("commit");
 
     let head = reader.head().await.expect("head");
-    assert_eq!(reader.commitment_block(job).await.expect("commitmentBlock"), head);
+    assert_eq!(
+        reader.commitment_block(job).await.expect("commitmentBlock"),
+        head
+    );
     assert_eq!(reader.result_verified_at(job).await.expect("verifiedAt"), 0);
 
     rpc(&url, "anvil_mine", json!(["0x1"])).await.expect("mine");
@@ -159,20 +212,41 @@ async fn settlement_reads_match_the_deployed_contracts() {
     let mut padded = proof.clone();
     padded.resize(proof.len().div_ceil(32) * 32, 0);
     reveal.extend_from_slice(&padded);
-    send(&url, PROVIDER, &market, &reveal, 0).await.expect("submitResult");
+    send(&url, PROVIDER, &market, &reveal, 0)
+        .await
+        .expect("submitResult");
 
     let verified_at = reader.result_verified_at(job).await.expect("verifiedAt");
     assert_eq!(verified_at, reader.head().await.expect("head"));
-    assert!(!reader.dispute_resolved_for_provider(job).await.expect("resolved"));
+    assert!(!reader
+        .dispute_resolved_for_provider(job)
+        .await
+        .expect("resolved"));
     // The contract agrees with the relay's window: completeJob reverts
     // before verifiedAt + DISPUTE_WINDOW and succeeds at it.
-    assert!(send(&url, PROVIDER, &market, &job_call("completeJob(uint256)", job), 0).await.is_err());
+    assert!(send(
+        &url,
+        PROVIDER,
+        &market,
+        &job_call("completeJob(uint256)", job),
+        0
+    )
+    .await
+    .is_err());
     let now = reader.head().await.expect("head");
     let to_mine = verified_at + DISPUTE_WINDOW_BLOCKS - now - 1;
-    rpc(&url, "anvil_mine", json!([format!("0x{to_mine:x}")])).await.expect("mine");
-    send(&url, PROVIDER, &market, &job_call("completeJob(uint256)", job), 0)
+    rpc(&url, "anvil_mine", json!([format!("0x{to_mine:x}")]))
         .await
-        .expect("completeJob once the window has elapsed");
+        .expect("mine");
+    send(
+        &url,
+        PROVIDER,
+        &market,
+        &job_call("completeJob(uint256)", job),
+        0,
+    )
+    .await
+    .expect("completeJob once the window has elapsed");
 
     // Commitment request above 10 SALT reads as ZKProof (tier 1).
     let zk = call_u128(&url, &market, sel("nextJobId()")).await;
@@ -180,12 +254,22 @@ async fn settlement_reads_match_the_deployed_contracts() {
     zk_model[31] = 2;
     let mut zk_input = [0u8; 32];
     zk_input[31] = 1;
-    send(&url, REQUESTER, &market, &post_job(zk_model, &zk_input, 11 * one, 0), 11 * one)
-        .await
-        .expect("post >10 SALT job");
+    send(
+        &url,
+        REQUESTER,
+        &market,
+        &post_job(zk_model, &zk_input, 11 * one, 0),
+        11 * one,
+    )
+    .await
+    .expect("post >10 SALT job");
     assert_eq!(reader.effective_tier(zk).await.expect("tier"), 1);
 
     // A read against a non-contract fails rather than returning a default.
-    let bogus = RpcSettlementReader::new(url.clone(), "0x0000000000000000000000000000000000000001", verifier);
+    let bogus = RpcSettlementReader::new(
+        url.clone(),
+        "0x0000000000000000000000000000000000000001",
+        verifier,
+    );
     assert!(bogus.result_verified_at(job).await.is_err());
 }
