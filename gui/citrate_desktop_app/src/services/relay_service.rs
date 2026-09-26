@@ -364,7 +364,8 @@ impl RpcSettlementReader {
     }
 
     async fn rpc(&self, method: &str, params: serde_json::Value) -> Result<String, String> {
-        let body = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let body =
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let resp: serde_json::Value = self
             .http
             .post(&self.rpc_url)
@@ -387,7 +388,13 @@ impl RpcSettlementReader {
 
     /// `eth_call(to, selector(sig) ‖ uint256(job_id))`, returning word `word`
     /// of the return data as a `u128` (non-zero high bytes are an error).
-    async fn call_word(&self, to: &str, sig: &str, job_id: u128, word: usize) -> Result<u128, String> {
+    async fn call_word(
+        &self,
+        to: &str,
+        sig: &str,
+        job_id: u128,
+        word: usize,
+    ) -> Result<u128, String> {
         use sha3::{Digest, Keccak256};
         let sel = Keccak256::digest(sig.as_bytes());
         let mut data = sel[..4].to_vec();
@@ -411,7 +418,8 @@ impl RpcSettlementReader {
 impl SettlementReader for RpcSettlementReader {
     async fn head(&self) -> Result<u128, String> {
         let h = self.rpc("eth_blockNumber", serde_json::json!([])).await?;
-        u128::from_str_radix(h.trim_start_matches("0x"), 16).map_err(|e| format!("eth_blockNumber: {e}"))
+        u128::from_str_radix(h.trim_start_matches("0x"), 16)
+            .map_err(|e| format!("eth_blockNumber: {e}"))
     }
     async fn result_verified_at(&self, job_id: u128) -> Result<u128, String> {
         self.call_word(&self.marketplace, "resultVerifiedAt(uint256)", job_id, 0)
@@ -419,7 +427,12 @@ impl SettlementReader for RpcSettlementReader {
     }
     async fn dispute_resolved_for_provider(&self, job_id: u128) -> Result<bool, String> {
         Ok(self
-            .call_word(&self.marketplace, "disputeResolvedForProvider(uint256)", job_id, 0)
+            .call_word(
+                &self.marketplace,
+                "disputeResolvedForProvider(uint256)",
+                job_id,
+                0,
+            )
             .await?
             != 0)
     }
@@ -870,7 +883,6 @@ pub async fn run_once(
     gate: &dyn ConfirmationGate,
     settlement: &dyn SettlementReader,
 ) -> RelayTickReport {
-    let _ = settlement;
     let mut report = RelayTickReport::default();
 
     let requests = match queue.list_requests().await {
@@ -886,6 +898,20 @@ pub async fn run_once(
             Err(RejectReason::NotPending) => report.skipped_non_pending += 1,
             Err(reason) => report.rejected.push((req.id, reason)),
             Ok(vw) => {
+                // Settlement gate: never sign a job write the chain would
+                // reject this block (dispute window, reveal in the commitment
+                // block) or one for a tier the agent cannot prove.
+                match settlement_check(&vw, settlement).await {
+                    SettlementCheck::Ready => {}
+                    SettlementCheck::Defer(reason) => {
+                        report.deferred.push((vw.id, reason));
+                        continue;
+                    }
+                    SettlementCheck::Reject(reason) => {
+                        report.rejected.push((vw.id, reason));
+                        continue;
+                    }
+                }
                 // FUA-GUI-01 residual: privileged writes need an explicit
                 // per-write human confirmation; declined → refused, fail closed.
                 if requires_confirmation(&vw.intent, &vw.value_wei)
@@ -926,6 +952,71 @@ pub async fn run_once(
     }
 
     report
+}
+
+/// Outcome of the pre-sign settlement check for one validated write.
+#[derive(Debug, PartialEq, Eq)]
+enum SettlementCheck {
+    Ready,
+    Defer(DeferReason),
+    Reject(RejectReason),
+}
+
+/// Job-lifecycle writes are checked against chain state before signing:
+/// - every job write: the job's effective tier must be Commitment;
+/// - `submitResult`: the head must be past the commitment block;
+/// - `completeJob`: the dispute window after `resultVerifiedAt` must have
+///   elapsed, unless a dispute was resolved for the provider.
+///
+/// Any read failure defers (fail closed); nothing is signed on a guess.
+async fn settlement_check(vw: &ValidatedWrite, chain: &dyn SettlementReader) -> SettlementCheck {
+    let job_id = match vw.args {
+        DecodedArgs::JobId { job_id }
+        | DecodedArgs::Commitment { job_id, .. }
+        | DecodedArgs::Result { job_id, .. } => job_id,
+        // claimRewards / heartbeat / bidOnJob: no settlement precondition.
+        DecodedArgs::NoArgs | DecodedArgs::Bid { .. } => return SettlementCheck::Ready,
+    };
+    let read = async {
+        let tier = chain.effective_tier(job_id).await?;
+        if tier != 0 {
+            return Ok(SettlementCheck::Reject(RejectReason::UnsupportedTier {
+                intent: vw.intent.clone(),
+                tier,
+            }));
+        }
+        match vw.intent.as_str() {
+            "submitResult" => {
+                let head = chain.head().await?;
+                let commit_block = chain.commitment_block(job_id).await?;
+                if commit_block != 0 && head <= commit_block {
+                    return Ok(SettlementCheck::Defer(
+                        DeferReason::RevealAfterCommitBlock { commit_block },
+                    ));
+                }
+            }
+            "completeJob" => {
+                if !chain.dispute_resolved_for_provider(job_id).await? {
+                    let verified_at = chain.result_verified_at(job_id).await?;
+                    if verified_at == 0 {
+                        return Ok(SettlementCheck::Defer(DeferReason::AwaitingVerification));
+                    }
+                    let ready_at_block = verified_at.saturating_add(DISPUTE_WINDOW_BLOCKS);
+                    if chain.head().await? < ready_at_block {
+                        return Ok(SettlementCheck::Defer(DeferReason::DisputeWindow {
+                            ready_at_block,
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok::<_, String>(SettlementCheck::Ready)
+    };
+    match read.await {
+        Ok(c) => c,
+        Err(e) => SettlementCheck::Defer(DeferReason::ChainRead(e)),
+    }
 }
 
 // ── service (owns the opt-in toggle + config; the UI loop drives ticks) ───────
@@ -1486,13 +1577,22 @@ mod tests {
             let r = one(
                 "completeJob",
                 SEL_COMPLETE_JOB,
-                ReadyChain { head, verified_at: 150, ..ReadyChain::default() },
+                ReadyChain {
+                    head,
+                    verified_at: 150,
+                    ..ReadyChain::default()
+                },
             )
             .await;
             assert!(r.signed.is_empty(), "head {head}");
             assert_eq!(
                 r.deferred,
-                vec![(7, DeferReason::DisputeWindow { ready_at_block: 250 })],
+                vec![(
+                    7,
+                    DeferReason::DisputeWindow {
+                        ready_at_block: 250
+                    }
+                )],
                 "head {head}"
             );
         }
@@ -1503,7 +1603,11 @@ mod tests {
         let r = one(
             "completeJob",
             SEL_COMPLETE_JOB,
-            ReadyChain { head: 250, verified_at: 150, ..ReadyChain::default() },
+            ReadyChain {
+                head: 250,
+                verified_at: 150,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert_eq!(r.signed.len(), 1);
@@ -1515,14 +1619,21 @@ mod tests {
         let r = one(
             "completeJob",
             SEL_COMPLETE_JOB,
-            ReadyChain { verified_at: 0, ..ReadyChain::default() },
+            ReadyChain {
+                verified_at: 0,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert_eq!(r.deferred, vec![(7, DeferReason::AwaitingVerification)]);
         let r = one(
             "completeJob",
             SEL_COMPLETE_JOB,
-            ReadyChain { verified_at: 0, resolved: true, ..ReadyChain::default() },
+            ReadyChain {
+                verified_at: 0,
+                resolved: true,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert_eq!(r.signed.len(), 1);
@@ -1533,7 +1644,11 @@ mod tests {
         let r = one(
             "submitResult",
             SEL_SUBMIT_RESULT,
-            ReadyChain { head: 50, commit_block: 50, ..ReadyChain::default() },
+            ReadyChain {
+                head: 50,
+                commit_block: 50,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert!(r.signed.is_empty());
@@ -1544,7 +1659,11 @@ mod tests {
         let r = one(
             "submitResult",
             SEL_SUBMIT_RESULT,
-            ReadyChain { head: 51, commit_block: 50, ..ReadyChain::default() },
+            ReadyChain {
+                head: 51,
+                commit_block: 50,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert_eq!(r.signed.len(), 1);
@@ -1559,11 +1678,25 @@ mod tests {
             ("completeJob", SEL_COMPLETE_JOB),
         ] {
             for tier in [1u8, 2] {
-                let r = one(intent, sel, ReadyChain { tier, ..ReadyChain::default() }).await;
+                let r = one(
+                    intent,
+                    sel,
+                    ReadyChain {
+                        tier,
+                        ..ReadyChain::default()
+                    },
+                )
+                .await;
                 assert!(r.signed.is_empty(), "{intent} tier {tier}");
                 assert_eq!(
                     r.rejected,
-                    vec![(7, RejectReason::UnsupportedTier { intent: intent.into(), tier })],
+                    vec![(
+                        7,
+                        RejectReason::UnsupportedTier {
+                            intent: intent.into(),
+                            tier
+                        }
+                    )],
                     "{intent} tier {tier}"
                 );
             }
@@ -1575,11 +1708,17 @@ mod tests {
         let r = one(
             "completeJob",
             SEL_COMPLETE_JOB,
-            ReadyChain { fail: true, ..ReadyChain::default() },
+            ReadyChain {
+                fail: true,
+                ..ReadyChain::default()
+            },
         )
         .await;
         assert!(r.signed.is_empty());
-        assert!(matches!(r.deferred.as_slice(), [(7, DeferReason::ChainRead(_))]));
+        assert!(matches!(
+            r.deferred.as_slice(),
+            [(7, DeferReason::ChainRead(_))]
+        ));
     }
 
     #[tokio::test]
@@ -1589,7 +1728,11 @@ mod tests {
             req(8, "heartbeat", HEARTBEAT_MONITOR, "0", SEL_HEARTBEAT),
         ]);
         let s = MockSigner::new(true);
-        let chain = ReadyChain { head: 200, verified_at: 150, ..ReadyChain::default() };
+        let chain = ReadyChain {
+            head: 200,
+            verified_at: 150,
+            ..ReadyChain::default()
+        };
         let r = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &chain).await;
         assert_eq!(r.deferred.len(), 1);
         assert_eq!(r.signed.len(), 1);
@@ -1632,7 +1775,15 @@ mod tests {
             SEL_SUBMIT_RESULT,
         )]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
 
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 7);
@@ -1658,7 +1809,15 @@ mod tests {
             SEL_SUBMIT_RESULT,
         )]);
         let s = MockSigner::new(false); // broadcast fails
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
 
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
@@ -1680,7 +1839,15 @@ mod tests {
         let good = req(3, "claimRewards", ACCOUNTING, "0", SEL_CLAIM_REWARDS);
         let q = MockQueue::new(vec![submitted, bad_to, good]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
 
         assert_eq!(report.skipped_non_pending, 1);
         assert_eq!(report.rejected.len(), 1);
@@ -1699,7 +1866,15 @@ mod tests {
             req(2, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT),
         ]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
         // Only the first valid write is signed (nonce safety); #2 waits for next tick.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.signed[0].id, 1);
@@ -1717,7 +1892,15 @@ mod tests {
         )]);
         q.fail_observe = true;
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
         // The tx was broadcast (signed recorded) even though observe POST failed.
         assert_eq!(report.signed.len(), 1);
         assert_eq!(report.errors.len(), 1);
@@ -1749,7 +1932,14 @@ mod tests {
         let s = MockSigner::new(true);
         // Even unlocked, a disabled relay signs nothing.
         assert!(svc
-            .tick(&s, FROM, &q, true, &MockGate::new(true), &ReadyChain::default())
+            .tick(
+                &s,
+                FROM,
+                &q,
+                true,
+                &MockGate::new(true),
+                &ReadyChain::default()
+            )
             .await
             .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
@@ -1769,7 +1959,14 @@ mod tests {
         let s = MockSigner::new(true);
         // Enabled but locked → nothing signed (never auto-unlocks).
         assert!(svc
-            .tick(&s, FROM, &q, false, &MockGate::new(true), &ReadyChain::default())
+            .tick(
+                &s,
+                FROM,
+                &q,
+                false,
+                &MockGate::new(true),
+                &ReadyChain::default()
+            )
             .await
             .is_none());
         assert!(s.calls.lock().unwrap().is_empty());
@@ -1788,7 +1985,14 @@ mod tests {
         )]);
         let s = MockSigner::new(true);
         let report = svc
-            .tick(&s, FROM, &q, true, &MockGate::new(true), &ReadyChain::default())
+            .tick(
+                &s,
+                FROM,
+                &q,
+                true,
+                &MockGate::new(true),
+                &ReadyChain::default(),
+            )
             .await
             .expect("should run");
         assert_eq!(report.signed.len(), 1);
@@ -2020,7 +2224,15 @@ mod tests {
             SEL_CLAIM_REWARDS,
         )]);
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &q, &validator(), &DenyAllConfirmations, &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &q,
+            &validator(),
+            &DenyAllConfirmations,
+            &ReadyChain::default(),
+        )
+        .await;
         assert!(report.signed.is_empty());
         assert!(matches!(
             report.rejected.as_slice(),
@@ -2041,7 +2253,15 @@ mod tests {
             }
         }
         let s = MockSigner::new(true);
-        let report = run_once(&s, FROM, &DeadQueue, &validator(), &MockGate::new(true), &ReadyChain::default()).await;
+        let report = run_once(
+            &s,
+            FROM,
+            &DeadQueue,
+            &validator(),
+            &MockGate::new(true),
+            &ReadyChain::default(),
+        )
+        .await;
         assert!(report.signed.is_empty());
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("list requests"));
