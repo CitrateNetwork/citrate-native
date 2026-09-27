@@ -1,0 +1,73 @@
+name: merge-gate
+
+# Real producer for the required status check `secret-scan`
+# (2026-09-24 pre-bounty audit, WP R1.3 / PBA-L7-001). Before this file no job
+# in this repo carried that name, so no PR could satisfy branch protection and
+# every merge used the admin bypass. Mirrors the secret-scan job shipped in
+# every other CitrateNetwork repo.
+#
+#   secret-scan  gitleaks (version + checksum pinned) over the commits this
+#                change introduces, plus the canonical-slug tripwire if present.
+#
+# The `ci` required check is produced by this repo's own .github/workflows/ci.yml,
+# so merge-gate carries ONLY secret-scan here to avoid duplicating that job.
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  merge_group: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (version + checksum pinned)
+        env:
+          GL_VERSION: 8.30.1
+          GL_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/${tarball}"
+          echo "${GL_SHA256}  $RUNNER_TEMP/${tarball}" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+
+      - name: Scan the commits this change introduces
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          MQ_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+          case "$EVENT" in
+            pull_request) range="$PR_BASE..HEAD" ;;
+            merge_group)  range="$MQ_BASE..HEAD" ;;
+            *) if [ -n "$PUSH_BEFORE" ] && [ "$PUSH_BEFORE" != "$zero" ]; then range="$PUSH_BEFORE..HEAD"; else range="HEAD~1..HEAD"; fi ;;
+          esac
+          cfg=()
+          if [ -f .gitleaks.toml ]; then cfg=(--config .gitleaks.toml); fi
+          "$RUNNER_TEMP/gitleaks" git . "${cfg[@]}" --log-opts="$range" --redact --no-banner
+
+      - name: Canonical GitHub slugs (if the repo carries the tripwire)
+        run: |
+          set -euo pipefail
+          if [ -f scripts/check-canonical-slugs.sh ]; then bash scripts/check-canonical-slugs.sh .; fi
+          if [ -f scripts/tests/test_canonical_github_slugs.sh ]; then bash scripts/tests/test_canonical_github_slugs.sh .; fi
