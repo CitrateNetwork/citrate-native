@@ -20,13 +20,14 @@ use sha3::{Digest, Keccak256};
 
 /// Canonical chain-40204 AA addresses.
 /// Source: citrate-chain `contracts/addresses/40204.json` → `aaStack`
-/// (CREATE2 deterministic, reroll-stable; commits df62052/6d4f308).
+/// (r1005 reroll, chain main 2979a157). Cross-checked against the vendored
+/// book by `aa_constants_match_the_vendored_book` below.
 pub mod addresses {
     pub const CHAIN_ID: u64 = 40204;
     pub const ENTRY_POINT: &str = "0x97d5391a647429233e202f99231743c53a648f3c";
-    pub const FACTORY: &str = "0x86486d1de9f256e2cba327c46ac11120df0aa51a";
+    pub const FACTORY: &str = "0x9ac05ad65c9e8e48fbb41dde029512afa5346c85";
     pub const WALLET_IMPL: &str = "0x2d742b98d867fc7363f530dd6d756622e4eb768d";
-    pub const PAYMASTER: &str = "0xfdc9f7a72163b5d45becdb8a9d8d44b970f77318";
+    pub const PAYMASTER: &str = "0x804a8021cc1212798180bc9330f6467f883c392c";
     pub const ECDSA_VALIDATOR: &str = "0xd2d35421379ae5b461e216bfcdd1b7e6a64bbc40";
     pub const WEBAUTHN_VALIDATOR: &str = "0x0f421a99a0b8f6138dea12f45a523cb896d09fc7";
     pub const GUARDIAN_RECOVERY: &str = "0x0a909769160c1945401b8f37a9310d37dbb6a891";
@@ -408,15 +409,14 @@ mod tests {
         user1.copy_from_slice(&hex::decode("11".repeat(32)).expect("hex"));
         let got = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &user1)
             .expect("prediction");
-        // Recomputed from the canonical chain-40204 aaStack
-        // (contracts/addresses/40204.json: CitrateWalletFactory +
-        // CitrateWallet impl). CREATE2 predictAddress(0x1111…11).
-        assert_eq!(got, "0x6331ad20e9f61414ddd3c840401a53604a45cf5e");
+        // LIVE r1005 factory predictAddress(bytes32) via eth_call on
+        // rpc.citrate.ai (2026-10-11); matches this local CREATE2 math.
+        assert_eq!(got, "0x21fd7a655a1f90255a88c7bb0ffde3dbe545ea2c");
 
         let uuid_id = uuid_to_user_id(UUID).expect("uuid");
         let got2 = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &uuid_id)
             .expect("prediction");
-        assert_eq!(got2, "0x6aad46a5b4c3a4390e398cffd0f4f0f6e934b2a0");
+        assert_eq!(got2, "0xfacd833cda3040e4230f53a678efc5c2b13ad8e4");
     }
 
     #[test]
@@ -478,7 +478,7 @@ mod tests {
     fn user_op_hash_matches_the_live_entrypoint() {
         let op = PackedUserOp {
             // The factory prediction for user1 (see test above).
-            sender: "0x6331ad20e9f61414ddd3c840401a53604a45cf5e",
+            sender: "0x21fd7a655a1f90255a88c7bb0ffde3dbe545ea2c",
             nonce: 0,
             init_code: &[],
             call_data: &hex::decode("deadbeef").expect("hex"),
@@ -488,13 +488,37 @@ mod tests {
             paymaster_and_data: &[],
         };
         let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID).expect("hash");
-        // Recomputed against the canonical chain-40204 EntryPoint
-        // (contracts/addresses/40204.json: aaStack.EntryPoint) with the
-        // ERC-4337 v0.7 getUserOpHash packing (domain = entryPoint+chainId).
+        // LIVE r1005 EntryPoint getUserOpHash via eth_call on
+        // rpc.citrate.ai (2026-10-11), ERC-4337 v0.7 packing.
         assert_eq!(
             expect_hex(&h),
-            "541c82130fbc0bf12720ead4caa6e46f684394acdd3455bc1ad1ca7dae91b49f"
+            "7dc743c3db64ec58540dd3099ee59ffff84ec90a413d4d62f5fa3df85d8a352b"
         );
+    }
+
+    /// The constants above must equal the vendored canonical book's aaStack
+    /// (`gui/citrate_native/src/generated/addresses.json`, refreshed by
+    /// `scripts/sync-addresses.sh`), so a reroll cannot leave them stale.
+    #[test]
+    fn aa_constants_match_the_vendored_book() {
+        let book: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../citrate_native/src/generated/addresses.json"
+        ))
+        .expect("vendored book parses");
+        assert_eq!(book["chainId"].as_u64(), Some(addresses::CHAIN_ID));
+        let aa = &book["aaStack"];
+        for (name, ours) in [
+            ("EntryPoint", addresses::ENTRY_POINT),
+            ("CitrateWalletFactory", addresses::FACTORY),
+            ("CitrateWallet", addresses::WALLET_IMPL),
+            ("CitratePaymaster", addresses::PAYMASTER),
+            ("CitrateECDSAValidator", addresses::ECDSA_VALIDATOR),
+            ("WebAuthnP256Validator", addresses::WEBAUTHN_VALIDATOR),
+            ("GuardianRecoveryModule", addresses::GUARDIAN_RECOVERY),
+        ] {
+            let canon = aa[name].as_str().unwrap_or_default().to_lowercase();
+            assert_eq!(canon, ours, "{name} drifted from the vendored book");
+        }
     }
 
     #[test]
