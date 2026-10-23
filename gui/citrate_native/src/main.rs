@@ -623,6 +623,166 @@ mod rm_q_gui_tests {
             "CITRATE_CMO_E2E_* overrides must be debug-gated (NAT-B-015)"
         );
     }
+
+    // ── Handler-level pins (call sites inside `main()` closures) ─────────
+    //
+    // The UI callbacks are closures inside `main()`, so they cannot be driven
+    // without a window. These pin each guard at its call site in the
+    // production source, by EXACT trimmed line (a `false && <guard>` edit or a
+    // removed line fails), inside the handler's own region, and before the
+    // action it protects. Each has a negative control on the bad shape.
+
+    /// The text of one handler: from `start` up to the next `ui.on_`
+    /// registration (or `max` bytes).
+    fn handler_region<'a>(src: &'a str, start: &str, max: usize) -> &'a str {
+        let at = src
+            .find(start)
+            .unwrap_or_else(|| panic!("handler marker {start:?} present"));
+        let rest = &src[at + start.len()..];
+        let end = rest.find("\n    ui.on_").unwrap_or(rest.len()).min(max);
+        &src[at..at + start.len() + end]
+    }
+
+    /// Byte offset of the first line whose trimmed text is exactly `line`.
+    fn exact_line(region: &str, line: &str) -> Option<usize> {
+        let mut off = 0;
+        for l in region.split_inclusive('\n') {
+            if l.trim() == line {
+                return Some(off);
+            }
+            off += l.len();
+        }
+        None
+    }
+
+    /// `guard` is an exact line in `region` and comes before `action`.
+    fn guard_before(region: &str, guard: &str, action: &str) -> bool {
+        match (exact_line(region, guard), region.find(action)) {
+            (Some(g), Some(a)) => g < a,
+            _ => false,
+        }
+    }
+
+    const SEND: &str = "ui.on_wallet_send(move |to, amount, password| {";
+    const SEND_CALL: &str = ".send_transaction(&from_addr, &to_str, &wei_str, &pwd_str)";
+
+    #[test]
+    fn send_handler_requires_a_password_before_signing() {
+        let src = production_source();
+        let r = handler_region(&src, SEND, 20_000);
+        assert!(
+            guard_before(r, "if pwd_str.is_empty() {", SEND_CALL),
+            "the send dialog must refuse an empty password before signing"
+        );
+        let bad = format!("{SEND}\n        if false && pwd_str.is_empty() {{\n        {SEND_CALL}");
+        assert!(!guard_before(&bad, "if pwd_str.is_empty() {", SEND_CALL));
+    }
+
+    #[test]
+    fn send_handler_validates_the_recipient_before_signing() {
+        let src = production_source();
+        let r = handler_region(&src, SEND, 20_000);
+        let guard = "let to_str = match validate_recipient_address(&to_str) {";
+        assert!(
+            guard_before(r, guard, SEND_CALL),
+            "the send dialog must validate the recipient before signing"
+        );
+        let bad = format!("{SEND}\n        let to_str = to_str.clone();\n        {SEND_CALL}");
+        assert!(!guard_before(&bad, guard, SEND_CALL));
+    }
+
+    #[test]
+    fn send_handler_disables_the_button_before_the_send_starts() {
+        let src = production_source();
+        let r = handler_region(&src, SEND, 20_000);
+        assert!(
+            guard_before(r, "ui.set_send_sending(true);", SEND_CALL),
+            "send-sending must be set before the async send"
+        );
+        assert!(
+            exact_line(r, "ui.set_send_sending(false);").is_some(),
+            "send-sending must be cleared when the send settles"
+        );
+        let bad = format!("{SEND}\n        ui.set_send_sending(false);\n        {SEND_CALL}");
+        assert!(!guard_before(&bad, "ui.set_send_sending(true);", SEND_CALL));
+    }
+
+    #[test]
+    fn unlock_handler_marks_unlocking_before_the_attempt() {
+        let src = production_source();
+        let r = handler_region(&src, "ui.on_unlock_wallet(move |password| {", 20_000);
+        let attempt = "core.wallet.unlock(&addr, &pwd)";
+        assert!(
+            guard_before(r, "ui.set_lock_unlocking(true);", attempt),
+            "lock-unlocking must be set before the unlock attempt"
+        );
+        assert!(exact_line(r, "ui.set_lock_unlocking(false);").is_some());
+        assert!(exact_line(r, "ui.set_lock_locked_out(locked_out);").is_some());
+        let bad = format!("x\n        ui.set_lock_locked_out(false);\n        {attempt}");
+        assert!(!guard_before(&bad, "ui.set_lock_unlocking(true);", attempt));
+    }
+
+    #[test]
+    fn mnemonic_verify_failure_log_carries_no_seed_material() {
+        let src = production_source();
+        let at = src
+            .find("Mnemonic verification failed")
+            .expect("verify-failure log present");
+        let line_start = src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_end = src[at..].find('\n').map(|i| at + i).unwrap_or(src.len());
+        let line = &src[line_start..line_end];
+        fn leaks(l: &str) -> bool {
+            l.contains("expected") || l.contains("input_str") || l.contains("words[")
+        }
+        assert!(
+            !leaks(line),
+            "the verify-failure log must not print seed words: {line}"
+        );
+        assert!(leaks(
+            "tracing::warn!(\"... expected word #{} '{}', got '{}'\", word_num, expected, input_str);"
+        ));
+    }
+
+    #[test]
+    fn faucet_handler_is_testnet_only_and_funds_the_selected_account() {
+        let src = production_source();
+        let r = handler_region(&src, "ui.on_wallet_request_faucet(move || {", 20_000);
+        let post = ".post(\"https://faucet.citrate.ai/faucet\")";
+        assert!(
+            guard_before(r, "if network != \"testnet\" {", post),
+            "the faucet must refuse off testnet before posting"
+        );
+        assert!(
+            guard_before(r, "let address = if !selected_addr.is_empty() {", post),
+            "the faucet must prefer the selected account"
+        );
+        let bad = format!("x\n            if false && network != \"testnet\" {{\n{post}");
+        assert!(!guard_before(&bad, "if network != \"testnet\" {", post));
+    }
+
+    #[test]
+    fn chat_send_plan_resolves_the_selected_account_and_validates_the_recipient() {
+        let src = production_source();
+        let at = src
+            .find("let send_plan: Option<(String, String)> = if tool_name == \"send_tx\" {")
+            .expect("send_tx plan construction present");
+        let plan = &src[at..(at + 900).min(src.len())];
+        fn plan_ok(p: &str) -> bool {
+            exact_line(p, "let to = validate_recipient_address(to_raw)?;").is_some()
+                && exact_line(
+                    p,
+                    "let from = resolve_chat_send_from(&selected_from, &accounts)?;",
+                )
+                .is_some()
+                && !p.contains("accounts.first()")
+        }
+        assert!(
+            plan_ok(plan),
+            "the chat send plan must use the selected account"
+        );
+        let bad = "let to = to_raw.to_string();\nlet from = accounts.first().cloned();\n";
+        assert!(!plan_ok(bad));
+    }
 }
 
 /// NATIVE-R1-S2 WP-A5: session-timeout unification regression tests.
