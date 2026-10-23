@@ -2218,7 +2218,10 @@ mod tests {
             .find(&["#[cfg(test)]\nmod ", "encryption_tests {"].concat())
             .expect("first test module header present");
         let prod = &src[..cut];
-        assert!(connect_ok(prod), "a pinned bootnode must connect via connect_to_trusted");
+        assert!(
+            connect_ok(prod),
+            "a pinned bootnode must connect via connect_to_trusted"
+        );
         let pre_fix = [
             "let connect_result = match &pinned_identity {\n",
             "    Some(_expected_id) => transport.connect_to(addr).await,\n",
@@ -2226,6 +2229,9 @@ mod tests {
             "};\n",
         ]
         .concat();
-        assert!(!connect_ok(&pre_fix), "negative control: a dropped pin is flagged");
+        assert!(
+            !connect_ok(&pre_fix),
+            "negative control: a dropped pin is flagged"
+        );
     }
 }

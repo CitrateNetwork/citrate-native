@@ -947,9 +947,8 @@ impl WalletService {
     /// caller outside this module can drive the stale-session path.
     #[cfg(test)]
     pub(crate) async fn expire_reauth_window_for_test(&self) {
-        *self.last_unlock_at.write().await = Some(
-            Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5),
-        );
+        *self.last_unlock_at.write().await =
+            Some(Instant::now() - std::time::Duration::from_secs(RE_AUTH_FRESHNESS_SECS + 5));
     }
 
     async fn enforce_value_reauth(&self, value_wei: &str) -> Result<(), AppError> {

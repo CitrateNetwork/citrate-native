@@ -1249,6 +1249,9 @@ mod tests {
             "let node_rpc = Arc::new(RpcChatBackend::new(&rpc_url));\n",
         ]
         .concat();
-        assert!(!wiring_ok(&pre_fix), "negative control: an unconditional fallback is flagged");
+        assert!(
+            !wiring_ok(&pre_fix),
+            "negative control: an unconditional fallback is flagged"
+        );
     }
 }

@@ -1331,7 +1331,10 @@ mod tests {
         // Control: with a fresh unlock the same send reaches the bundler, so
         // the refusal below is the re-auth gate and not a broken fixture.
         let ok = svc.send_sponsored(&recipient(), huge, Vec::new()).await;
-        assert!(ok.is_ok(), "fresh-session sponsored send should go through: {ok:?}");
+        assert!(
+            ok.is_ok(),
+            "fresh-session sponsored send should go through: {ok:?}"
+        );
         assert!(
             seen.lock()
                 .expect("stub log")
@@ -1364,10 +1367,9 @@ mod tests {
     async fn send_sponsored_refuses_off_the_aa_chain() {
         let (svc, _wallet, seen, _dir) = sponsored_fixture(1).await;
         match svc.send_sponsored(&recipient(), 1, Vec::new()).await {
-            Err(AppError::Wallet(msg)) => assert!(
-                msg.contains("only available on chain"),
-                "msg = {msg}"
-            ),
+            Err(AppError::Wallet(msg)) => {
+                assert!(msg.contains("only available on chain"), "msg = {msg}")
+            }
             other => panic!("sponsored send on chain 1 must be refused, got {other:?}"),
         }
         assert!(
@@ -1378,7 +1380,10 @@ mod tests {
 
         // Control: the same fixture on the AA chain goes through.
         let (svc, _wallet, _seen, _dir2) = sponsored_fixture(addresses::CHAIN_ID).await;
-        assert!(svc.send_sponsored(&recipient(), 1, Vec::new()).await.is_ok());
+        assert!(svc
+            .send_sponsored(&recipient(), 1, Vec::new())
+            .await
+            .is_ok());
     }
 
     /// `CitrateLinkService::new` is where the `CITRATE_AUTH_URL` /
@@ -1404,7 +1409,10 @@ mod tests {
         let saved_bundler = std::env::var("CITRATE_BUNDLER_URL").ok();
 
         std::env::set_var("CITRATE_AUTH_URL", "http://auth.example");
-        std::env::set_var("CITRATE_BUNDLER_URL", "http://127.0.0.1@bundler.example/rpc");
+        std::env::set_var(
+            "CITRATE_BUNDLER_URL",
+            "http://127.0.0.1@bundler.example/rpc",
+        );
         let svc = build();
         let refused = (svc.auth_url.clone(), svc.bundler_url.clone());
 
@@ -1422,8 +1430,14 @@ mod tests {
             None => std::env::remove_var("CITRATE_BUNDLER_URL"),
         }
 
-        assert_eq!(refused.0, DEFAULT_AUTH_URL, "plaintext remote auth URL must not be honored");
-        assert_eq!(refused.1, DEFAULT_BUNDLER_URL, "userinfo bundler URL must not be honored");
+        assert_eq!(
+            refused.0, DEFAULT_AUTH_URL,
+            "plaintext remote auth URL must not be honored"
+        );
+        assert_eq!(
+            refused.1, DEFAULT_BUNDLER_URL,
+            "userinfo bundler URL must not be honored"
+        );
         assert_eq!(honored.0, "http://127.0.0.1:8080");
         assert_eq!(honored.1, "https://bundler.example/rpc");
     }

@@ -1749,14 +1749,24 @@ mod tests {
 
         let mut with_origin = HeaderMap::new();
         with_origin.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
-        with_origin.insert(header::ORIGIN, HeaderValue::from_static("http://rebind.example"));
+        with_origin.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://rebind.example"),
+        );
         let v = call(&host, with_origin).await;
         assert_eq!(code(&v), Some(-32600), "Origin must be refused: {v}");
 
         let mut foreign_host = HeaderMap::new();
-        foreign_host.insert(header::HOST, HeaderValue::from_static("rebind.example:9600"));
+        foreign_host.insert(
+            header::HOST,
+            HeaderValue::from_static("rebind.example:9600"),
+        );
         let v = call(&host, foreign_host).await;
-        assert_eq!(code(&v), Some(-32600), "non-loopback Host must be refused: {v}");
+        assert_eq!(
+            code(&v),
+            Some(-32600),
+            "non-loopback Host must be refused: {v}"
+        );
 
         assert!(
             host.mcp.snapshot_grants().await.is_empty(),
@@ -1767,7 +1777,10 @@ mod tests {
         let mut local = HeaderMap::new();
         local.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
         let v = call(&host, local).await;
-        assert!(v["error"].is_null(), "loopback initialize must succeed: {v}");
+        assert!(
+            v["error"].is_null(),
+            "loopback initialize must succeed: {v}"
+        );
         assert_eq!(host.mcp.snapshot_grants().await.len(), 1);
     }
 
@@ -1811,7 +1824,10 @@ mod tests {
             serde_json::json!({ "grant_id": grant_id, "auth_token": near }),
         )
         .await;
-        assert!(end.0.error.is_some(), "a near-miss token must not end the grant");
+        assert!(
+            end.0.error.is_some(),
+            "a near-miss token must not end the grant"
+        );
         assert_eq!(host.list_active_grants().await.len(), 1);
 
         // Control: the real owner token ends it.
