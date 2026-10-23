@@ -1152,4 +1152,279 @@ mod tests {
         let page = client.await.expect("client task");
         assert!(page.contains("return to Citrate Native"));
     }
+
+    // ── send_sponsored entry-point pins ─────────────────────────────────
+    //
+    // The helpers (`sponsored_chain_supported`, the re-auth gate inside
+    // `WalletService::sign_digest_recoverable`) have their own unit tests.
+    // These drive `send_sponsored` itself, against a loopback JSON-RPC stub
+    // standing in for both the chain RPC and the bundler, so a regression at
+    // the call site (dropping the chain guard, or passing a dummy value to the
+    // signer) is caught. No external network: every URL is 127.0.0.1.
+
+    use crate::services::wallet_service::{TestWalletBackend, RE_AUTH_THRESHOLD_WEI};
+    use std::sync::Mutex as StdMutex;
+
+    /// A minimal HTTP/1.1 JSON-RPC stub: answers every POST with
+    /// `{"result":"0x0"}` and records the `method` of each request.
+    async fn spawn_rpc_stub() -> (String, Arc<StdMutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let seen_task = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = seen_task.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    // Read headers, then exactly Content-Length body bytes.
+                    let body = loop {
+                        let n = match sock.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => n,
+                        };
+                        buf.extend_from_slice(&chunk[..n]);
+                        let Some(hdr_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                            continue;
+                        };
+                        let head = String::from_utf8_lossy(&buf[..hdr_end]).to_ascii_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if buf.len() >= hdr_end + 4 + len {
+                            break buf[hdr_end + 4..hdr_end + 4 + len].to_vec();
+                        }
+                    };
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
+                        if let Some(m) = v.get("method").and_then(|m| m.as_str()) {
+                            seen.lock().expect("stub log").push(m.to_string());
+                        }
+                    }
+                    let reply = br#"{"jsonrpc":"2.0","id":1,"result":"0x0"}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        reply.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.write_all(reply).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        (url, seen)
+    }
+
+    /// A test backend that signs like `TestWalletBackend` but reports a
+    /// configurable active chain id (an environment switch).
+    struct ChainBackend(u64);
+
+    #[async_trait::async_trait]
+    impl crate::services::wallet_service::WalletBackend for ChainBackend {
+        async fn load_accounts(
+            &self,
+        ) -> Result<Vec<crate::services::wallet_service::Account>, AppError> {
+            TestWalletBackend.load_accounts().await
+        }
+        async fn create_wallet(
+            &self,
+            password: &str,
+            label: &str,
+        ) -> Result<crate::services::wallet_service::CreateAccountResult, AppError> {
+            TestWalletBackend.create_wallet(password, label).await
+        }
+        async fn unlock(&self, address: &str, password: &str) -> Result<bool, AppError> {
+            TestWalletBackend.unlock(address, password).await
+        }
+        async fn lock(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+        async fn send_transaction(
+            &self,
+            from: &str,
+            to: &str,
+            value: &str,
+            password: &str,
+        ) -> Result<String, AppError> {
+            TestWalletBackend
+                .send_transaction(from, to, value, password)
+                .await
+        }
+        fn get_chain_id(&self) -> u64 {
+            self.0
+        }
+        async fn sign_digest_recoverable(
+            &self,
+            address: &str,
+            digest: [u8; 32],
+        ) -> Result<[u8; 65], AppError> {
+            TestWalletBackend
+                .sign_digest_recoverable(address, digest)
+                .await
+        }
+    }
+
+    const LINKED_EOA: &str = "0xabc";
+
+    /// A linked, enrolled smart wallet whose RPC + bundler are the stub.
+    async fn sponsored_fixture(
+        chain_id: u64,
+    ) -> (
+        CitrateLinkService,
+        Arc<WalletService>,
+        Arc<StdMutex<Vec<String>>>,
+        tempfile::TempDir,
+    ) {
+        let (stub, seen) = spawn_rpc_stub().await;
+        let events = Arc::new(crate::event_bus::EventBus::new());
+        let wallet = Arc::new(WalletService::with_backend(
+            events,
+            Arc::new(ChainBackend(chain_id)),
+        ));
+        wallet.set_rpc_url(&stub);
+        wallet
+            .unlock(LINKED_EOA, "password123")
+            .await
+            .expect("unlock");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link_path = dir.path().join("citrate_link.json");
+        let link = CitrateLink {
+            sub: "sub-1".to_string(),
+            user_id_hex: format!("0x{}", "11".repeat(32)),
+            smart_wallet: format!("0x{}", "22".repeat(20)),
+            eoa: LINKED_EOA.to_string(),
+            deployed: true,
+            pending_root_enroll: false,
+            linked_at: "2026-10-22T00:00:00Z".to_string(),
+            kyc_status: String::new(),
+            tier: default_tier(),
+            citrate_role: None,
+        };
+        let svc = CitrateLinkService {
+            wallet: wallet.clone(),
+            http: reqwest::Client::new(),
+            auth_url: stub.clone(),
+            bundler_url: stub,
+            link_path,
+        };
+        svc.save_link(&link).expect("save link");
+        (svc, wallet, seen, dir)
+    }
+
+    fn recipient() -> String {
+        format!("0x{}", "33".repeat(20))
+    }
+
+    /// `send_sponsored` must hand the REAL transfer value to the signer, so
+    /// the signer's high-value re-auth gate sees it. A stale session sending
+    /// 1000x the threshold is refused before anything reaches the bundler.
+    #[tokio::test]
+    async fn send_sponsored_passes_the_real_value_to_the_reauth_gate() {
+        let (svc, wallet, seen, _dir) = sponsored_fixture(addresses::CHAIN_ID).await;
+        let huge = RE_AUTH_THRESHOLD_WEI * 1000;
+
+        // Control: with a fresh unlock the same send reaches the bundler, so
+        // the refusal below is the re-auth gate and not a broken fixture.
+        let ok = svc.send_sponsored(&recipient(), huge, Vec::new()).await;
+        assert!(ok.is_ok(), "fresh-session sponsored send should go through: {ok:?}");
+        assert!(
+            seen.lock()
+                .expect("stub log")
+                .iter()
+                .any(|m| m == "eth_sendUserOperation"),
+            "the control send must reach the bundler"
+        );
+        seen.lock().expect("stub log").clear();
+
+        wallet.expire_reauth_window_for_test().await;
+        match svc.send_sponsored(&recipient(), huge, Vec::new()).await {
+            Err(AppError::Wallet(msg)) => {
+                assert!(msg.contains("Re-authentication"), "msg = {msg}")
+            }
+            other => panic!("stale high-value sponsored send must need re-auth, got {other:?}"),
+        }
+        assert!(
+            !seen
+                .lock()
+                .expect("stub log")
+                .iter()
+                .any(|m| m == "eth_sendUserOperation"),
+            "a refused send must not reach the bundler"
+        );
+    }
+
+    /// After an environment switch to another chain id, `send_sponsored`
+    /// refuses before touching the RPC or the signer.
+    #[tokio::test]
+    async fn send_sponsored_refuses_off_the_aa_chain() {
+        let (svc, _wallet, seen, _dir) = sponsored_fixture(1).await;
+        match svc.send_sponsored(&recipient(), 1, Vec::new()).await {
+            Err(AppError::Wallet(msg)) => assert!(
+                msg.contains("only available on chain"),
+                "msg = {msg}"
+            ),
+            other => panic!("sponsored send on chain 1 must be refused, got {other:?}"),
+        }
+        assert!(
+            seen.lock().expect("stub log").is_empty(),
+            "nothing may be sent to the RPC/bundler off the AA chain: {:?}",
+            seen.lock().expect("stub log")
+        );
+
+        // Control: the same fixture on the AA chain goes through.
+        let (svc, _wallet, _seen, _dir2) = sponsored_fixture(addresses::CHAIN_ID).await;
+        assert!(svc.send_sponsored(&recipient(), 1, Vec::new()).await.is_ok());
+    }
+
+    /// `CitrateLinkService::new` is where the `CITRATE_AUTH_URL` /
+    /// `CITRATE_BUNDLER_URL` overrides enter. A plaintext non-loopback
+    /// override must fall back to the default; an https or loopback one is
+    /// honored (control). `is_acceptable_authority_url` has its own test;
+    /// this pins that the constructor applies it.
+    ///
+    /// Only the env values the constructor reads are touched, and they are
+    /// restored before returning. Rejected values fall back to the default,
+    /// so a concurrent `new()` elsewhere in this binary sees the default too.
+    #[test]
+    fn new_applies_the_authority_url_policy_to_env_overrides() {
+        let events = Arc::new(crate::event_bus::EventBus::new());
+        let wallet = Arc::new(WalletService::with_backend(
+            events,
+            Arc::new(crate::services::wallet_service::TestWalletBackend),
+        ));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let build = || CitrateLinkService::new(wallet.clone(), dir.path().join("link.json"));
+
+        let saved_auth = std::env::var("CITRATE_AUTH_URL").ok();
+        let saved_bundler = std::env::var("CITRATE_BUNDLER_URL").ok();
+
+        std::env::set_var("CITRATE_AUTH_URL", "http://auth.example");
+        std::env::set_var("CITRATE_BUNDLER_URL", "http://127.0.0.1@bundler.example/rpc");
+        let svc = build();
+        let refused = (svc.auth_url.clone(), svc.bundler_url.clone());
+
+        std::env::set_var("CITRATE_AUTH_URL", "http://127.0.0.1:8080");
+        std::env::set_var("CITRATE_BUNDLER_URL", "https://bundler.example/rpc");
+        let svc = build();
+        let honored = (svc.auth_url.clone(), svc.bundler_url.clone());
+
+        match saved_auth {
+            Some(v) => std::env::set_var("CITRATE_AUTH_URL", v),
+            None => std::env::remove_var("CITRATE_AUTH_URL"),
+        }
+        match saved_bundler {
+            Some(v) => std::env::set_var("CITRATE_BUNDLER_URL", v),
+            None => std::env::remove_var("CITRATE_BUNDLER_URL"),
+        }
+
+        assert_eq!(refused.0, DEFAULT_AUTH_URL, "plaintext remote auth URL must not be honored");
+        assert_eq!(refused.1, DEFAULT_BUNDLER_URL, "userinfo bundler URL must not be honored");
+        assert_eq!(honored.0, "http://127.0.0.1:8080");
+        assert_eq!(honored.1, "https://bundler.example/rpc");
+    }
 }

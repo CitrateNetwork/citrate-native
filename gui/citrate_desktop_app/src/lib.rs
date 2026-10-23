@@ -1214,4 +1214,41 @@ mod tests {
             "Default config must include bootnode"
         );
     }
+
+    /// `AppCore` must build its chat fallback chain ONLY from
+    /// `default_chat_endpoints(&rpc_url)`, which attaches the node-RPC
+    /// fallback on a loopback RPC only. `AppCore::new()` reads the real
+    /// config dir, so this is a source-level pin on the production half of
+    /// `lib.rs` (the test module is cut off first, so the needles below are
+    /// not matched against themselves). A negative control proves the check
+    /// can fail on the unconditional-fallback shape.
+    #[test]
+    fn appcore_chat_fallbacks_come_only_from_default_chat_endpoints() {
+        fn wiring_ok(prod: &str) -> bool {
+            let ctor = ["RpcChatBackend", "::new("].concat();
+            let uses = prod.matches(&ctor).count();
+            let via_endpoints = prod.matches(&[ctor.as_str(), "ep)"].concat()).count();
+            prod.contains(&["default_chat_endpoints", "(&rpc_url)"].concat())
+                && prod.contains(&["for ep in &endpoints", "[1..]"].concat())
+                && uses >= 1
+                && uses == via_endpoints
+        }
+        let src = include_str!("lib.rs");
+        let cut = src
+            .find(&["#[cfg(test)]\nmod ", "tests {"].concat())
+            .expect("lib.rs test module header present");
+        let prod = &src[..cut];
+        assert!(
+            wiring_ok(prod),
+            "AppCore chat backends must come from default_chat_endpoints only"
+        );
+        let pre_fix = [
+            "let endpoints = default_chat_endpoints(&rpc_url);\n",
+            "for ep in &endpoints[1..] {}\n",
+            "let b = RpcChatBackend::new(ep);\n",
+            "let node_rpc = Arc::new(RpcChatBackend::new(&rpc_url));\n",
+        ]
+        .concat();
+        assert!(!wiring_ok(&pre_fix), "negative control: an unconditional fallback is flagged");
+    }
 }

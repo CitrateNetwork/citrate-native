@@ -1716,4 +1716,58 @@ mod tests {
             "expired grant must be refused by tools/list"
         );
     }
+
+    /// `dispatch` (the only axum route) must apply the cross-origin /
+    /// non-loopback guard before routing. `is_local_request` has its own
+    /// unit test; this pins the call at the entry point: a request with an
+    /// `Origin`, or with a non-loopback `Host`, is refused with -32600 and
+    /// mints no grant, while a plain loopback request is served (control).
+    #[tokio::test]
+    async fn dispatch_refuses_cross_origin_and_foreign_host_before_routing() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        use axum::response::IntoResponse;
+
+        async fn call(host: &Arc<McpHostService>, headers: HeaderMap) -> serde_json::Value {
+            let req: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": { "recipient": "dispatch-test" },
+                "id": 1
+            }))
+            .expect("request");
+            let resp = dispatch(State(host.clone()), headers, Json(req))
+                .await
+                .into_response();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .expect("body");
+            serde_json::from_slice(&bytes).expect("json body")
+        }
+        let code = |v: &serde_json::Value| v["error"]["code"].as_i64();
+
+        let host = test_host();
+
+        let mut with_origin = HeaderMap::new();
+        with_origin.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
+        with_origin.insert(header::ORIGIN, HeaderValue::from_static("http://rebind.example"));
+        let v = call(&host, with_origin).await;
+        assert_eq!(code(&v), Some(-32600), "Origin must be refused: {v}");
+
+        let mut foreign_host = HeaderMap::new();
+        foreign_host.insert(header::HOST, HeaderValue::from_static("rebind.example:9600"));
+        let v = call(&host, foreign_host).await;
+        assert_eq!(code(&v), Some(-32600), "non-loopback Host must be refused: {v}");
+
+        assert!(
+            host.mcp.snapshot_grants().await.is_empty(),
+            "a refused request must not mint a grant"
+        );
+
+        // Control: the same initialize from a loopback client is served.
+        let mut local = HeaderMap::new();
+        local.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
+        let v = call(&host, local).await;
+        assert!(v["error"].is_null(), "loopback initialize must succeed: {v}");
+        assert_eq!(host.mcp.snapshot_grants().await.len(), 1);
+    }
 }
