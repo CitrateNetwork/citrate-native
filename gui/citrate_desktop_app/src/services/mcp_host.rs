@@ -1770,4 +1770,57 @@ mod tests {
         assert!(v["error"].is_null(), "loopback initialize must succeed: {v}");
         assert_eq!(host.mcp.snapshot_grants().await.len(), 1);
     }
+
+    /// The bearer compare must look at EVERY byte: an equal-length input that
+    /// differs at any single position is unequal. The existing case only
+    /// differs in the last byte.
+    #[test]
+    fn ct_eq_rejects_a_single_byte_difference_at_any_position() {
+        let base = b"tok_0123456789abcdef".to_vec();
+        assert!(ct_eq(&base, &base));
+        for i in 0..base.len() {
+            let mut other = base.clone();
+            other[i] ^= 0x01;
+            assert!(!ct_eq(&base, &other), "difference at byte {i} not detected");
+        }
+    }
+
+    /// `session/end` must refuse a same-length token that differs from the
+    /// owner's only in its FIRST character (the shape a last-byte-only or
+    /// prefix-blind compare would accept).
+    #[tokio::test]
+    async fn session_end_refuses_a_near_miss_owner_token() {
+        let host = test_host();
+        let token = host
+            .create_token("owner", PolicyProfile::Guided, None)
+            .await;
+        let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let grant_id = resp.0.result.as_ref().expect("grant issued")["grant_id"]
+            .as_str()
+            .expect("grant_id string")
+            .to_string();
+
+        let mut near: Vec<char> = token.token.chars().collect();
+        near[0] = if near[0] == 'a' { 'b' } else { 'a' };
+        let near: String = near.into_iter().collect();
+        assert_eq!(near.len(), token.token.len());
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(2),
+            serde_json::json!({ "grant_id": grant_id, "auth_token": near }),
+        )
+        .await;
+        assert!(end.0.error.is_some(), "a near-miss token must not end the grant");
+        assert_eq!(host.list_active_grants().await.len(), 1);
+
+        // Control: the real owner token ends it.
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(3),
+            serde_json::json!({ "grant_id": grant_id, "auth_token": token.token }),
+        )
+        .await;
+        assert!(end.0.error.is_none(), "the owner token must end the grant");
+    }
 }
