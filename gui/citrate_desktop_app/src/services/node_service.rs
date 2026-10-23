@@ -2195,4 +2195,43 @@ mod tests {
         let bogus = "0x".to_string() + &"ab".repeat(32);
         assert!(backend.get_block_transactions(&bogus).await.is_empty());
     }
+
+    /// The bootnode connect loop lives inside `NodeService::start` (it binds
+    /// real sockets), so this pins it at the source level: when the bootnode
+    /// spec carries a pinned Noise identity, the connect call must be the
+    /// identity-checking `connect_to_trusted`, and the identity-less
+    /// `connect_to` is only the `None` arm. The test module is cut off first;
+    /// a negative control proves the check fails on the dropped-pin shape.
+    #[test]
+    fn pinned_bootnode_identity_is_enforced_at_connect() {
+        fn connect_ok(prod: &str) -> bool {
+            let Some(at) = prod.find(&["match &pinned", "_identity {"].concat()) else {
+                return false;
+            };
+            let arm = &prod[at..(at + 400).min(prod.len())];
+            let some_arm = arm.split(&["None =>"].concat()).next().unwrap_or("");
+            some_arm.contains(&[".connect_to_trusted", "(addr, expected_id"].concat())
+                && arm.contains(&["None => transport", ".connect_to(addr)"].concat())
+        }
+        let src = include_str!("node_service.rs");
+        let cut = src
+            .find(&["#[cfg(test)]\nmod ", "encryption_tests {"].concat())
+            .expect("first test module header present");
+        let prod = &src[..cut];
+        assert!(
+            connect_ok(prod),
+            "a pinned bootnode must connect via connect_to_trusted"
+        );
+        let pre_fix = [
+            "let connect_result = match &pinned_identity {\n",
+            "    Some(_expected_id) => transport.connect_to(addr).await,\n",
+            "    None => transport.connect_to(addr).await,\n",
+            "};\n",
+        ]
+        .concat();
+        assert!(
+            !connect_ok(&pre_fix),
+            "negative control: a dropped pin is flagged"
+        );
+    }
 }

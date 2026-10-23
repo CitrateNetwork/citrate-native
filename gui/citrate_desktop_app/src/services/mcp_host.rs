@@ -1716,4 +1716,127 @@ mod tests {
             "expired grant must be refused by tools/list"
         );
     }
+
+    /// `dispatch` (the only axum route) must apply the cross-origin /
+    /// non-loopback guard before routing. `is_local_request` has its own
+    /// unit test; this pins the call at the entry point: a request with an
+    /// `Origin`, or with a non-loopback `Host`, is refused with -32600 and
+    /// mints no grant, while a plain loopback request is served (control).
+    #[tokio::test]
+    async fn dispatch_refuses_cross_origin_and_foreign_host_before_routing() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        use axum::response::IntoResponse;
+
+        async fn call(host: &Arc<McpHostService>, headers: HeaderMap) -> serde_json::Value {
+            let req: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": { "recipient": "dispatch-test" },
+                "id": 1
+            }))
+            .expect("request");
+            let resp = dispatch(State(host.clone()), headers, Json(req))
+                .await
+                .into_response();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .expect("body");
+            serde_json::from_slice(&bytes).expect("json body")
+        }
+        let code = |v: &serde_json::Value| v["error"]["code"].as_i64();
+
+        let host = test_host();
+
+        let mut with_origin = HeaderMap::new();
+        with_origin.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
+        with_origin.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://rebind.example"),
+        );
+        let v = call(&host, with_origin).await;
+        assert_eq!(code(&v), Some(-32600), "Origin must be refused: {v}");
+
+        let mut foreign_host = HeaderMap::new();
+        foreign_host.insert(
+            header::HOST,
+            HeaderValue::from_static("rebind.example:9600"),
+        );
+        let v = call(&host, foreign_host).await;
+        assert_eq!(
+            code(&v),
+            Some(-32600),
+            "non-loopback Host must be refused: {v}"
+        );
+
+        assert!(
+            host.mcp.snapshot_grants().await.is_empty(),
+            "a refused request must not mint a grant"
+        );
+
+        // Control: the same initialize from a loopback client is served.
+        let mut local = HeaderMap::new();
+        local.insert(header::HOST, HeaderValue::from_static("127.0.0.1:9600"));
+        let v = call(&host, local).await;
+        assert!(
+            v["error"].is_null(),
+            "loopback initialize must succeed: {v}"
+        );
+        assert_eq!(host.mcp.snapshot_grants().await.len(), 1);
+    }
+
+    /// The bearer compare must look at EVERY byte: an equal-length input that
+    /// differs at any single position is unequal. The existing case only
+    /// differs in the last byte.
+    #[test]
+    fn ct_eq_rejects_a_single_byte_difference_at_any_position() {
+        let base = b"tok_0123456789abcdef".to_vec();
+        assert!(ct_eq(&base, &base));
+        for i in 0..base.len() {
+            let mut other = base.clone();
+            other[i] ^= 0x01;
+            assert!(!ct_eq(&base, &other), "difference at byte {i} not detected");
+        }
+    }
+
+    /// `session/end` must refuse a same-length token that differs from the
+    /// owner's only in its FIRST character (the shape a last-byte-only or
+    /// prefix-blind compare would accept).
+    #[tokio::test]
+    async fn session_end_refuses_a_near_miss_owner_token() {
+        let host = test_host();
+        let token = host
+            .create_token("owner", PolicyProfile::Guided, None)
+            .await;
+        let params = serde_json::json!({ "auth_token": token.token, "policy": "Guided" });
+        let resp = handle_initialize(&host, serde_json::json!(1), params).await;
+        let grant_id = resp.0.result.as_ref().expect("grant issued")["grant_id"]
+            .as_str()
+            .expect("grant_id string")
+            .to_string();
+
+        let mut near: Vec<char> = token.token.chars().collect();
+        near[0] = if near[0] == 'a' { 'b' } else { 'a' };
+        let near: String = near.into_iter().collect();
+        assert_eq!(near.len(), token.token.len());
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(2),
+            serde_json::json!({ "grant_id": grant_id, "auth_token": near }),
+        )
+        .await;
+        assert!(
+            end.0.error.is_some(),
+            "a near-miss token must not end the grant"
+        );
+        assert_eq!(host.list_active_grants().await.len(), 1);
+
+        // Control: the real owner token ends it.
+        let end = handle_session_end(
+            &host,
+            serde_json::json!(3),
+            serde_json::json!({ "grant_id": grant_id, "auth_token": token.token }),
+        )
+        .await;
+        assert!(end.0.error.is_none(), "the owner token must end the grant");
+    }
 }

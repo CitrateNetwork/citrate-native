@@ -68,3 +68,74 @@ fn every_contract_write_is_confirmation_gated_in_main() {
 fn every_contract_write_is_confirmation_gated_in_app_binder() {
     assert_all_gated("src/app_binder.rs");
 }
+
+/// Stricter shape check than [`assert_all_gated`]: the nearest gate above each
+/// contract write must be a plain `if !confirm_tx_intent(` (so a `false && …`
+/// edit or a discarded result fails), and a `return` must sit between the gate
+/// and the write (the declined branch cannot fall through to the broadcast).
+fn strict_violations(text: &str) -> (usize, Vec<String>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let needle = needle();
+    let guard = format!("confirm_tx{}", "_intent(");
+    let mut sites = 0usize;
+    let mut bad = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !line.contains(&needle) {
+            continue;
+        }
+        sites += 1;
+        let lo = i.saturating_sub(WINDOW);
+        let Some(g) = (lo..i).rev().find(|&j| lines[j].contains(&guard)) else {
+            bad.push(format!("{}: no gate", i + 1));
+            continue;
+        };
+        let gate = lines[g].trim();
+        let plain = gate.starts_with(&format!("if !{guard}"))
+            || gate.starts_with(&format!("if !crate::{guard}"));
+        let returns = lines[g..i].iter().any(|l| l.trim() == "return;");
+        if !plain || !returns {
+            bad.push(format!(
+                "{}: gate `{gate}` (returns before write: {returns})",
+                i + 1
+            ));
+        }
+    }
+    (sites, bad)
+}
+
+fn assert_strictly_gated(rel: &str) {
+    let (sites, bad) = strict_violations(&src(rel));
+    assert!(sites > 0, "{rel}: no contract-write call sites found");
+    assert!(
+        bad.is_empty(),
+        "{rel}: weakly gated contract writes:\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn every_contract_write_gate_is_a_plain_refusal_in_main() {
+    assert_strictly_gated("src/main.rs");
+}
+
+#[test]
+fn every_contract_write_gate_is_a_plain_refusal_in_app_binder() {
+    assert_strictly_gated("src/app_binder.rs");
+}
+
+#[test]
+fn strict_gate_check_negative_controls() {
+    let write = needle();
+    let gate = format!("confirm_tx{}", "_intent(");
+    let ok = format!("if !{gate}a).await {{\n    return;\n}}\nwallet{write}x)\n");
+    assert!(
+        strict_violations(&ok).1.is_empty(),
+        "control shape must pass"
+    );
+    let disabled = format!("if false && !{gate}a).await {{\n    return;\n}}\nwallet{write}x)\n");
+    assert_eq!(strict_violations(&disabled).1.len(), 1);
+    let discarded = format!("let _ = {gate}a).await;\nwallet{write}x)\n");
+    assert_eq!(strict_violations(&discarded).1.len(), 1);
+    let no_return = format!("if !{gate}a).await {{\n    log();\n}}\nwallet{write}x)\n");
+    assert_eq!(strict_violations(&no_return).1.len(), 1);
+}

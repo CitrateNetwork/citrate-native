@@ -2267,4 +2267,42 @@ mod tests {
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].contains("list requests"));
     }
+
+    /// The calldata size cap is the only bound on the dynamic `submitResult`
+    /// payload: a canonically encoded result just over `MAX_CALLDATA_BYTES`
+    /// passes the ABI shape check, so it must be refused by the cap. A
+    /// same-shape result just under the cap is accepted (control).
+    #[test]
+    fn validator_refuses_canonical_submit_result_over_the_calldata_cap() {
+        fn submit_result(id: u64, result_len: usize) -> PendingRequest {
+            let word = |v: usize| format!("{:0>64x}", v);
+            let padded = result_len.div_ceil(32) * 32;
+            let mut a = String::new();
+            a.push_str(&word(id as usize));
+            a.push_str(&word(0x60)); // result offset
+            a.push_str(&word(0x60 + 32 + padded)); // proof offset
+            a.push_str(&word(result_len));
+            a.push_str(&"ab".repeat(result_len));
+            a.push_str(&"00".repeat(padded - result_len));
+            a.push_str(&word(0)); // empty proof
+            let mut r = req(id, "submitResult", MARKETPLACE, "0", SEL_SUBMIT_RESULT);
+            r.calldata = format!("0x{}{}", hex::encode(SEL_SUBMIT_RESULT), a);
+            r
+        }
+        let v = validator();
+        // Head (4 + 3 words) + result length word + proof length word = 164 bytes.
+        let overhead = 4 + 5 * 32;
+        let under = submit_result(41, MAX_CALLDATA_BYTES - overhead - 32);
+        assert!(
+            v.validate(&under).is_ok(),
+            "a canonical submitResult under the cap must be accepted"
+        );
+        let over = submit_result(42, MAX_CALLDATA_BYTES);
+        match v.validate(&over) {
+            Err(RejectReason::MalformedArgs { reason, .. }) => {
+                assert!(reason.contains("exceeds"), "reason = {reason}")
+            }
+            other => panic!("oversized submitResult must be refused by the cap, got {other:?}"),
+        }
+    }
 }
