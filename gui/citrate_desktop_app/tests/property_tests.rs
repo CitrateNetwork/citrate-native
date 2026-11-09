@@ -175,6 +175,7 @@ proptest! {
             on_chain_anchoring: false,
             integration_tokens: std::collections::HashMap::new(),
             encryption_at_rest: true,
+            genesis_profile: None,
         };
 
         let json = serde_json::to_string(&config).expect("serialization succeeded");

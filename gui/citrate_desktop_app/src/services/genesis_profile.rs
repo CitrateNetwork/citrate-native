@@ -132,8 +132,9 @@ pub fn build_genesis_block(
     // Step 3: the state root on the genesis block (as the node does).
     genesis.state_root = citrate_consensus::types::Hash::new(state_root_bytes);
     // Step 4: the block hash, with the state root included.
-    genesis.header.block_hash = citrate_economics::genesis::calculate_canonical_block_hash(&genesis);
-    check_compiled_block_0(choice, &genesis)?;
+    genesis.header.block_hash =
+        citrate_economics::genesis::calculate_canonical_block_hash(&genesis);
+    check_block_0(choice, genesis.header.block_hash.as_bytes(), "the built")?;
     Ok(genesis)
 }
 
@@ -203,26 +204,40 @@ fn genesis_state(
         .map_err(|e| AppError::Node(format!("genesis build: {e}")))
 }
 
-/// The r1007 block 0 must be the one the chain crates compile (`R1007_GENESIS`); a build that
-/// produces another is refused before anything is stored. Other geneses have no compiled hash
-/// in the pinned chain crates.
-fn check_compiled_block_0(
-    choice: GenesisChoice,
-    block: &citrate_consensus::types::Block,
-) -> Result<(), AppError> {
+/// The block 0 the chain crates compile for `choice`, where they compile one: the r1007
+/// genesis (`R1007_GENESIS`) in a `chain-r1007` build. The pinned pre-r1007 crates compile none.
+pub fn compiled_block_0(choice: GenesisChoice) -> Option<[u8; 32]> {
     #[cfg(feature = "chain-r1007")]
     if choice == GenesisChoice::R1007 {
-        let want = citrate_consensus::hardening::R1007_GENESIS;
-        if block.header.block_hash.as_bytes() != &want {
-            return Err(AppError::Node(format!(
-                "genesis build: built block 0 {} is not the r1007 genesis {} this build compiles",
-                hex::encode(block.header.block_hash.as_bytes()),
-                hex::encode(want)
-            )));
-        }
+        return Some(citrate_consensus::hardening::R1007_GENESIS);
     }
-    let _ = (choice, block);
-    Ok(())
+    let _ = choice;
+    None
+}
+
+/// Block 0 (`got`, built here or found in the data dir) must be the one the chain crates
+/// compile for `choice` (when they compile one). Another block 0 is refused: a built one before
+/// it is stored, a stored one before the node starts on it (a data dir of another network
+/// needs a fresh data dir, as the network's node requires).
+pub fn check_block_0(choice: GenesisChoice, got: &[u8; 32], whence: &str) -> Result<(), AppError> {
+    check_block_0_against(compiled_block_0(choice), got, whence)
+}
+
+fn check_block_0_against(
+    want: Option<[u8; 32]>,
+    got: &[u8; 32],
+    whence: &str,
+) -> Result<(), AppError> {
+    match want {
+        Some(w) if &w != got => Err(AppError::Node(format!(
+            "{whence} block 0 {} is not the genesis {} this build compiles for its genesis \
+             profile; the node is not started (a data dir of another network needs a fresh \
+             data dir)",
+            hex::encode(got),
+            hex::encode(w)
+        ))),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -249,12 +264,18 @@ mod tests {
             match &e {
                 Err(GenesisRefusal::Pending { profile, why }) => {
                     assert_eq!(profile, "r1007");
-                    assert!(why.contains("chain-r1007") && why.contains("R1007_LIGHT_NODE"), "{why}");
+                    assert!(
+                        why.contains("chain-r1007") && why.contains("R1007_LIGHT_NODE"),
+                        "{why}"
+                    );
                 }
                 other => panic!("r1007 must be pending in this build: {other:?}"),
             }
             let msg = AppError::from(e.unwrap_err()).to_string();
-            assert!(msg.contains("r1007") && msg.contains("not started"), "{msg}");
+            assert!(
+                msg.contains("r1007") && msg.contains("not started"),
+                "{msg}"
+            );
         }
         assert_eq!(
             resolve(1337, Some("r1007")),
@@ -262,6 +283,29 @@ mod tests {
                 profile: "r1007".into(),
                 chain_id: 1337
             })
+        );
+    }
+
+    /// A genesis with a compiled block 0 accepts only that block 0, built or stored; one with
+    /// none (every genesis of the pinned pre-r1007 chain crates) accepts what it builds.
+    #[test]
+    fn block_0_must_be_the_compiled_one_where_there_is_one() {
+        let want = [0x4e; 32];
+        assert!(check_block_0_against(Some(want), &want, "the stored").is_ok());
+        let e = check_block_0_against(Some(want), &[0xa3; 32], "the stored")
+            .expect_err("another block 0");
+        let msg = e.to_string();
+        assert!(
+            msg.contains("the stored") && msg.contains(&hex::encode([0xa3u8; 32])),
+            "{msg}"
+        );
+        assert!(msg.contains("fresh data dir"), "{msg}");
+        assert!(check_block_0_against(None, &[0xa3; 32], "the stored").is_ok());
+        assert_eq!(compiled_block_0(GenesisChoice::TestnetBeta), None);
+        assert_eq!(compiled_block_0(GenesisChoice::Default), None);
+        assert_eq!(
+            compiled_block_0(GenesisChoice::R1007).is_some(),
+            cfg!(feature = "chain-r1007")
         );
     }
 
@@ -292,9 +336,42 @@ mod tests {
         assert!(e.to_string().contains("r1007"), "{e}");
     }
 
+    /// With the r1007 chain crates: the light node publishes the MPT state root rule from
+    /// block 0 and then builds exactly the block 0 the chain compiles (`R1007_GENESIS`), and the
+    /// shared genesis function refuses the r1007 configuration while the rule is not published
+    /// (the failure this module exists to prevent). Run single-threaded: the rule is
+    /// process-wide.
+    #[cfg(feature = "chain-r1007")]
+    #[test]
+    fn r1007_publishes_the_rule_then_builds_the_compiled_block_0() {
+        let executor = || {
+            let db = std::sync::Arc::new(citrate_execution::StateDB::new());
+            std::sync::Arc::new(citrate_execution::executor::Executor::new(db))
+        };
+        citrate_execution::mpt_state_root::set_mpt_state_root_height(None);
+        let cfg = citrate_economics::genesis::GenesisConfig::r1007().expect("r1007 config");
+        let refused =
+            citrate_economics::genesis::initialize_shared_genesis_state(&executor(), &cfg);
+        assert!(
+            refused.is_err(),
+            "the shared build must refuse r1007 without the rule"
+        );
+
+        let block = build_genesis_block(GenesisChoice::R1007, &executor()).expect("r1007 block 0");
+        assert_eq!(
+            block.header.block_hash.as_bytes(),
+            &citrate_consensus::hardening::R1007_GENESIS
+        );
+        assert_eq!(
+            citrate_execution::mpt_state_root::mpt_state_root_height(),
+            Some(0)
+        );
+    }
+
     /// The block 0 this module builds for 40204 with no profile is the one `start_node` built
     /// inline before (same steps, same order): building it twice gives the same hash, and the
     /// state root is set on it.
+    #[cfg(not(feature = "chain-r1007"))]
     #[test]
     fn the_default_40204_block_0_is_unchanged_and_deterministic() {
         let build = || {
@@ -314,10 +391,17 @@ mod tests {
             inline.header.block_hash =
                 citrate_economics::genesis::calculate_canonical_block_hash(&inline);
             let built = build_genesis_block(GenesisChoice::TestnetBeta, &executor).expect("built");
-            (inline.header.block_hash, built.header.block_hash, built.state_root)
+            (
+                inline.header.block_hash,
+                built.header.block_hash,
+                built.state_root,
+            )
         };
         let (inline, built, root) = build();
-        assert_eq!(built, inline, "the module builds the block start_node built inline");
+        assert_eq!(
+            built, inline,
+            "the module builds the block start_node built inline"
+        );
         assert_ne!(root, citrate_consensus::types::Hash::default());
         assert_eq!(build().1, built, "deterministic");
     }
@@ -344,7 +428,12 @@ mod tests {
         let publish = body
             .find(concat!("mpt_state_root::init_for_genesis", "("))
             .expect("the r1007 build publishes the MPT state root rule");
-        let build = body.find(call).expect("then builds the shared genesis state");
-        assert!(publish < build, "the rule is published before the state is built");
+        let build = body
+            .find(call)
+            .expect("then builds the shared genesis state");
+        assert!(
+            publish < build,
+            "the rule is published before the state is built"
+        );
     }
 }

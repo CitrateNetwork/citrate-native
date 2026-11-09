@@ -319,6 +319,10 @@ pub trait NodeBackend: Send + Sync {
     /// ENCRYPT-S1 WP-1: toggle encryption-at-rest for the next node start.
     /// Default backends ignore it; the embedded backend honours it.
     async fn set_encryption(&self, _enabled: bool) {}
+    /// r1007: the genesis profile the next node start builds block 0 from
+    /// (`AppConfig::genesis_profile`). Default backends ignore it; the embedded
+    /// backend resolves it before it touches the data dir.
+    async fn set_genesis_profile(&self, _profile: Option<String>) {}
     /// Get transactions for an address from local storage.
     async fn get_transactions_for(&self, _address: &str, _limit: usize) -> Vec<TxSummary> {
         Vec::new()
@@ -414,6 +418,9 @@ pub struct EmbeddedNodeBackend {
     /// `AppConfig::encryption_at_rest` via `set_encryption` before start;
     /// defaults to ENCRYPTED (the beta gate).
     encryption_at_rest: std::sync::atomic::AtomicBool,
+    /// r1007: the genesis profile for the next start (`AppConfig::genesis_profile`,
+    /// via `set_genesis_profile`). `None` keeps today's block 0 for the chain id.
+    genesis_profile: tokio::sync::RwLock<Option<String>>,
 }
 
 impl EmbeddedNodeBackend {
@@ -439,6 +446,7 @@ impl EmbeddedNodeBackend {
             lifecycle: tokio::sync::Mutex::new(()),
             // First-run default: ENCRYPTED (ENCRYPT-S1 beta gate).
             encryption_at_rest: std::sync::atomic::AtomicBool::new(true),
+            genesis_profile: tokio::sync::RwLock::new(None),
         }
     }
 }
@@ -484,6 +492,14 @@ impl NodeBackend for EmbeddedNodeBackend {
             tracing::info!("Node already running — skipping start");
             return Ok(());
         }
+
+        // r1007: decide which block 0 this node builds before anything on disk is
+        // touched. An unknown, wrong-chain or pending profile refuses the start by
+        // name; it never falls back to another genesis.
+        let genesis_choice = super::genesis_profile::resolve(
+            chain_id,
+            self.genesis_profile.read().await.as_deref(),
+        )?;
 
         // Reset shutdown flag for fresh start
         self.shutdown
@@ -539,34 +555,14 @@ impl NodeBackend for EmbeddedNodeBackend {
         //   2. Initializes shared genesis state (accounts + model)
         //   3. Sets genesis.state_root = state_root from step 2
         //   4. Recalculates genesis.header.block_hash with the state root included
-        // We must do exactly the same steps in the same order.
+        // genesis_profile::build_genesis_block does exactly the same steps in the
+        // same order, and publishes the genesis-keyed state root rule before step 2
+        // (the r1007 shared genesis build refuses to run without it).
         let latest_height = storage.blocks.get_latest_height().unwrap_or(0);
         if latest_height == 0 {
             tracing::info!("No blocks found — initializing genesis (must match standalone node)");
-
-            // Step 1: Create canonical genesis block
-            let mut genesis = citrate_economics::genesis::create_canonical_genesis_block(
-                citrate_economics::genesis::CANONICAL_GENESIS_TIMESTAMP,
-            );
-
-            // Step 2: Initialize shared genesis state (accounts + model)
             let executor = Arc::new(citrate_execution::executor::Executor::new(state_db.clone()));
-            let genesis_config = if chain_id == 40204 {
-                citrate_economics::genesis::GenesisConfig::testnet_beta()
-            } else {
-                citrate_economics::genesis::GenesisConfig::default()
-            };
-            let state_root_bytes = citrate_economics::genesis::initialize_shared_genesis_state(
-                &executor,
-                &genesis_config,
-            );
-
-            // Step 3: Set state root on the genesis block (this is what the node does)
-            genesis.state_root = citrate_consensus::types::Hash::new(state_root_bytes);
-
-            // Step 4: Recalculate block hash with state root included
-            genesis.header.block_hash =
-                citrate_economics::genesis::calculate_canonical_block_hash(&genesis);
+            let genesis = super::genesis_profile::build_genesis_block(genesis_choice, &executor)?;
 
             // Store genesis block
             if let Err(e) = storage.blocks.put_block(&genesis) {
@@ -575,8 +571,18 @@ impl NodeBackend for EmbeddedNodeBackend {
             tracing::info!(
                 "Genesis block stored: {} (state_root: {})",
                 hex::encode(&genesis.header.block_hash.as_bytes()[..8]),
-                hex::encode(&state_root_bytes[..8])
+                hex::encode(&genesis.state_root.as_bytes()[..8])
             );
+        }
+
+        // r1007: a data dir whose block 0 is not the one this genesis profile compiles
+        // belongs to another network; refuse it rather than run that chain.
+        if let Some(block_0) = storage.blocks.get_block_by_height(0).ok().flatten() {
+            super::genesis_profile::check_block_0(
+                genesis_choice,
+                block_0.as_bytes(),
+                "this data dir's",
+            )?;
         }
 
         // 5. Compute head info for handshake
@@ -1112,6 +1118,10 @@ impl NodeBackend for EmbeddedNodeBackend {
         self.set_encryption_at_rest(enabled);
     }
 
+    async fn set_genesis_profile(&self, profile: Option<String>) {
+        *self.genesis_profile.write().await = profile;
+    }
+
     /// Full per-transaction detail for a block, including receipt status + gas used.
     ///
     /// Data source: `citrate_storage::BlockStore::get_block` (CF_BLOCKS) for the tx
@@ -1335,6 +1345,10 @@ impl NodeService {
 
         // ENCRYPT-S1 WP-1: apply the config's at-rest posture before start.
         self.backend.set_encryption(config.encryption_at_rest).await;
+        // r1007: the genesis profile the node builds block 0 from (None = today's).
+        self.backend
+            .set_genesis_profile(config.genesis_profile.clone())
+            .await;
 
         self.backend
             .start_node(config.chain_id, &config.data_dir)
@@ -1773,6 +1787,95 @@ mod tests {
             AppEvent::NodeStatusChanged { running, .. } => assert!(running),
             _ => panic!("Expected NodeStatusChanged"),
         }
+    }
+
+    /// r1007 (0.5.3 network): this build's chain crates cannot build the r1007
+    /// block 0, so the embedded node refuses the profile by name before it creates
+    /// or opens its data dir, and never falls back to another genesis.
+    #[tokio::test]
+    async fn embedded_start_refuses_a_pending_genesis_profile_before_touching_the_data_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for (profile, chain_id, want) in [
+            ("r1007", 40204u64, "r1007"),
+            ("r1007", 1337, "40204"),
+            ("r9999", 40204, "r9999"),
+        ] {
+            if cfg!(feature = "chain-r1007") && chain_id == 40204 && profile == "r1007" {
+                continue;
+            }
+            let dir = tmp.path().join(format!("{profile}-{chain_id}"));
+            let backend = EmbeddedNodeBackend::new();
+            backend.set_genesis_profile(Some(profile.to_string())).await;
+            let e = backend
+                .start_node(chain_id, dir.to_str().expect("utf-8 path"))
+                .await
+                .expect_err("refused");
+            assert!(
+                matches!(e, AppError::Config(_)),
+                "{profile}/{chain_id}: {e:?}"
+            );
+            assert!(e.to_string().contains(want), "{profile}/{chain_id}: {e}");
+            assert!(
+                !dir.exists(),
+                "{profile}/{chain_id}: the data dir was touched"
+            );
+            assert!(!backend.running.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+
+    /// NodeService hands the configured genesis profile to the backend before it
+    /// starts the node; an existing config (no genesis_profile) hands None.
+    #[tokio::test]
+    async fn start_passes_the_configured_genesis_profile_to_the_backend() {
+        struct Recorder(tokio::sync::Mutex<Vec<Option<String>>>);
+        #[async_trait::async_trait]
+        impl NodeBackend for Recorder {
+            async fn start_node(&self, _: u64, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn stop_node(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            async fn get_block_height(&self) -> u64 {
+                0
+            }
+            async fn get_peer_count(&self) -> u32 {
+                0
+            }
+            async fn get_mempool_size(&self) -> usize {
+                0
+            }
+            async fn get_balance(&self, _: &[u8; 20]) -> String {
+                "0".into()
+            }
+            async fn set_genesis_profile(&self, p: Option<String>) {
+                self.0.lock().await.push(p);
+            }
+        }
+        let old: AppConfig = serde_json::from_str(
+            r#"{"network":"testnet","chain_id":40204,"data_dir":"/tmp","rpc_port":8545,"p2p_port":30304,"bootnodes":[],"theme":"dark"}"#,
+        )
+        .expect("an existing config without genesis_profile loads");
+        assert_eq!(old.genesis_profile, None);
+        let rec = Arc::new(Recorder(tokio::sync::Mutex::new(Vec::new())));
+        for cfg in [
+            old,
+            AppConfig {
+                genesis_profile: Some("r1007".into()),
+                ..AppConfig::default()
+            },
+        ] {
+            let svc = NodeService::with_backend(
+                Arc::new(RwLock::new(cfg)),
+                Arc::new(EventBus::new()),
+                rec.clone(),
+            );
+            svc.start().await.expect("start");
+        }
+        assert_eq!(*rec.0.lock().await, vec![None, Some("r1007".to_string())]);
+        // Not written for a config that has none, so older builds read it unchanged.
+        let json = serde_json::to_string(&AppConfig::default()).expect("json");
+        assert!(!json.contains("genesis_profile"), "{json}");
     }
 
     #[tokio::test]
