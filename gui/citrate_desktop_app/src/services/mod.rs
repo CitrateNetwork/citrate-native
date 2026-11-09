@@ -5,6 +5,8 @@
 //! No IPC, no JSON, no string payloads.
 
 pub mod node_service;
+// r1007 (0.5.3 network): which block 0 the embedded node builds, rules published first.
+pub mod genesis_profile;
 pub mod wallet_service;
 // (editor_service, file_explorer_service, compiler_service,
 // git_service, terminal_service retired in P960-H — see git
