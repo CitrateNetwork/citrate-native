@@ -57,9 +57,10 @@ impl RpcComputeBackend {
     }
 }
 
-/// ComputeMarketplace contract address — deployed on testnet (chain 40204).
-/// Re-genesis 2026-04-01.
-const COMPUTE_CONTRACT: Option<&str> = Some("0x20a0B74c766E84B20558ABD76a7a0Fd6434A4c4c");
+/// ComputeMarketplace contract address on chain 40204 (r1006 root book,
+/// citrate-chain #454 @ 312a0c2f). Pinned to the vendored book by
+/// `compute_address_matches_the_vendored_book`.
+const COMPUTE_CONTRACT: Option<&str> = Some("0x2fec2ac1dde3a1a749c84d487738904cd2ed50c2");
 
 #[async_trait::async_trait]
 impl ComputeBackend for RpcComputeBackend {
@@ -239,6 +240,31 @@ impl ComputeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The live-service address must equal the vendored canonical book
+    /// (`gui/citrate_native/src/generated/addresses.json`), so a reroll cannot
+    /// leave it pointing at a contract with no code.
+    #[test]
+    fn compute_address_matches_the_vendored_book() {
+        let book: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../citrate_native/src/generated/addresses.json"
+        ))
+        .expect("vendored book parses");
+        assert_eq!(book["chainId"].as_u64(), Some(40204));
+        let canon = book["contracts"]["ComputeMarketplace"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase();
+        assert!(
+            !canon.is_empty(),
+            "ComputeMarketplace missing from the vendored book"
+        );
+        assert_eq!(
+            Some(canon.as_str()),
+            COMPUTE_CONTRACT,
+            "ComputeMarketplace drifted from the vendored book"
+        );
+    }
 
     fn test_service() -> ComputeService {
         ComputeService::with_backend(Arc::new(EventBus::new()), Arc::new(TestComputeBackend))

@@ -66,11 +66,12 @@ impl RpcLearningBackend {
     }
 }
 
-/// LearningPool contract address — deployed on testnet (chain 40204).
-/// Re-genesis 2026-04-01.
-const LEARNING_CONTRACT: Option<&str> = Some("0xAD7c3135c1B9B3189208FD617B6B058C1c0469f3");
-/// ContributionAccounting contract address — re-genesis 2026-04-01.
-const CONTRIBUTION_CONTRACT: Option<&str> = Some("0x9a58E44f8DD6fd6a75637A32e6E51c16440996F8");
+/// LearningPool contract address on chain 40204 (r1006 root book, citrate-chain
+/// #454 @ 312a0c2f). Pinned to the vendored book by
+/// `learning_addresses_match_the_vendored_book`.
+const LEARNING_CONTRACT: Option<&str> = Some("0xba5c9c886d65a969d02e40d7fbbade316ad81e66");
+/// ContributionAccounting contract address (r1006 root book).
+const CONTRIBUTION_CONTRACT: Option<&str> = Some("0x621395beb46a6f59c0e3a94ba5248db94af1896f");
 
 #[async_trait::async_trait]
 impl LearningBackend for RpcLearningBackend {
@@ -227,6 +228,33 @@ impl LearningService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The live-service addresses must equal the vendored canonical book
+    /// (`gui/citrate_native/src/generated/addresses.json`), so a reroll cannot
+    /// leave them pointing at a contract with no code.
+    #[test]
+    fn learning_addresses_match_the_vendored_book() {
+        let book: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../citrate_native/src/generated/addresses.json"
+        ))
+        .expect("vendored book parses");
+        assert_eq!(book["chainId"].as_u64(), Some(40204));
+        for (name, ours) in [
+            ("LearningPool", LEARNING_CONTRACT),
+            ("ContributionAccounting", CONTRIBUTION_CONTRACT),
+        ] {
+            let canon = book["contracts"][name]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase();
+            assert!(!canon.is_empty(), "{name} missing from the vendored book");
+            assert_eq!(
+                Some(canon.as_str()),
+                ours,
+                "{name} drifted from the vendored book"
+            );
+        }
+    }
 
     fn test_service() -> LearningService {
         LearningService::with_backend(Arc::new(EventBus::new()), Arc::new(TestLearningBackend))
