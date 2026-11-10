@@ -1,13 +1,14 @@
 //! Classroom cluster + device management service.
 //!
-//! Data source: ClassroomClusterV1 (0x71C9...292e) via eth_call on chain 40204.
+//! Data source: ClassroomClusterV1 (r1006 root book) via eth_call on chain 40204.
 //! Covers: classroom CRUD, org/classroom roles, device registry, student transfers.
 
 use super::abi;
 use crate::error::AppError;
 
-/// Contract address on chain 40204 (deployed 2026-04-05).
-const CLUSTER_ADDRESS: &str = "0xe0B39353F69b54e945364ffcdDD7901697Ca0166";
+/// Contract address on chain 40204 (r1006 root book, citrate-chain #454 @ 312a0c2f).
+/// Pinned to the vendored book by `edu_addresses_match_the_vendored_book`.
+pub(super) const CLUSTER_ADDRESS: &str = "0x6015f82f95762e3a31205a4f6c391410652301f9";
 
 /// Org-level role (maps to ClassroomClusterV1.OrgRole enum).
 #[derive(Debug, Clone, PartialEq)]

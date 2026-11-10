@@ -1,14 +1,15 @@
 //! Institutional vault + cashout service.
 //!
-//! Data source: InstitutionalVault (0x8464...318bC) and CashoutRequest (0xbCF2...1508)
+//! Data source: InstitutionalVault and CashoutRequest (r1006 root book, see the constants below)
 //! via eth_call on chain 40204.
 
 use super::abi;
 use crate::error::AppError;
 
-/// Contract addresses on chain 40204 (deployed 2026-04-05).
-const VAULT_ADDRESS: &str = "0x20Fbd46DeEd5EEDEB6e5c87eeB31924e9CA312ad";
-const CASHOUT_ADDRESS: &str = "0x130A46b6E41DB6E1e18fb9c759F223c459190e90";
+/// Contract addresses on chain 40204 (r1006 root book, citrate-chain #454 @ 312a0c2f).
+/// Pinned to the vendored book by `edu_addresses_match_the_vendored_book`.
+pub(super) const VAULT_ADDRESS: &str = "0x9fea5d6bcfa82fa5879a7061381b40647aa67938";
+pub(super) const CASHOUT_ADDRESS: &str = "0x82775eadc5803861f99d90b43dc6ebc0390edaff";
 
 /// Vault status summary.
 #[derive(Debug, Clone)]
