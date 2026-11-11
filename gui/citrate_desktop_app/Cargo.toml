@@ -74,6 +74,13 @@ citrate-agent-core = { git = "https://github.com/CitrateNetwork/citrate-agent-ru
 # direct dep so McpHostService owns its own router clearly.
 axum = "0.7"
 
+[features]
+# The r1007 genesis (0.5.3 network). OFF until the citrate-chain crates are bumped to the public
+# r1007 genesis commit: the pinned chain rev cannot build it, and the code behind this feature is
+# written against the r1007 chain API (src/services/genesis_profile.rs, docs/R1007_LIGHT_NODE.md).
+# Without it, AppConfig.genesis_profile = "r1007" is refused by name; the node does not start.
+chain-r1007 = []
+
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
 

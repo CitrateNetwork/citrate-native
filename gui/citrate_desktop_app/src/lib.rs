@@ -143,6 +143,13 @@ pub struct AppConfig {
     /// copy may state "local data encrypted at rest" ONLY when this is true.
     #[serde(default = "default_true")]
     pub encryption_at_rest: bool,
+    /// The genesis profile the embedded node builds its block 0 from
+    /// (`services::genesis_profile`). `None` (every existing config) keeps
+    /// today's block 0 for the chain id. `"r1007"` is the 0.5.3 network; this
+    /// build refuses it by name until its chain crates are bumped
+    /// (docs/R1007_LIGHT_NODE.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_profile: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -224,6 +231,7 @@ impl Default for AppConfig {
             on_chain_anchoring: false,
             integration_tokens: HashMap::new(),
             encryption_at_rest: true,
+            genesis_profile: None,
         }
     }
 }
