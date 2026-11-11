@@ -48,4 +48,38 @@ ignore = [
     #     Slint/winit chain)
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # ─────────────────────────────────────────────────────────────────
+    # crypto-bigint < 0.7.6 (time-boxed) EXPIRES 2027-01-31
+    # owner: platform · mirrors the owner-approved citrate-chain ignore
+    # ─────────────────────────────────────────────────────────────────
+    # RUSTSEC-2026-0387: crypto-bigint 0.5.5 timing variability.
+    # Reached only through elliptic-curve 0.13 (k256 0.13 via bip32 and
+    # the pinned citrate-chain crates). elliptic-curve 0.13 requires
+    # crypto-bigint ^0.5; the fix is in the 0.14 curve line, which the
+    # chain has not adopted yet. Same advisory, same expiry as
+    # citrate-chain audit.toml. Lifts when the chain moves to the 0.14
+    # curve line and this repo re-pins.
+    "RUSTSEC-2026-0387",
+    # ─────────────────────────────────────────────────────────────────
+    # calamine 0.25 + zip 1.1.4 via citrate-edu-app (time-boxed)
+    # owner: platform · EXPIRES 2026-12-01 (added 2026-11-10)
+    # ─────────────────────────────────────────────────────────────────
+    # RUSTSEC-2026-0436: calamine < 0.38 (fix: >= 0.38.0).
+    # RUSTSEC-2026-0367, -0368, -0369, -0429: zip < 9.0.0 (fix: >= 9.0.0).
+    # calamine 0.25 and its zip 1.1.4 come only from citrate-edu-app at
+    # the pinned citrate-learning-center rev 9c1b5299, whose
+    # gui/citrate_edu_app/Cargo.toml pins calamine 0.25. Both fixes are semver-major, so no
+    # Cargo.lock bump reaches them here. The real fix is a calamine bump
+    # in citrate-learning-center plus a re-pin of citrate-edu-app here;
+    # that re-pin lifts 0436 (and, with the chain re-pin below, the zip
+    # ids).
+    #
+    # zip 2.4.2 via citrate-storage at the pinned citrate-chain rev
+    # f9f6257b (same zip ids). citrate-chain main already carries zip
+    # 9.0.4; the re-pin of the chain crates in this repo lifts them.
+    "RUSTSEC-2026-0436",
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
 ]

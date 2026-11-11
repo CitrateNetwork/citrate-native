@@ -15,11 +15,21 @@ concurrency:
 
 jobs:
   rust:
-    runs-on: ${{ matrix.os }}
+    # The check names stay "rust (ubuntu-latest)" / "rust (macos-latest)" because
+    # branch protection requires them; only the Linux runner image is pinned.
+    # ubuntu-latest moved to 26.04, where librocksdb-sys 0.16 fails to build
+    # ('uint64_t' has not been declared). Pinned to 24.04 until the rocksdb
+    # crate moves on with the chain pin (#38).
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+          - os: macos-latest
+            runner: macos-latest
     continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     permissions:
       contents: read
