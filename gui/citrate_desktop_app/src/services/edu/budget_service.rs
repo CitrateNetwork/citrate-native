@@ -1,13 +1,14 @@
 //! Budget allocation service.
 //!
-//! Data source: BudgetAllocation (0x7125...3e) via eth_call on chain 40204.
+//! Data source: BudgetAllocation (r1006 root book) via eth_call on chain 40204.
 //! Queries per-classroom budget status: allocated, remaining, spent, monthly limit.
 
 use super::abi;
 use crate::error::AppError;
 
-/// Contract address on chain 40204 (deployed 2026-04-05).
-const BUDGET_ADDRESS: &str = "0xAd5d57aD9bB17d34Debb88566ab2F5dB879Cc46F";
+/// Contract address on chain 40204 (r1006 root book, citrate-chain #454 @ 312a0c2f).
+/// Pinned to the vendored book by `edu_addresses_match_the_vendored_book`.
+pub(super) const BUDGET_ADDRESS: &str = "0xcc98a91155e170bdc4d92b2d425dd13b44cdb4cf";
 
 /// Per-classroom budget snapshot.
 #[derive(Debug, Clone)]

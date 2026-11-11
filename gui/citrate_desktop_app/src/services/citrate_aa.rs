@@ -20,14 +20,15 @@ use sha3::{Digest, Keccak256};
 
 /// Canonical chain-40204 AA addresses.
 /// Source: citrate-chain `contracts/addresses/40204.json` → `aaStack`
-/// (r1005 reroll, chain main 2979a157). Cross-checked against the vendored
+/// (r1006 root book, citrate-chain PR #454 @ e395954b; live genesis
+/// 0xa3651a27…cdd4). Cross-checked against the vendored
 /// book by `aa_constants_match_the_vendored_book` below.
 pub mod addresses {
     pub const CHAIN_ID: u64 = 40204;
     pub const ENTRY_POINT: &str = "0x97d5391a647429233e202f99231743c53a648f3c";
-    pub const FACTORY: &str = "0x9ac05ad65c9e8e48fbb41dde029512afa5346c85";
+    pub const FACTORY: &str = "0x6ee3b59099c9c812cdf1c9e7e6ff166b2558434c";
     pub const WALLET_IMPL: &str = "0x2d742b98d867fc7363f530dd6d756622e4eb768d";
-    pub const PAYMASTER: &str = "0x804a8021cc1212798180bc9330f6467f883c392c";
+    pub const PAYMASTER: &str = "0x5a1e2d73f8154a01a78b56e551c977cb8327ff56";
     pub const ECDSA_VALIDATOR: &str = "0xd2d35421379ae5b461e216bfcdd1b7e6a64bbc40";
     pub const WEBAUTHN_VALIDATOR: &str = "0x0f421a99a0b8f6138dea12f45a523cb896d09fc7";
     pub const GUARDIAN_RECOVERY: &str = "0x0a909769160c1945401b8f37a9310d37dbb6a891";
@@ -409,14 +410,15 @@ mod tests {
         user1.copy_from_slice(&hex::decode("11".repeat(32)).expect("hex"));
         let got = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &user1)
             .expect("prediction");
-        // LIVE r1005 factory predictAddress(bytes32) via eth_call on
-        // rpc.citrate.ai (2026-10-11); matches this local CREATE2 math.
-        assert_eq!(got, "0x21fd7a655a1f90255a88c7bb0ffde3dbe545ea2c");
+        // LIVE r1006 factory predictAddress(bytes32) via eth_call on
+        // rpc.citrate.ai (2026-11-09, genesis 0xa365…cdd4); matches this
+        // local CREATE2 math.
+        assert_eq!(got, "0x7aff9d227f48b693dd7ee281c3d559be322dfe27");
 
         let uuid_id = uuid_to_user_id(UUID).expect("uuid");
         let got2 = predict_wallet_address(addresses::FACTORY, addresses::WALLET_IMPL, &uuid_id)
             .expect("prediction");
-        assert_eq!(got2, "0xfacd833cda3040e4230f53a678efc5c2b13ad8e4");
+        assert_eq!(got2, "0x2b3a599c3c144f9e24add67189fb7fa7e7485270");
     }
 
     #[test]
@@ -478,7 +480,7 @@ mod tests {
     fn user_op_hash_matches_the_live_entrypoint() {
         let op = PackedUserOp {
             // The factory prediction for user1 (see test above).
-            sender: "0x21fd7a655a1f90255a88c7bb0ffde3dbe545ea2c",
+            sender: "0x7aff9d227f48b693dd7ee281c3d559be322dfe27",
             nonce: 0,
             init_code: &[],
             call_data: &hex::decode("deadbeef").expect("hex"),
@@ -488,11 +490,12 @@ mod tests {
             paymaster_and_data: &[],
         };
         let h = get_user_op_hash(&op, addresses::ENTRY_POINT, addresses::CHAIN_ID).expect("hash");
-        // LIVE r1005 EntryPoint getUserOpHash via eth_call on
-        // rpc.citrate.ai (2026-10-11), ERC-4337 v0.7 packing.
+        // LIVE EntryPoint getUserOpHash via eth_call on rpc.citrate.ai
+        // (2026-11-09, r1006, genesis 0xa365…cdd4), ERC-4337 v0.7 packing,
+        // with the r1006 user1 prediction as sender.
         assert_eq!(
             expect_hex(&h),
-            "7dc743c3db64ec58540dd3099ee59ffff84ec90a413d4d62f5fa3df85d8a352b"
+            "5223618a7ccc6e155c3b36c1bf85445a8d11e6c8ae39b36684c712b269b8c92d"
         );
     }
 
